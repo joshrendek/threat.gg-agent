@@ -2,4 +2,5 @@ This is the honeypot agent for running on a server's ssh port. Collection data g
 # TODO
 
 * [ ] Log commands used by attackers
+* [ ] Tests
 
