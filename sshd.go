@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"strings"
 
 	"code.google.com/p/go.crypto/ssh"
 )
@@ -23,23 +26,51 @@ References:
 var config *ssh.ServerConfig
 var logfile *log.Logger
 
+type SshLogin struct {
+	RemoteAddr string
+	Username   string
+	Password   string
+}
+
+func (login *SshLogin) Save() {
+	o, err := json.Marshal(login)
+	if err != nil {
+		panic(err)
+	}
+	post_data := strings.NewReader(string(o))
+	req, err := http.NewRequest("POST", "http://sshpot-com.herokuapp.com/api/private/ssh", post_data)
+	fmt.Println(fmt.Sprintf("[post] %s", "http://sshpot-com.herokuapp.com/api/private/ssh"))
+	_, err = client.Do(req)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
+var client *http.Client
+
 func main() {
 	// An SSH server is represented by a ServerConfig, which holds
 	// certificate details and handles authentication of ServerConns.
 	logfile = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	logfile.Println("[Starting up]")
+	client = &http.Client{}
 	config = &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			// Should use constant-time compare (or better, salt+hash) in
 			// a production setting.
-			logfile.Println(fmt.Sprintf("Username: %s | Password: %s", c.User(), string(pass)))
-			if c.User() == "testuser" && string(pass) == "tiger" {
-				return nil, nil
 
+			logfile.Println(fmt.Sprintf("Remote: %s | Username: %s | Password: %s", c.RemoteAddr(), c.User(), string(pass)))
+			addr := strings.Split(c.RemoteAddr().String(), ":")
+			login := SshLogin{
+				RemoteAddr: addr[0],
+				Username:   c.User(),
+				Password:   string(pass),
 			}
+			go login.Save()
 			return nil, fmt.Errorf("password rejected for %q", c.User())
 		},
 	}
-	privateBytes, err := ioutil.ReadFile("/Users/joshrendek/.ssh/id_rsa")
+	privateBytes, err := ioutil.ReadFile("honeypot")
 	if err != nil {
 		panic("Failed to load private key")
 	}
@@ -53,7 +84,11 @@ func main() {
 
 	// Once a ServerConfig has been configured, connections can be
 	// accepted.
-	listener, err := net.Listen("tcp", "0.0.0.0:3333")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "22"
+	}
+	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
 		panic("failed to listen for connection")
 	}
