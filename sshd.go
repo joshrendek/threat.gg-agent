@@ -27,9 +27,9 @@ var config *ssh.ServerConfig
 var logfile *log.Logger
 
 type SshLogin struct {
-	RemoteAddr string
-	Username   string
-	Password   string
+	RemoteAddr string `json:"remote_addr"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
 }
 
 func (login *SshLogin) Save() {
