@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 
 	"code.google.com/p/go.crypto/ssh"
@@ -25,6 +26,7 @@ References:
 
 var config *ssh.ServerConfig
 var logfile *log.Logger
+var client *http.Client
 
 type SshLogin struct {
 	RemoteAddr string `json:"remote_addr"`
@@ -46,11 +48,34 @@ func (login *SshLogin) Save() {
 	}
 }
 
-var client *http.Client
+func Exists(name string) bool {
+	if _, err := os.Stat(name); err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
+}
+
+func generateSshKey() {
+	logfile.Println("[generating ssh keys]")
+	if Exists("honeypot") {
+		logfile.Println("[removing old keys]")
+		os.Remove("honeypot")
+		os.Remove("honeypot.pub")
+	}
+
+	out, err := exec.Command("ssh-keygen", "-t", "rsa", "-f", "honeypot").CombinedOutput()
+	if err != nil {
+		logfile.Println(out)
+		panic(fmt.Sprintf("Error generating key: %s", err))
+	}
+}
 
 func main() {
 	logfile = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 	logfile.Println("[Starting up]")
+	generateSshKey()
 	client = &http.Client{}
 	config = &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
@@ -87,6 +112,7 @@ func main() {
 	if err != nil {
 		panic("failed to listen for connection")
 	}
+	logfile.Println("[listening for connections]")
 	// Handle connections in a go routine so we can accept multiple connections at once
 	HandleConnection(listener)
 }
