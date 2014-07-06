@@ -49,16 +49,11 @@ func (login *SshLogin) Save() {
 var client *http.Client
 
 func main() {
-	// An SSH server is represented by a ServerConfig, which holds
-	// certificate details and handles authentication of ServerConns.
 	logfile = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 	logfile.Println("[Starting up]")
 	client = &http.Client{}
 	config = &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			// Should use constant-time compare (or better, salt+hash) in
-			// a production setting.
-
 			logfile.Println(fmt.Sprintf("Remote: %s | Username: %s | Password: %s", c.RemoteAddr(), c.User(), string(pass)))
 			addr := strings.Split(c.RemoteAddr().String(), ":")
 			login := SshLogin{
