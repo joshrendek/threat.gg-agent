@@ -38,8 +38,8 @@ func (login *SshLogin) Save() {
 		panic(err)
 	}
 	post_data := strings.NewReader(string(o))
-	req, err := http.NewRequest("POST", "http://sshpot-com.herokuapp.com/api/private/ssh", post_data)
-	fmt.Println(fmt.Sprintf("[post] %s", "http://sshpot-com.herokuapp.com/api/private/ssh"))
+	req, err := http.NewRequest("POST", "http://sshpot.com/api/private/ssh", post_data)
+	fmt.Println(fmt.Sprintf("[post] %s", "http://sshpot.com/api/private/ssh"))
 	_, err = client.Do(req)
 	if err != nil {
 		fmt.Println(err)
