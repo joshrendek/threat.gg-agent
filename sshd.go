@@ -102,11 +102,6 @@ func main() {
 				Password:   string(pass),
 			}
 			go login.Save()
-			//if c.User() == "root" {
-			//	if string(pass) == "root" || string(pass) == "123456" || string(pass) == "toor" {
-			//		return nil, nil
-			//	}
-			//}
 			return nil, nil //fmt.Errorf("password rejected for %q", c.User())
 		},
 	}
@@ -139,8 +134,9 @@ func main() {
 
 func RunCommand(cmd string) []byte {
 	var ret []byte
-	switch string(cmd) {
+	switch cmd {
 	case "uname":
+		logfile.Println("[fsodifsodifj]")
 		ret = []byte("Linux\n\r")
 	case "whoami":
 		ret = []byte("root\n\r")
@@ -148,6 +144,28 @@ func RunCommand(cmd string) []byte {
 		ret = []byte(sftp_string)
 	}
 	return ret
+}
+
+func HandleShellRequest(channel ssh.Channel, in <-chan *ssh.Request) {
+	for req := range in {
+		ok := true
+		logfile.Println("[request " + req.Type + "]: " + string(req.Payload))
+		switch req.Type {
+		case "shell":
+			logfile.Println("[shell]")
+			req.Reply(ok, nil)
+		case "exec":
+			// start comparison at 5th byte since the first 4 bytes are [0 0 0 5]
+			if string(req.Payload[4:]) == string("uname") {
+				logfile.Println("[[[" + string(req.Payload) + "]]]")
+				channel.Write([]byte("\n\rLinux\n\r"))
+			}
+
+			channel.Close()
+			//req.Reply(ok, nil)
+
+		}
+	}
 }
 
 func HandleConnection(listener net.Listener) {
@@ -175,66 +193,40 @@ func HandleConnection(listener net.Listener) {
 					panic("could not accept channel.")
 				}
 
+				// needs to be run in a goroutine to handle new shell requests
+				go HandleShellRequest(channel, requests)
+
 				//newChannel.Reject(ssh.ConnectionFailed, "")
 				// Sessions have out-of-band requests such as "shell",
-				// "pty-req" and "env".  Here we handle only the
-				// "shell" request.
-				go func(in <-chan *ssh.Request) {
-					for req := range in {
-						ok := false
-						logfile.Println("[request " + req.Type + "]: " + string(req.Payload))
-						switch req.Type {
-						case "shell":
-							ok = true
-							if len(req.Payload) > 0 {
-								// We don't accept any
-								// commands, only the
-								// default shell.
-								ok = false
-							}
-						case "exec":
-							if err != nil {
-								panic(err)
-							}
-							channel.Close()
-							tmp := "\n\r" + string(RunCommand(string(req.Payload))) + "\n\r"
-							_, err = channel.Write([]byte(tmp))
-							newChannel.Reject(ssh.ConnectionFailed, "")
-						}
-						ok = true
-						req.Reply(ok, nil)
-					}
-				}(requests)
+				// "pty-req" and "env".
 
 				term := terminal.NewTerminal(channel, "root@web1:/root# ")
 
-				go func() {
-					defer channel.Close()
-					for {
-						line, err := term.ReadLine()
-						if err != nil {
-							break
-						}
-
-						outlog, err := os.OpenFile("/tmp/command.log", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
-						_, err = outlog.WriteString(string(line) + "\n")
-
-						if err != nil {
-							logfile.Println(err)
-						}
-
-						outlog.Close()
-
-						if strings.Contains(string(line), "exit") {
-							channel.Close()
-						}
-
-						term.Write(RunCommand(line))
-
-						//term.Write([]byte("resp written"))
-						logfile.Println(line)
+				defer channel.Close()
+				for {
+					line, err := term.ReadLine()
+					if err != nil {
+						break
 					}
-				}()
+
+					outlog, err := os.OpenFile("/tmp/command.log", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+					_, err = outlog.WriteString(string(line) + "\n")
+
+					if err != nil {
+						logfile.Println(err)
+					}
+
+					outlog.Close()
+
+					if strings.Contains(string(line), "exit") {
+						channel.Close()
+					}
+
+					term.Write(RunCommand(line))
+
+					//term.Write([]byte("resp written"))
+					logfile.Println(line)
+				}
 			}
 		}()
 	}
