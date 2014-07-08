@@ -13,7 +13,16 @@ import (
 	"strings"
 
 	"code.google.com/p/go.crypto/ssh"
+	"code.google.com/p/go.crypto/ssh/terminal"
 )
+
+var sftp_string string = strings.Join([]string{"usage: sftp [-1246Cpqrv] [-B buffer_size] [-b batchfile] [-c cipher]",
+	"\t   [-D sftp_server_path] [-F ssh_config] [-i identity_file] [-l limit]",
+	"\t   [-o ssh_option] [-P port] [-R num_requests] [-S program]",
+	"\t   [-s subsystem | sftp_server] host",
+	"\tsftp [user@]host[:file ...]",
+	"\tsftp [user@]host[:dir[/]]",
+	"\tsftp -b batchfile [user@]host\n\r"}, "\n\r")
 
 /*
 Docs: https://godoc.org/code.google.com/p/go.crypto/ssh#Config
@@ -27,6 +36,7 @@ References:
 var config *ssh.ServerConfig
 var logfile *log.Logger
 var client *http.Client
+var err error
 
 type SshLogin struct {
 	RemoteAddr string `json:"remote_addr"`
@@ -40,8 +50,13 @@ func (login *SshLogin) Save() {
 		panic(err)
 	}
 	post_data := strings.NewReader(string(o))
-	req, err := http.NewRequest("POST", "http://sshpot.com/api/private/ssh", post_data)
-	fmt.Println(fmt.Sprintf("[post] %s", "http://sshpot.com/api/private/ssh"))
+	server_url := os.Getenv("SERVER_URL")
+	if server_url == "" {
+		server_url = "http://sshpot.com"
+	}
+	ssh_api := fmt.Sprintf("%s/api/private/ssh", server_url)
+	req, err := http.NewRequest("POST", ssh_api, post_data)
+	fmt.Println(fmt.Sprintf("[post] %s", ssh_api))
 	_, err = client.Do(req)
 	if err != nil {
 		fmt.Println(err)
@@ -87,7 +102,12 @@ func main() {
 				Password:   string(pass),
 			}
 			go login.Save()
-			return nil, fmt.Errorf("password rejected for %q", c.User())
+			//if c.User() == "root" {
+			//	if string(pass) == "root" || string(pass) == "123456" || string(pass) == "toor" {
+			//		return nil, nil
+			//	}
+			//}
+			return nil, nil //fmt.Errorf("password rejected for %q", c.User())
 		},
 	}
 	privateBytes, err := ioutil.ReadFile("honeypot")
@@ -117,6 +137,19 @@ func main() {
 	HandleConnection(listener)
 }
 
+func RunCommand(cmd string) []byte {
+	var ret []byte
+	switch string(cmd) {
+	case "uname":
+		ret = []byte("Linux\n\r")
+	case "whoami":
+		ret = []byte("root\n\r")
+	case "sftp":
+		ret = []byte(sftp_string)
+	}
+	return ret
+}
+
 func HandleConnection(listener net.Listener) {
 	for {
 		nConn, err := listener.Accept()
@@ -137,11 +170,71 @@ func HandleConnection(listener net.Listener) {
 			// immediately close after taking their password
 			for newChannel := range chans {
 				/*_, _, err := newChannel.Accept()*/
+				channel, requests, err := newChannel.Accept()
 				if err != nil {
 					panic("could not accept channel.")
 				}
 
-				newChannel.Reject(ssh.ConnectionFailed, "")
+				//newChannel.Reject(ssh.ConnectionFailed, "")
+				// Sessions have out-of-band requests such as "shell",
+				// "pty-req" and "env".  Here we handle only the
+				// "shell" request.
+				go func(in <-chan *ssh.Request) {
+					for req := range in {
+						ok := false
+						logfile.Println("[request " + req.Type + "]: " + string(req.Payload))
+						switch req.Type {
+						case "shell":
+							ok = true
+							if len(req.Payload) > 0 {
+								// We don't accept any
+								// commands, only the
+								// default shell.
+								ok = false
+							}
+						case "exec":
+							if err != nil {
+								panic(err)
+							}
+							channel.Close()
+							tmp := "\n\r" + string(RunCommand(string(req.Payload))) + "\n\r"
+							_, err = channel.Write([]byte(tmp))
+							newChannel.Reject(ssh.ConnectionFailed, "")
+						}
+						ok = true
+						req.Reply(ok, nil)
+					}
+				}(requests)
+
+				term := terminal.NewTerminal(channel, "root@web1:/root# ")
+
+				go func() {
+					defer channel.Close()
+					for {
+						line, err := term.ReadLine()
+						if err != nil {
+							break
+						}
+
+						outlog, err := os.OpenFile("/tmp/command.log", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+						_, err = outlog.WriteString(string(line) + "\n")
+
+						if err != nil {
+							logfile.Println(err)
+						}
+
+						outlog.Close()
+
+						if strings.Contains(string(line), "exit") {
+							channel.Close()
+						}
+
+						term.Write(RunCommand(line))
+
+						//term.Write([]byte("resp written"))
+						logfile.Println(line)
+					}
+				}()
 			}
 		}()
 	}
