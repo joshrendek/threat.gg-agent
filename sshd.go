@@ -154,13 +154,8 @@ func HandleSshRequests(channel ssh.Channel, in <-chan *ssh.Request, term *termin
 		logfile.Println("[request " + req.Type + "]: " + string(req.Payload))
 		switch req.Type {
 		case "shell":
-			ok = true
-			if len(req.Payload) > 0 {
-				// We don't accept any
-				// commands, only the
-				// default shell.
-				ok = false
-			}
+			// hacky way to get around presenting the correct prompt
+			channel.Write([]byte("root@web1:/root# "))
 			term.SetPrompt("root@web1:/root# ")
 		case "exec":
 			term.SetPrompt("")
@@ -168,6 +163,7 @@ func HandleSshRequests(channel ssh.Channel, in <-chan *ssh.Request, term *termin
 			// close after executing their one off command
 			channel.Close()
 		}
+		/* this condition set and reply is needed to allow a PTY */
 		ok = true
 		req.Reply(ok, nil)
 	}
