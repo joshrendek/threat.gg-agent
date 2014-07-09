@@ -16,7 +16,8 @@ import (
 	"code.google.com/p/go.crypto/ssh/terminal"
 )
 
-var sftp_string string = strings.Join([]string{"usage: sftp [-1246Cpqrv] [-B buffer_size] [-b batchfile] [-c cipher]",
+var sftp_string string = strings.Join([]string{
+	"usage: sftp [-1246Cpqrv] [-B buffer_size] [-b batchfile] [-c cipher]",
 	"\t   [-D sftp_server_path] [-F ssh_config] [-i identity_file] [-l limit]",
 	"\t   [-o ssh_option] [-P port] [-R num_requests] [-S program]",
 	"\t   [-s subsystem | sftp_server] host",
@@ -56,7 +57,7 @@ func (login *SshLogin) Save() {
 	}
 	ssh_api := fmt.Sprintf("%s/api/private/ssh", server_url)
 	req, err := http.NewRequest("POST", ssh_api, post_data)
-	fmt.Println(fmt.Sprintf("[post] %s", ssh_api))
+	logfile.Println(fmt.Sprintf("[post] %s", ssh_api))
 	_, err = client.Do(req)
 	if err != nil {
 		fmt.Println(err)
@@ -136,38 +137,15 @@ func RunCommand(cmd string) []byte {
 	var ret []byte
 	switch cmd {
 	case "uname":
-		logfile.Println("[fsodifsodifj]")
 		ret = []byte("Linux\n\r")
 	case "whoami":
 		ret = []byte("root\n\r")
+	case "service iptables stop":
+		ret = []byte("iptables: unrecognized service\n\r")
 	case "sftp":
 		ret = []byte(sftp_string)
 	}
 	return ret
-}
-
-func HandleShellRequest(channel ssh.Channel, in <-chan *ssh.Request) {
-	for req := range in {
-		ok := false
-		logfile.Println("[request " + req.Type + "]: " + string(req.Payload))
-		switch req.Type {
-		case "shell":
-			ok = true
-			if len(req.Payload) > 0 {
-				ok = false
-			}
-			logfile.Println("[shell]")
-		case "exec":
-			// start comparison at 5th byte since the first 4 bytes are [0 0 0 5]
-			if string(req.Payload[4:]) == string("uname") {
-				logfile.Println("[[[" + string(req.Payload) + "]]]")
-				channel.Write([]byte("\n\rLinux\n\r"))
-			}
-
-			channel.Close()
-		}
-		req.Reply(ok, nil)
-	}
 }
 
 func HandleConnection(listener net.Listener) {
@@ -184,10 +162,11 @@ func HandleConnection(listener net.Listener) {
 				return
 			}
 
+			//go ssh.DiscardRequests(reqs)
+
 			if err != nil {
 				logfile.Printf("Handshake error: %s", err)
 			}
-			// immediately close after taking their password
 			for newChannel := range chans {
 				/*_, _, err := newChannel.Accept()*/
 				channel, requests, err := newChannel.Accept()
@@ -196,16 +175,45 @@ func HandleConnection(listener net.Listener) {
 					continue
 				}
 
-				// needs to be run in a goroutine to handle new shell requests
-				go HandleShellRequest(channel, requests)
+				useTerminal := false
+
+				go func(in <-chan *ssh.Request) {
+					for req := range in {
+						ok := false
+						logfile.Println("[request " + req.Type + "]: " + string(req.Payload))
+						switch req.Type {
+						case "shell":
+							useTerminal = true
+							ok = true
+							if len(req.Payload) > 0 {
+								// We don't accept any
+								// commands, only the
+								// default shell.
+								ok = false
+							}
+						case "exec":
+							channel.Write(RunCommand(string(req.Payload[4:])))
+							channel.Close()
+							return
+						}
+						ok = true
+						req.Reply(ok, nil)
+					}
+				}(requests)
+
+				logfile.Println("[channelType]: " + newChannel.ChannelType())
 
 				//newChannel.Reject(ssh.ConnectionFailed, "")
 				// Sessions have out-of-band requests such as "shell",
 				// "pty-req" and "env".
 
-				term := terminal.NewTerminal(channel, "root@web1:/root# ")
-
 				go func() {
+					var term *terminal.Terminal
+					if useTerminal {
+						term = terminal.NewTerminal(channel, "root@web1:/root# ")
+					} else {
+						term = terminal.NewTerminal(channel, "")
+					}
 					defer channel.Close()
 					for {
 						line, err := term.ReadLine()
@@ -214,6 +222,10 @@ func HandleConnection(listener net.Listener) {
 						}
 
 						outlog, err := os.OpenFile("/tmp/command.log", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+
+						if err != nil {
+							logfile.Println(err)
+						}
 						_, err = outlog.WriteString(string(line) + "\n")
 
 						if err != nil {
@@ -223,6 +235,7 @@ func HandleConnection(listener net.Listener) {
 						outlog.Close()
 
 						if strings.Contains(string(line), "exit") {
+							logfile.Println("[exit requested]")
 							channel.Close()
 						}
 
