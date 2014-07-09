@@ -148,6 +148,64 @@ func RunCommand(cmd string) []byte {
 	return ret
 }
 
+func HandleSshRequests(channel ssh.Channel, in <-chan *ssh.Request, term *terminal.Terminal) {
+	for req := range in {
+		ok := false
+		logfile.Println("[request " + req.Type + "]: " + string(req.Payload))
+		switch req.Type {
+		case "shell":
+			ok = true
+			if len(req.Payload) > 0 {
+				// We don't accept any
+				// commands, only the
+				// default shell.
+				ok = false
+			}
+			term.SetPrompt("root@web1:/root# ")
+		case "exec":
+			term.SetPrompt("")
+			channel.Write(RunCommand(string(req.Payload[4:])))
+			// close after executing their one off command
+			channel.Close()
+		}
+		ok = true
+		req.Reply(ok, nil)
+	}
+}
+
+func HandleTerminalReading(channel ssh.Channel, term *terminal.Terminal) {
+	defer channel.Close()
+	for {
+		line, err := term.ReadLine()
+		if err != nil {
+			break
+		}
+
+		outlog, err := os.OpenFile("/tmp/command.log", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+
+		if err != nil {
+			logfile.Println(err)
+		}
+		_, err = outlog.WriteString(string(line) + "\n")
+
+		if err != nil {
+			logfile.Println(err)
+		}
+
+		outlog.Close()
+
+		if strings.Contains(string(line), "exit") {
+			logfile.Println("[exit requested]")
+			channel.Close()
+		}
+
+		term.Write(RunCommand(line))
+
+		logfile.Println(line)
+	}
+
+}
+
 func HandleConnection(listener net.Listener) {
 	for {
 		nConn, err := listener.Accept()
@@ -162,44 +220,19 @@ func HandleConnection(listener net.Listener) {
 				return
 			}
 
-			//go ssh.DiscardRequests(reqs)
-
 			if err != nil {
 				logfile.Printf("Handshake error: %s", err)
 			}
 			for newChannel := range chans {
-				/*_, _, err := newChannel.Accept()*/
 				channel, requests, err := newChannel.Accept()
 				if err != nil {
 					logfile.Println("[fatal] could not accept channel.")
 					continue
 				}
 
-				useTerminal := false
-
-				go func(in <-chan *ssh.Request) {
-					for req := range in {
-						ok := false
-						logfile.Println("[request " + req.Type + "]: " + string(req.Payload))
-						switch req.Type {
-						case "shell":
-							useTerminal = true
-							ok = true
-							if len(req.Payload) > 0 {
-								// We don't accept any
-								// commands, only the
-								// default shell.
-								ok = false
-							}
-						case "exec":
-							channel.Write(RunCommand(string(req.Payload[4:])))
-							channel.Close()
-							return
-						}
-						ok = true
-						req.Reply(ok, nil)
-					}
-				}(requests)
+				var term *terminal.Terminal
+				term = terminal.NewTerminal(channel, "")
+				go HandleSshRequests(channel, requests, term)
 
 				logfile.Println("[channelType]: " + newChannel.ChannelType())
 
@@ -207,44 +240,7 @@ func HandleConnection(listener net.Listener) {
 				// Sessions have out-of-band requests such as "shell",
 				// "pty-req" and "env".
 
-				go func() {
-					var term *terminal.Terminal
-					if useTerminal {
-						term = terminal.NewTerminal(channel, "root@web1:/root# ")
-					} else {
-						term = terminal.NewTerminal(channel, "")
-					}
-					defer channel.Close()
-					for {
-						line, err := term.ReadLine()
-						if err != nil {
-							break
-						}
-
-						outlog, err := os.OpenFile("/tmp/command.log", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
-
-						if err != nil {
-							logfile.Println(err)
-						}
-						_, err = outlog.WriteString(string(line) + "\n")
-
-						if err != nil {
-							logfile.Println(err)
-						}
-
-						outlog.Close()
-
-						if strings.Contains(string(line), "exit") {
-							logfile.Println("[exit requested]")
-							channel.Close()
-						}
-
-						term.Write(RunCommand(line))
-
-						//term.Write([]byte("resp written"))
-						logfile.Println(line)
-					}
-				}()
+				go HandleTerminalReading(channel, term)
 			}
 		}()
 	}
