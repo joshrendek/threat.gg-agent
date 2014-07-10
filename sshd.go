@@ -195,8 +195,15 @@ func HandleTerminalReading(channel ssh.Channel, term *terminal.Terminal) {
 			channel.Close()
 		}
 
-		term.Write(RunCommand(line))
-
+		if line == "passwd" {
+			line, _ := term.ReadPassword("Enter new UNIX password: ")
+			logfile.Println("[password changed]: " + line)
+			line, _ = term.ReadPassword("Retype new UNIX password: ")
+			logfile.Println("[password changed confirmation]: " + line)
+			term.Write([]byte("passwd: password updated successfully\r\n"))
+		} else {
+			term.Write(RunCommand(line))
+		}
 		logfile.Println(line)
 	}
 
