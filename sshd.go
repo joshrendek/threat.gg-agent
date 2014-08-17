@@ -45,23 +45,53 @@ type SshLogin struct {
 	Password   string `json:"password"`
 }
 
-func (login *SshLogin) Save() {
-	o, err := json.Marshal(login)
-	if err != nil {
-		panic(err)
-	}
-	post_data := strings.NewReader(string(o))
+type Command struct {
+	Cmd string `json:"command"`
+}
+
+func PostToApi(endpoint string, post_data *strings.Reader) {
 	server_url := os.Getenv("SERVER_URL")
 	if server_url == "" {
 		server_url = "http://sshpot.com"
 	}
-	ssh_api := fmt.Sprintf("%s/api/private/ssh", server_url)
+	ssh_api := fmt.Sprintf("%s/api/private/%s", server_url, endpoint)
 	req, err := http.NewRequest("POST", ssh_api, post_data)
 	logfile.Println(fmt.Sprintf("[post] %s", ssh_api))
 	_, err = client.Do(req)
 	if err != nil {
 		fmt.Println(err)
 	}
+}
+
+func SaveHttpRequest(http_request map[string]string) {
+	o, err := json.Marshal(http_request)
+	if err != nil {
+		panic(err)
+	}
+	post_data := strings.NewReader(string(o))
+	fmt.Println(string(o))
+	PostToApi("http", post_data)
+}
+
+func (cmd *Command) Save() {
+	o, err := json.Marshal(cmd)
+	if err != nil {
+		panic(err)
+	}
+	post_data := strings.NewReader(string(o))
+	fmt.Println(string(o))
+
+	PostToApi("command", post_data)
+}
+
+func (login *SshLogin) Save() {
+	o, err := json.Marshal(login)
+	if err != nil {
+		panic(err)
+	}
+	post_data := strings.NewReader(string(o))
+
+	PostToApi("ssh", post_data)
 }
 
 func Exists(name string) bool {
@@ -159,6 +189,7 @@ func HandleSshRequests(channel ssh.Channel, in <-chan *ssh.Request, term *termin
 			term.SetPrompt("root@web1:/root# ")
 		case "exec":
 			term.SetPrompt("")
+			fmt.Println(req)
 			channel.Write(RunCommand(string(req.Payload[4:])))
 			// close after executing their one off command
 			channel.Close()
@@ -166,6 +197,34 @@ func HandleSshRequests(channel ssh.Channel, in <-chan *ssh.Request, term *termin
 		/* this condition set and reply is needed to allow a PTY */
 		ok = true
 		req.Reply(ok, nil)
+	}
+}
+
+func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, http map[string]string) {
+	defer channel.Close()
+	for {
+		line, err := term.ReadLine()
+		if err != nil {
+			break
+		}
+		logfile.Println(line)
+		if line == "" {
+			channel.Close()
+			return
+		}
+
+		if strings.Contains(line, ":") {
+			kv := strings.Split(line, ":")
+			http[kv[0]] = strings.TrimSpace(kv[1])
+		} else {
+			kv := strings.Fields(line)
+			if kv[0] == "POST" || kv[0] == "GET" {
+				http["Method"] = kv[0]
+				http["URI"] = kv[1]
+			} else {
+				http[kv[0]] = kv[1]
+			}
+		}
 	}
 }
 
@@ -177,18 +236,7 @@ func HandleTerminalReading(channel ssh.Channel, term *terminal.Terminal) {
 			break
 		}
 
-		outlog, err := os.OpenFile("/tmp/command.log", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
-
-		if err != nil {
-			logfile.Println(err)
-		}
-		_, err = outlog.WriteString(string(line) + "\n")
-
-		if err != nil {
-			logfile.Println(err)
-		}
-
-		outlog.Close()
+		cmd_log := Command{Cmd: string(line)}
 
 		if strings.Contains(string(line), "exit") {
 			logfile.Println("[exit requested]")
@@ -201,9 +249,11 @@ func HandleTerminalReading(channel ssh.Channel, term *terminal.Terminal) {
 			line, _ = term.ReadPassword("Retype new UNIX password: ")
 			logfile.Println("[password changed confirmation]: " + line)
 			term.Write([]byte("passwd: password updated successfully\r\n"))
+			cmd_log.Cmd += " " + line
 		} else {
 			term.Write(RunCommand(line))
 		}
+		cmd_log.Save()
 		logfile.Println(line)
 	}
 
@@ -243,7 +293,14 @@ func HandleConnection(listener net.Listener) {
 				// Sessions have out-of-band requests such as "shell",
 				// "pty-req" and "env".
 
-				go HandleTerminalReading(channel, term)
+				if newChannel.ChannelType() == "direct-tcpip" {
+					http_request := make(map[string]string)
+					HandleTcpReading(channel, term, http_request)
+					go SaveHttpRequest(http_request)
+				} else {
+					go HandleTerminalReading(channel, term)
+				}
+
 			}
 		}()
 	}
