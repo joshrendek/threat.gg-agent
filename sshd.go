@@ -214,7 +214,7 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, http map[str
 		}
 
 		if strings.Contains(line, ":") {
-			kv := strings.Split(line, ":")
+			kv := strings.SplitAfterN(line, ":", 2)
 			http[kv[0]] = strings.TrimSpace(kv[1])
 		} else {
 			kv := strings.Fields(line)
