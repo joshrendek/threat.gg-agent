@@ -1,98 +1,21 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/satori/go.uuid"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/terminal"
 	"io"
 	"io/ioutil"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
-
-	"code.google.com/p/go.crypto/ssh"
-	"code.google.com/p/go.crypto/ssh/terminal"
 )
 
-var sftp_string string = strings.Join([]string{
-	"usage: sftp [-1246Cpqrv] [-B buffer_size] [-b batchfile] [-c cipher]",
-	"\t   [-D sftp_server_path] [-F ssh_config] [-i identity_file] [-l limit]",
-	"\t   [-o ssh_option] [-P port] [-R num_requests] [-S program]",
-	"\t   [-s subsystem | sftp_server] host",
-	"\tsftp [user@]host[:file ...]",
-	"\tsftp [user@]host[:dir[/]]",
-	"\tsftp -b batchfile [user@]host\n\r"}, "\n\r")
-
-/*
-Docs: https://godoc.org/code.google.com/p/go.crypto/ssh#Config
-References:
-  * http://stackoverflow.com/questions/10330678/gitolite-pty-allocation-request-failed-on-channel-0
-  * http://gitlab.cslabs.clarkson.edu/meshca/golang-ssh-example/commit/556eb3c3bcb58ad457920d894a696e9266bbad36#diff-6
-  * https://code.google.com/p/go/source/browse/ssh/example_test.go?repo=crypto
-  * https://bitbucket.org/kardianos/vcsguard/src
-*/
-
-var config *ssh.ServerConfig
-var logfile *log.Logger
-var client *http.Client
-var err error
-
-type SshLogin struct {
-	RemoteAddr string `json:"remote_addr"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-}
-
-type Command struct {
-	Cmd string `json:"command"`
-}
-
-func PostToApi(endpoint string, post_data *strings.Reader) {
-	server_url := os.Getenv("SERVER_URL")
-	if server_url == "" {
-		server_url = "http://sshpot.com"
-	}
-	ssh_api := fmt.Sprintf("%s/api/private/%s", server_url, endpoint)
-	req, err := http.NewRequest("POST", ssh_api, post_data)
-	logfile.Println(fmt.Sprintf("[post] %s", ssh_api))
-	_, err = client.Do(req)
-	if err != nil {
-		fmt.Println(err)
-	}
-}
-
-func SaveHttpRequest(http_request map[string]string) {
-	o, err := json.Marshal(http_request)
-	if err != nil {
-		panic(err)
-	}
-	post_data := strings.NewReader(string(o))
-	fmt.Println(string(o))
-	PostToApi("http", post_data)
-}
-
-func (cmd *Command) Save() {
-	o, err := json.Marshal(cmd)
-	if err != nil {
-		panic(err)
-	}
-	post_data := strings.NewReader(string(o))
-	fmt.Println(string(o))
-
-	PostToApi("command", post_data)
-}
-
-func (login *SshLogin) Save() {
-	o, err := json.Marshal(login)
-	if err != nil {
-		panic(err)
-	}
-	post_data := strings.NewReader(string(o))
-
-	PostToApi("ssh", post_data)
-}
+const DEFAULT_SHELL = "bash"
 
 func Exists(name string) bool {
 	if _, err := os.Stat(name); err != nil {
@@ -104,204 +27,232 @@ func Exists(name string) bool {
 }
 
 func generateSshKey() {
-	logfile.Println("[generating ssh keys]")
+	log.Println("[generating ssh keys]")
 	if Exists("honeypot") {
-		logfile.Println("[removing old keys]")
+		log.Println("[removing old keys]")
 		os.Remove("honeypot")
 		os.Remove("honeypot.pub")
 	}
 
-	out, err := exec.Command("ssh-keygen", "-t", "rsa", "-f", "honeypot").CombinedOutput()
+	out, err := exec.Command("ssh-keygen", "-t", "rsa", "-q", "-f", "honeypot", "-N", "").CombinedOutput()
 	if err != nil {
-		logfile.Println(out)
+		log.Println(string(out))
 		panic(fmt.Sprintf("Error generating key: %s", err))
 	}
 }
 
-func main() {
-	logfile = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
-	logfile.Println("[Starting up]")
-	generateSshKey()
-	client = &http.Client{}
-	config = &ssh.ServerConfig{
-		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			logfile.Println(fmt.Sprintf("Remote: %s | Username: %s | Password: %s", c.RemoteAddr(), c.User(), string(pass)))
-			addr := strings.Split(c.RemoteAddr().String(), ":")
-			login := SshLogin{
-				RemoteAddr: addr[0],
-				Username:   c.User(),
-				Password:   string(pass),
-			}
-			go login.Save()
-			return nil, nil //fmt.Errorf("password rejected for %q", c.User())
-		},
+func handleRequests(reqs <-chan *ssh.Request) {
+	for req := range reqs {
+		log.Printf("recieved out-of-band request: %+v", req)
 	}
-	privateBytes, err := ioutil.ReadFile("honeypot")
+}
+
+func handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
+	// Service the incoming Channel channel.
+	for newChannel := range chans {
+		// Channels have a type, depending on the application level
+		// protocol intended. In the case of a shell, the type is
+		// "session" and ServerShell may be used to present a simple
+		// terminal interface.
+		//if t := newChannel.ChannelType(); t != "session" {
+		//	newChannel.Reject(ssh.UnknownChannelType, fmt.Sprintf("unknown channel type: %s", t))
+		//	continue
+		//}
+		channel, requests, err := newChannel.Accept()
+		if err != nil {
+			log.Printf("could not accept channel (%s)", err)
+			continue
+		}
+
+		var shell string
+		shell = os.Getenv("SHELL")
+		if shell == "" {
+			shell = DEFAULT_SHELL
+		}
+
+		// Sessions have out-of-band requests such as "shell", "pty-req" and "env"
+		go func(in <-chan *ssh.Request) {
+			for req := range in {
+				term := terminal.NewTerminal(channel, "")
+				handler := NewCommandHandler(term)
+				handler.Register(&Ls{}, &LsAl{},
+					&Help{},
+					&Pwd{},
+					&UnsetHistory{},
+					&Uname{},
+					&Echo{},
+					&Whoami{User: "root"},
+				)
+
+				log.Printf("Payload: %s", req.Payload)
+				ok := false
+				switch req.Type {
+				// exec is used: ssh user@host 'some command'
+				case "exec":
+					ok = true
+					command := string(req.Payload[4 : req.Payload[3]+4])
+
+					cmdOut, newLine := handler.MatchAndRun(command)
+					term.Write([]byte(cmdOut))
+					if newLine {
+						term.Write([]byte("\r\n"))
+					}
+
+					shellCommand := &ShellCommand{Cmd: command, Guid: perms.Extensions["guid"]}
+					go shellCommand.Save()
+
+					channel.Close()
+				// shell is used: ssh user@host ... then commands are entered
+				case "shell":
+					for {
+						term.Write([]byte("root@localhost:/# "))
+						line, err := term.ReadLine()
+						if err == io.EOF {
+							log.Printf("EOF detected, closing")
+							channel.Close()
+							ok = true
+							break
+						}
+						if err != nil {
+							log.Printf("Error: %s", err)
+						}
+
+						cmdOut, newLine := handler.MatchAndRun(line)
+						term.Write([]byte(cmdOut))
+						if newLine {
+							term.Write([]byte("\r\n"))
+						}
+
+						shellCommand := &ShellCommand{Cmd: line, Guid: perms.Extensions["guid"]}
+						go shellCommand.Save()
+
+						log.Println(line)
+					}
+					//cmd := exec.Command(shell)
+					//cmd.Env = []string{"TERM=xterm"}
+
+					// We don't accept any commands (Payload),
+					// only the default shell.
+					if len(req.Payload) == 0 {
+						ok = true
+					}
+				case "pty-req":
+					// Responding 'ok' here will let the client
+					// know we have a pty ready for input
+					ok = true
+					// Parse body...
+					termLen := req.Payload[3]
+					termEnv := string(req.Payload[4 : termLen+4])
+					log.Printf("pty-req '%s'", termEnv)
+				default:
+					log.Printf("[%s] Payload: %s", req.Type, req.Payload)
+				}
+
+				if !ok {
+					log.Printf("declining %s request...", req.Type)
+				}
+
+				req.Reply(ok, nil)
+			}
+		}(requests)
+	}
+}
+
+func parseIpPortFrom(conn ssh.ConnMetadata) (string, int) {
+	remote := strings.Split(conn.RemoteAddr().String(), ":")
+	port, err := strconv.Atoi(remote[1])
 	if err != nil {
-		panic("Failed to load private key")
+		port = 0
+	}
+	return remote[0], port
+}
+
+func passAuthCallback(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+	guid := uuid.NewV4()
+	ip, remotePort := parseIpPortFrom(conn)
+	login := SshLogin{RemoteAddr: ip,
+		RemotePort: remotePort,
+		Username:   conn.User(),
+		Password:   string(password),
+		Guid:       guid.String(),
+		Version:    string(conn.ClientVersion()),
+		LoginType:  "password",
+	}
+	login.Save()
+	return &ssh.Permissions{Extensions: map[string]string{"guid": guid.String()}}, nil
+}
+
+func keyAuthCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+	guid := uuid.NewV4()
+	ip, remotePort := parseIpPortFrom(conn)
+	login := SshLogin{RemoteAddr: ip,
+		RemotePort: remotePort,
+		Username:   conn.User(),
+		Guid:       guid.String(),
+		Version:    string(conn.ClientVersion()),
+		PublicKey:  key.Marshal(),
+		KeyType:    string(key.Type()),
+		LoginType:  "key",
+	}
+	go login.Save()
+	//log.Println("Fail to authenticate", conn, ":", err)
+	//return nil, errors.New("invalid authentication")
+	return &ssh.Permissions{Extensions: map[string]string{"guid": guid.String()}}, nil
+}
+
+func main() {
+	generateSshKey()
+	sshConfig := &ssh.ServerConfig{
+		PasswordCallback:  passAuthCallback,
+		PublicKeyCallback: keyAuthCallback,
+		ServerVersion:     "SSH-2.0-OpenSSH_6.4p1, OpenSSL 1.0.1e-fips 11 Feb 2013", // old and vulnerable!
+	}
+
+	// You can generate a keypair with 'ssh-keygen -t rsa -C "test@example.com"'
+	privateBytes, err := ioutil.ReadFile("./honeypot")
+	if err != nil {
+		log.Fatal("Failed to load private key (./honeypot)")
 	}
 
 	private, err := ssh.ParsePrivateKey(privateBytes)
 	if err != nil {
-		panic("Failed to parse private key")
+		log.Fatal("Failed to parse private key")
 	}
 
-	config.AddHostKey(private)
+	sshConfig.AddHostKey(private)
 
-	// Once a ServerConfig has been configured, connections can be
-	// accepted.
+	// Accept all connections
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "22"
 	}
-	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
+
+	// Once a ServerConfig has been configured, connections can be accepted.
+	listener, err := net.Listen("tcp4", ":"+port)
 	if err != nil {
-		panic("failed to listen for connection")
+		log.Fatalf("failed to listen on *:2022")
 	}
-	logfile.Println("[listening for connections]")
-	// Handle connections in a go routine so we can accept multiple connections at once
-	HandleConnection(listener)
-}
 
-func RunCommand(cmd string) []byte {
-	var ret []byte
-	switch cmd {
-	case "uname":
-		ret = []byte("Linux\n\r")
-	case "whoami":
-		ret = []byte("root\n\r")
-	case "service iptables stop":
-		ret = []byte("iptables: unrecognized service\n\r")
-	case "sftp":
-		ret = []byte(sftp_string)
-	}
-	return ret
-}
-
-func HandleSshRequests(channel ssh.Channel, in <-chan *ssh.Request, term *terminal.Terminal) {
-	for req := range in {
-		ok := false
-		logfile.Println("[request " + req.Type + "]: " + string(req.Payload))
-		switch req.Type {
-		case "shell":
-			// hacky way to get around presenting the correct prompt
-			channel.Write([]byte("root@web1:/root# "))
-			term.SetPrompt("root@web1:/root# ")
-		case "exec":
-			term.SetPrompt("")
-			fmt.Println(req)
-			channel.Write(RunCommand(string(req.Payload[4:])))
-			// close after executing their one off command
-			channel.Close()
-		}
-		/* this condition set and reply is needed to allow a PTY */
-		ok = true
-		req.Reply(ok, nil)
-	}
-}
-
-func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, http map[string]string) {
-	defer channel.Close()
+	log.Printf("listening on %s", "0.0.0.0:"+port)
 	for {
-		line, err := term.ReadLine()
+		tcpConn, err := listener.Accept()
 		if err != nil {
-			break
+			log.Printf("failed to accept incoming connection (%s)", err)
+			continue
 		}
-		logfile.Println(line)
-		if line == "" {
-			channel.Close()
-			return
-		}
-
-		if strings.Contains(line, ":") {
-			kv := strings.SplitAfterN(line, ":", 2)
-			http[kv[0]] = strings.TrimSpace(kv[1])
-		} else {
-			kv := strings.Fields(line)
-			if kv[0] == "POST" || kv[0] == "GET" {
-				http["Method"] = kv[0]
-				http["URI"] = kv[1]
-			} else {
-				http[kv[0]] = kv[1]
-			}
-		}
-	}
-}
-
-func HandleTerminalReading(channel ssh.Channel, term *terminal.Terminal) {
-	defer channel.Close()
-	for {
-		line, err := term.ReadLine()
+		// Before use, a handshake must be performed on the incoming net.Conn.
+		sshConn, chans, reqs, err := ssh.NewServerConn(tcpConn, sshConfig)
 		if err != nil {
-			break
+			log.Printf("failed to handshake (%s)", err)
+			continue
 		}
 
-		cmd_log := Command{Cmd: string(line)}
+		// Check remote address
+		log.Printf("new ssh connection from %s (%s)", sshConn.RemoteAddr(), sshConn.ClientVersion())
 
-		if strings.Contains(string(line), "exit") {
-			logfile.Println("[exit requested]")
-			channel.Close()
-		}
-
-		if line == "passwd" {
-			line, _ := term.ReadPassword("Enter new UNIX password: ")
-			logfile.Println("[password changed]: " + line)
-			line, _ = term.ReadPassword("Retype new UNIX password: ")
-			logfile.Println("[password changed confirmation]: " + line)
-			term.Write([]byte("passwd: password updated successfully\r\n"))
-			cmd_log.Cmd += " " + line
-		} else {
-			term.Write(RunCommand(line))
-		}
-		cmd_log.Save()
-		logfile.Println(line)
-	}
-
-}
-
-func HandleConnection(listener net.Listener) {
-	for {
-		nConn, err := listener.Accept()
-		go func() {
-			if err != nil {
-				panic("failed to accept incoming connection")
-			}
-			// Before use, a handshake must be performed on the incoming
-			// net.Conn.
-			_, chans, _, err := ssh.NewServerConn(nConn, config)
-			if err == io.EOF {
-				return
-			}
-
-			if err != nil {
-				logfile.Printf("Handshake error: %s", err)
-			}
-			for newChannel := range chans {
-				channel, requests, err := newChannel.Accept()
-				if err != nil {
-					logfile.Println("[fatal] could not accept channel.")
-					continue
-				}
-
-				var term *terminal.Terminal
-				term = terminal.NewTerminal(channel, "")
-				go HandleSshRequests(channel, requests, term)
-
-				logfile.Println("[channelType]: " + newChannel.ChannelType())
-
-				//newChannel.Reject(ssh.ConnectionFailed, "")
-				// Sessions have out-of-band requests such as "shell",
-				// "pty-req" and "env".
-
-				if newChannel.ChannelType() == "direct-tcpip" {
-					http_request := make(map[string]string)
-					HandleTcpReading(channel, term, http_request)
-					go SaveHttpRequest(http_request)
-				} else {
-					go HandleTerminalReading(channel, term)
-				}
-
-			}
-		}()
+		// Print incoming out-of-band Requests
+		go handleRequests(reqs)
+		// Accept all channels
+		go handleChannels(chans, sshConn.Permissions)
 	}
 }
