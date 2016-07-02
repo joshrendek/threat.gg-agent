@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -25,9 +26,29 @@ type SshLogin struct {
 	LoginType  string `json:"login_type"`
 }
 
+type HttpRequest struct {
+	Headers  http.Header `json:"headers"`
+	URL      string      `json:"url"`
+	FormData url.Values  `json:"form_data"`
+	Method   string      `json:"method"`
+	Guid     string      `json:"guid"`
+	Hostname string      `json:"hostname"`
+	Response string      `json:"response"`
+}
+
 type ShellCommand struct {
 	Cmd  string `json:"command"`
 	Guid string `json:"guid"`
+}
+
+func (hr *HttpRequest) Save() {
+	o, err := json.Marshal(hr)
+	if err != nil {
+		panic(err)
+	}
+	postData := strings.NewReader(string(o))
+	log.Printf("Sending HttpRequest Payload: %s", string(o))
+	PostToApi("http_requests", postData)
 }
 
 func (cmd *ShellCommand) Save() {
@@ -58,6 +79,11 @@ func PostToApi(endpoint string, post_data *strings.Reader) {
 	ssh_api := fmt.Sprintf("%s/api/%s", server_url, endpoint)
 	req, err := http.NewRequest("POST", ssh_api, post_data)
 	log.Println(fmt.Sprintf("[post] %s", ssh_api))
+
+	if os.Getenv("DEBUG") != "" {
+		log.Printf("[debug] %+v", post_data)
+		return
+	}
 	_, err = client.Do(req)
 	if err != nil {
 		fmt.Println(err)

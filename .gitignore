@@ -2,3 +2,4 @@ sshd_honeypot
 honeypot
 honeypot.pub
 .idea
+deploy.sh

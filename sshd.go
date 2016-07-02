@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/satori/go.uuid"
 	"golang.org/x/crypto/ssh"
@@ -9,6 +10,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -16,6 +18,10 @@ import (
 )
 
 const DEFAULT_SHELL = "bash"
+
+var (
+	httpHandler = map[string][]byte{}
+)
 
 func Exists(name string) bool {
 	if _, err := os.Stat(name); err != nil {
@@ -30,11 +36,11 @@ func generateSshKey() {
 	log.Println("[generating ssh keys]")
 	if Exists("honeypot") {
 		log.Println("[removing old keys]")
-		os.Remove("honeypot")
-		os.Remove("honeypot.pub")
+		os.Remove("honeypot_prv")
+		os.Remove("honeypot_prv.pub")
 	}
 
-	out, err := exec.Command("ssh-keygen", "-t", "rsa", "-q", "-f", "honeypot", "-N", "").CombinedOutput()
+	out, err := exec.Command("ssh-keygen", "-t", "rsa", "-q", "-f", "honeypot_prv", "-N", "").CombinedOutput()
 	if err != nil {
 		log.Println(string(out))
 		panic(fmt.Sprintf("Error generating key: %s", err))
@@ -44,6 +50,69 @@ func generateSshKey() {
 func handleRequests(reqs <-chan *ssh.Request) {
 	for req := range reqs {
 		log.Printf("recieved out-of-band request: %+v", req)
+	}
+}
+
+func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.Permissions) {
+	defer channel.Close()
+	//http := map[string]string{}
+	for {
+		// read up to 1MB of data
+		b := make([]byte, 1024*1024)
+		_, err := channel.Read(b)
+		if err != nil {
+			if err.Error() == "EOF" {
+				return
+			}
+		}
+		read := bufio.NewReader(strings.NewReader(string(b)))
+		toReq, err := http.ReadRequest(read)
+		// TODO: https will panic atm - need to figure this out
+		if err != nil {
+			log.Println("Error parsing request: ", err)
+			return
+		}
+		err = toReq.ParseForm()
+		if err != nil {
+			log.Println("Error parsing form: ", err)
+			return
+		}
+		url := fmt.Sprintf("%s%s", toReq.Host, toReq.URL)
+
+		httpReq := &HttpRequest{
+			Headers:  toReq.Header,
+			URL:      url,
+			FormData: toReq.Form,
+			Method:   toReq.Method,
+			Guid:     perms.Extensions["guid"],
+			Hostname: toReq.Host,
+		}
+
+		client := &http.Client{}
+		resp, err := client.Get(fmt.Sprintf("http://%s", url))
+		if err != nil {
+			log.Fatalf("Body read error: %s", err)
+		}
+
+		defer resp.Body.Close()
+		body, err2 := ioutil.ReadAll(resp.Body)
+		if err2 != nil {
+			log.Fatalf("Body read error: %s", err2)
+		}
+		httpReq.Response = string(body)
+		httpReq.Save()
+
+		log.Printf("[ http://%s ] %s", url, body)
+
+		channel.Write(body)
+		// make the http request
+
+		//if resp, ok := httpHandler[url]; ok {
+		//	channel.Write(resp)
+		//} else {
+		//	channel.Write([]byte("45.4.5.6"))
+		//}
+		channel.Close()
 	}
 }
 
@@ -68,6 +137,11 @@ func handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
 		shell = os.Getenv("SHELL")
 		if shell == "" {
 			shell = DEFAULT_SHELL
+		}
+
+		if newChannel.ChannelType() == "direct-tcpip" {
+			term := terminal.NewTerminal(channel, "")
+			go HandleTcpReading(channel, term, perms)
 		}
 
 		// Sessions have out-of-band requests such as "shell", "pty-req" and "env"
@@ -128,11 +202,6 @@ func handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
 
 						log.Println(line)
 					}
-					//cmd := exec.Command(shell)
-					//cmd.Env = []string{"TERM=xterm"}
-
-					// We don't accept any commands (Payload),
-					// only the default shell.
 					if len(req.Payload) == 0 {
 						ok = true
 					}
@@ -209,7 +278,7 @@ func main() {
 	}
 
 	// You can generate a keypair with 'ssh-keygen -t rsa -C "test@example.com"'
-	privateBytes, err := ioutil.ReadFile("./honeypot")
+	privateBytes, err := ioutil.ReadFile("./honeypot_prv")
 	if err != nil {
 		log.Fatal("Failed to load private key (./honeypot)")
 	}
@@ -232,6 +301,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to listen on *:2022")
 	}
+
+	// setup http handlers
+	httpHandler["ip-api.com/json"] = []byte(`{"as":"AS701 MCI Communications Services, Inc. d/b/a Verizon Business","city":"Peach","country":"United States","countryCode":"US","isp":"Verizon Fios","lat":22.9166,"lon":-44.8032,"org":"Verizon Fios","query":"13.65.94.13","region":"GA","regionName":"Georgia","status":"success","timezone":"America/New_York","zip":"12345"}`)
+	httpHandler["cetinhechinhis.com/ip.php"] = []byte("45.4.123.22")
+	httpHandler["www.hailsoft.net/ip.php"] = []byte("45.4.123.22")
 
 	log.Printf("listening on %s", "0.0.0.0:"+port)
 	for {
