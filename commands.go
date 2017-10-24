@@ -98,7 +98,18 @@ func (c *Ls) Run(in string) (string, bool) {
 type LsAl struct{}
 
 func (c *LsAl) Match(in string) bool {
-	return in == "ls -al"
+	ret := false
+	if in == "ll" {
+		ret = true
+	}
+	if strings.Contains(in, "ls -al") {
+		ret = true
+	}
+	if strings.Contains(in, "ls -l") {
+		ret = true
+	}
+	return ret
+
 }
 
 func (c *LsAl) Run(in string) (string, bool) {
