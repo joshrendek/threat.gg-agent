@@ -34,7 +34,7 @@ func Exists(name string) bool {
 
 func generateSshKey() {
 	log.Println("[generating ssh keys]")
-	if Exists("honeypot") {
+	if Exists("honeypot_prv") {
 		log.Println("[removing old keys]")
 		os.Remove("honeypot_prv")
 		os.Remove("honeypot_prv.pub")
