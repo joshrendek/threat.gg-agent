@@ -23,6 +23,9 @@ func (ch *CommandHandler) Register(commands ...Command) {
 }
 
 func (ch *CommandHandler) MatchAndRun(in string) (string, bool) {
+	if  strings.TrimSpace(in) == "" {
+		return "", false
+	}
 	for _, c := range ch.Commands {
 		if c.Match(strings.TrimSpace(in)) {
 			return c.Run(in)
