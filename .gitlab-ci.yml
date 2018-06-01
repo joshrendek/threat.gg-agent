@@ -1,0 +1,66 @@
+stages:
+    - build
+    - deploy
+    - mirror
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DEPLOY_IMAGE: $DEPLOY_IMAGE
+  GO_DIR: /go/src/github.com/joshrendek
+
+
+services:
+  - docker:dind
+
+build:binaries:
+  image: golang:1.10
+  stage: build
+  artifacts:
+    untracked: true
+    paths:
+      - out/
+  before_script:
+    - mkdir -p $GO_DIR
+    - cp -r $CI_PROJECT_DIR $GO_DIR/hnypots-agent
+    - curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
+    - mkdir $CI_PROJECT_DIR/out
+  script:
+    - cd $GO_DIR/hnypots-agent
+    - dep ensure
+    - GOOS=linux go build -o honeypot
+    - mv honeypot $CI_PROJECT_DIR/out
+
+
+deploy:agents:
+  image: $DEPLOY_IMAGE
+  stage: deploy
+  tags:
+    - home
+  artifacts:
+    untracked: true
+    paths:
+      - out/
+  variables:
+    BOOK: honeypots
+  before_script:
+    - eval $(ssh-agent -s)
+    - ssh-add <(echo "$SSH_DEPLOY_KEY")
+  script:
+    - cp out/honeypot /tmp/honeypot
+    - ansible honeypots -m ping
+    - cd /ansible
+    - ansible-playbook infrastructure/$BOOK.yml -f 100
+
+mirror:
+  image: $DEPLOY_IMAGE
+  stage: mirror
+  before_script:
+    - eval $(ssh-agent -s)
+    - ssh-add <(echo "$SSH_DEPLOY_KEY")
+    - mkdir -p ~/.ssh
+    - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+  script:
+    - git remote add github git@github.com:joshrendek/hnypots-agent.git
+    - git push -f -u github master
+  only:
+    - master

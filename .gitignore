@@ -1,0 +1,8 @@
+sshd_honeypot
+honeypot_prv
+honeypot_prv.pub
+honeypot
+vendor
+honeypot.pub
+.idea
+deploy.sh
