@@ -13,7 +13,7 @@ import (
 
 var (
 	client = &http.Client{}
-	logger = zerolog.New(os.Stdout).With().Str("persistence", "").Logger()
+	logger = zerolog.New(os.Stdout).With().Caller().Str("persistence", "").Logger()
 )
 
 type FtpAttack struct {

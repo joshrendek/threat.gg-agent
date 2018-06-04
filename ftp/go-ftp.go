@@ -47,7 +47,7 @@ type honeypot struct {
 }
 
 func init() {
-	honeypots.Register(&honeypot{logger: zerolog.New(os.Stdout).With().Str("honeypot", "ftp").Logger()})
+	honeypots.Register(&honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "ftp").Logger()})
 }
 
 func (h *honeypot) Name() string {
