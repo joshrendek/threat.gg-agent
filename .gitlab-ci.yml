@@ -28,8 +28,9 @@ build:binaries:
   script:
     - cd $GO_DIR/hnypots-agent
     - dep ensure
-    - GOOS=linux go build -o honeypot
+    - GOOS=linux go build -ldflags "-X main.Version=`date -u +%Y%m%d`$BUILD_NUMBER" -o honeypot
     - mv honeypot $CI_PROJECT_DIR/out
+    - $CI_PROJECT_DIR/out/honeypot -version
 
 
 deploy:agents:
