@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/prometheus/common/log"
+	"github.com/rs/zerolog"
 )
 
 const (
@@ -24,7 +24,7 @@ type ConnectionConfig struct {
 	Filename           string
 }
 
-func HandleConnection(c net.Conn) {
+func HandleConnection(c net.Conn, logger zerolog.Logger) {
 	// Handle a connection from a client
 	defer c.Close()
 
@@ -48,7 +48,7 @@ func HandleConnection(c net.Conn) {
 
 	for {
 		cmd := getMsg(c)
-		response, err := handleCommand(cmd, &config, &user, c)
+		response, err := handleCommand(cmd, &config, &user, c, logger)
 		if err != nil {
 			break
 		}
@@ -57,14 +57,13 @@ func HandleConnection(c net.Conn) {
 	}
 }
 
-func handleCommand(input string, ch *ConnectionConfig, user *AuthUser, c net.Conn) (string, error) {
+func handleCommand(input string, ch *ConnectionConfig, user *AuthUser, c net.Conn, logger zerolog.Logger) (string, error) {
 	// Handles input after authentication
 
 	input = strings.TrimSpace(input)
-	fmt.Println("COMMAND: ", input)
 	cmd, args, err := parseCommand(input)
-	log.Infof("FTP: Command: [%s] from [%s]", input, c.RemoteAddr())
-	//fmt.Printf("%s from %v: %s\n", SyntaxErr, c.RemoteAddr(), input)
+	logger.Info().Str("command", input).Str("remote_ip", c.RemoteAddr().String()).Msg("command received from client")
+
 	if err != nil {
 		return SyntaxErr, err
 	}

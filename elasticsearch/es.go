@@ -7,8 +7,11 @@ import (
 
 	"github.com/joshrendek/hnypots-agent/persistence"
 
-	"github.com/prometheus/common/log"
-	uuid "github.com/satori/go.uuid"
+	"github.com/joshrendek/hnypots-agent/honeypots"
+	//"github.com/prometheus/common/log"
+	"github.com/rs/zerolog"
+	"github.com/satori/go.uuid"
+	"os"
 )
 
 var resp = `{
@@ -25,7 +28,13 @@ var resp = `{
   "tagline": "You Know, for Search"
 }`
 
-type ES struct{}
+type ES struct {
+	logger zerolog.Logger
+}
+
+type honeypot struct {
+	logger zerolog.Logger
+}
 
 func (e *ES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-type", "application/json")
@@ -47,23 +56,29 @@ func (e *ES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	attack.RemoteAddr = x[0]
 
 	r.ParseForm()
-	log.Infof("[elasticsearch] path: %s - remote_ip: %s - client: %s", r.RequestURI, r.RemoteAddr, r.UserAgent())
+	requestID := uuid.NewV4()
+	requestLogger := e.logger.With().Str("request_id", requestID.String()).Logger()
+	requestLogger.Info().Str("path", r.RequestURI).Str("remote_ip", r.RemoteAddr).Str("user_agent", r.UserAgent()).Msg("connection accepted")
 	for k, v := range r.Header {
 		attack.Headers[k] = v[0]
-		log.Infof("[elasticsearch] |----> header: %s -> %s", k, v)
+		requestLogger.Info().Strs(k, v).Msg("header")
 	}
 	for k, v := range r.Form {
 		attack.FormData[k] = v[0]
-		log.Infof("[elasticsearch] |----> form: %s -> %s", k, v)
+		requestLogger.Info().Strs(k, v).Msg("form data")
 	}
-	//log.Infof("%+v\n", attack)
 	attack.Save()
 	fmt.Fprintf(w, resp)
 }
 
-func Start() {
-	//http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-	//})
+func init() {
+	honeypots.Register(&honeypot{logger: zerolog.New(os.Stdout).With().Str("honeypot", "elasticsearch").Logger()})
+}
 
-	log.Fatal(http.ListenAndServe(":9200", &ES{}))
+func (h *honeypot) Name() string {
+	return "elasticsearch"
+}
+
+func (h *honeypot) Start() {
+	h.logger.Fatal().Err(http.ListenAndServe(":9200", &ES{logger: h.logger})).Msg("failed to start")
 }

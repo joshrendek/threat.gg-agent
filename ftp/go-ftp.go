@@ -8,8 +8,9 @@ import (
 
 	"github.com/joshrendek/hnypots-agent/persistence"
 
-	"github.com/prometheus/common/log"
-	uuid "github.com/satori/go.uuid"
+	"github.com/joshrendek/hnypots-agent/honeypots"
+	"github.com/rs/zerolog"
+	"github.com/satori/go.uuid"
 )
 
 type LoginDetails struct {
@@ -26,43 +27,45 @@ func CommandReceiver() {
 
 }
 
-func LoginReceiver() {
+func LoginReceiver(logger zerolog.Logger) {
 	for l := range loginDetails {
 		guid := uuid.NewV4()
 		remoteAddr := strings.Split(l.RemoteAddr, ":")
-		log.Infof("remoteAddr: +v\n", remoteAddr)
+		logger.Info().Str("remote_ip", remoteAddr[0]).Msg("connection started")
 		attack := &persistence.FtpAttack{}
 		attack.Guid = guid.String()
 		attack.RemoteAddr = remoteAddr[0]
 		attack.Username = l.Username
 		attack.Password = l.Password
-		log.Infof("login-details: %+v\n", l)
+		logger.Info().Msgf("login details: %+v\n", l)
 		attack.Save()
 	}
-	//credentials := <-loginDetails
-	//fmt.Println("login received")
-	//fmt.Println(credentials)
-	//prefix := "honeypot."
-	//statsdclient := statsd.NewStatsdClient("stats.sysward.com:8125", prefix)
-	//statsdclient.CreateSocket()
-	//statsdclient.Incr("ftp.logins", 1)
-	//statsdclient.Close()
-
 }
 
-func Start() {
-	fmt.Println("Starting up FTP server")
+type honeypot struct {
+	logger zerolog.Logger
+}
+
+func init() {
+	honeypots.Register(&honeypot{logger: zerolog.New(os.Stdout).With().Str("honeypot", "ftp").Logger()})
+}
+
+func (h *honeypot) Name() string {
+	return "ftp"
+}
+
+func (h *honeypot) Start() {
 	port := ":21"
 	if os.Getenv("FTP_PORT") != "" {
 		port = ":" + os.Getenv("FTP_PORT")
 	}
 	ln, err := net.Listen("tcp", port)
 	if err != nil {
-		fmt.Println(err)
+		h.logger.Fatal().Err(err).Msg("failed to start")
 		os.Exit(1)
 	}
 
-	go LoginReceiver()
+	go LoginReceiver(h.logger)
 
 	for {
 		c, err := ln.Accept()
@@ -70,9 +73,8 @@ func Start() {
 			fmt.Println(err)
 			continue
 		}
-
-		fmt.Printf("Connection from %v established.\n", c.RemoteAddr())
-		go HandleConnection(c)
+		h.logger.Info().Str("remote_ip", c.RemoteAddr().String()).Msg("connection established")
+		go HandleConnection(c, h.logger)
 	}
 
 }

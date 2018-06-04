@@ -3,7 +3,8 @@ package persistence
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"github.com/rs/zerolog"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 var (
 	client = &http.Client{}
+	logger = zerolog.New(os.Stdout).With().Str("persistence", "").Logger()
 )
 
 type FtpAttack struct {
@@ -114,13 +116,17 @@ func (hr *HttpRequest) Save() {
 	PostToApi("http_requests", postData)
 }
 
+func RegisterHoneypot() {
+	PostToApi("honeypots", strings.NewReader(""))
+}
+
 func (cmd *ShellCommand) Save() {
 	o, err := json.Marshal(cmd)
 	if err != nil {
 		panic(err)
 	}
 	postData := strings.NewReader(string(o))
-	log.Printf("Sending ShellCommand Payload: %s", string(o))
+	logger.Info().Msgf("sending shell command payload: %s", string(o))
 	PostToApi("commands", postData)
 }
 
@@ -130,7 +136,7 @@ func (login *SshLogin) Save() {
 		panic(err)
 	}
 	postData := strings.NewReader(string(o))
-	log.Printf("Sending Login Payload: %s", string(o))
+	logger.Info().Msgf("sending login payload: %s", string(o))
 	PostToApi("logins", postData)
 }
 
@@ -142,16 +148,18 @@ func PostToApi(endpoint string, post_data *strings.Reader) {
 	}
 	ssh_api := fmt.Sprintf("%s/api/%s?api_key=%s", server_url, endpoint, apiKey)
 	req, err := http.NewRequest("POST", ssh_api, post_data)
-	log.Println(fmt.Sprintf("[post] %s", ssh_api))
+	logger.Info().Str("endpoint", endpoint).Msg("posting to endpoint")
 
 	if os.Getenv("DEBUG") != "" {
-		log.Printf("[debug] %+v", post_data)
+		logger.Info().Msgf("sending post data: %+v\n", post_data)
 		return
 	}
-	_, err = client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
+		logger.Error().Err(err).Str("endpoint", endpoint).Msg("failed to post to API")
 	}
+	body, _ := ioutil.ReadAll(resp.Body)
+	logger.Error().Str("body", string(body)).Msg("api response")
 }
 
 func SaveHttpRequest(http_request map[string]string) {
@@ -160,6 +168,6 @@ func SaveHttpRequest(http_request map[string]string) {
 		panic(err)
 	}
 	postData := strings.NewReader(string(o))
-	fmt.Println(string(o))
+	logger.Info().Msgf("http request data: %s", string(o))
 	PostToApi("http", postData)
 }

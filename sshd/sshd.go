@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,9 +15,12 @@ import (
 
 	"github.com/joshrendek/hnypots-agent/persistence"
 
+	"github.com/joshrendek/hnypots-agent/honeypots"
+	"github.com/rs/zerolog"
 	"github.com/satori/go.uuid"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
+	"net"
 )
 
 const DEFAULT_SHELL = "bash"
@@ -26,6 +28,80 @@ const DEFAULT_SHELL = "bash"
 var (
 	httpHandler = map[string][]byte{}
 )
+
+type honeypot struct {
+	logger zerolog.Logger
+}
+
+func init() {
+	honeypots.Register(&honeypot{logger: zerolog.New(os.Stdout).With().Str("honeypot", "ssh").Logger()})
+}
+
+func (h *honeypot) Name() string {
+	return "ssh"
+}
+
+func (h *honeypot) Start() {
+	h.generateSshKey()
+	sshConfig := &ssh.ServerConfig{
+		PasswordCallback:  passAuthCallback,
+		PublicKeyCallback: keyAuthCallback,
+		ServerVersion:     "SSH-2.0-OpenSSH_6.4p1, OpenSSL 1.0.1e-fips 11 Feb 2013", // old and vulnerable!
+	}
+
+	// You can generate a keypair with 'ssh-keygen -t rsa -C "test@example.com"'
+	privateBytes, err := ioutil.ReadFile("./honeypot_prv")
+	if err != nil {
+		h.logger.Fatal().Msg("failed to load private key (./honeypot_prv)")
+	}
+
+	private, err := ssh.ParsePrivateKey(privateBytes)
+	if err != nil {
+		h.logger.Fatal().Msg("failed to parse private key")
+	}
+
+	sshConfig.AddHostKey(private)
+
+	// Accept all connections
+	port := os.Getenv("SSH_PORT")
+	if port == "" {
+		port = "22"
+	}
+
+	// Once a ServerConfig has been configured, connections can be accepted.
+	listener, err := net.Listen("tcp4", ":"+port)
+	if err != nil {
+		h.logger.Fatal().Str("port", port).Msg("failed to listen")
+	}
+
+	// setup http handlers
+	httpHandler["ip-api.com/json"] = []byte(`{"as":"AS701 MCI Communications Services, Inc. d/b/a Verizon Business","city":"Peach","country":"United States","countryCode":"US","isp":"Verizon Fios","lat":22.9166,"lon":-44.8032,"org":"Verizon Fios","query":"13.65.94.13","region":"GA","regionName":"Georgia","status":"success","timezone":"America/New_York","zip":"12345"}`)
+	httpHandler["cetinhechinhis.com/ip.php"] = []byte("45.4.123.22")
+	httpHandler["www.hailsoft.net/ip.php"] = []byte("45.4.123.22")
+
+	h.logger.Info().Str("port", port).Msg("started listening")
+	for {
+		tcpConn, err := listener.Accept()
+		if err != nil {
+			h.logger.Error().Err(err).Msg("failed to accept incoming connection")
+			continue
+		}
+		// Before use, a handshake must be performed on the incoming net.Conn.
+		sshConn, chans, reqs, err := ssh.NewServerConn(tcpConn, sshConfig)
+		if err != nil {
+			h.logger.Error().Err(err).Msg("failed to handshake")
+			continue
+		}
+
+		// Check remote address
+		h.logger.Info().Str("remote_ip", sshConn.RemoteAddr().String()).Str("client_version", string(sshConn.ClientVersion())).Msg("new ssh connection")
+
+		// Print incoming out-of-band Requests
+		go h.handleRequests(reqs)
+		// Accept all channels
+		go h.handleChannels(chans, sshConn.Permissions)
+	}
+}
 
 func Exists(name string) bool {
 	if _, err := os.Stat(name); err != nil {
@@ -36,22 +112,21 @@ func Exists(name string) bool {
 	return true
 }
 
-func generateSshKey() {
-	log.Println("[generating ssh keys]")
-	if Exists("honeypot") {
-		log.Println("[removing old keys]")
+func (h *honeypot) generateSshKey() {
+	h.logger.Info().Msg("generating ssh keys")
+	if Exists("honeypot_prv") {
+		h.logger.Info().Msg("removing old keys")
 		os.Remove("honeypot_prv")
 		os.Remove("honeypot_prv.pub")
 	}
 
 	out, err := exec.Command("ssh-keygen", "-t", "rsa", "-q", "-f", "honeypot_prv", "-N", "").CombinedOutput()
 	if err != nil {
-		log.Println(string(out))
-		panic(fmt.Sprintf("Error generating key: %s", err))
+		h.logger.Fatal().Err(err).Str("output", string(out)).Msg("error generating key")
 	}
 }
 
-func handleRequests(reqs <-chan *ssh.Request) {
+func (h *honeypot) handleRequests(reqs <-chan *ssh.Request) {
 	for req := range reqs {
 		log.Printf("recieved out-of-band request: %+v", req)
 	}
@@ -121,7 +196,7 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 	}
 }
 
-func handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
+func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
 	// Service the incoming Channel channel.
 	for newChannel := range chans {
 		// Channels have a type, depending on the application level
@@ -134,7 +209,7 @@ func handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
 		//}
 		channel, requests, err := newChannel.Accept()
 		if err != nil {
-			log.Printf("could not accept channel (%s)", err)
+			h.logger.Error().Err(err).Msg("could not accept channel")
 			continue
 		}
 
@@ -163,7 +238,7 @@ func handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
 					&Whoami{User: "root"},
 				)
 
-				log.Printf("Payload: %s", req.Payload)
+				h.logger.Info().Msgf("payload %+v\n", req.Payload)
 				ok := false
 				switch req.Type {
 				// exec is used: ssh user@host 'some command'
@@ -187,13 +262,13 @@ func handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
 						term.Write([]byte("root@localhost:/# "))
 						line, err := term.ReadLine()
 						if err == io.EOF {
-							log.Printf("EOF detected, closing")
+							h.logger.Info().Msg("eof detected, closing")
 							channel.Close()
 							ok = true
 							break
 						}
 						if err != nil {
-							log.Printf("Error: %s", err)
+							h.logger.Error().Err(err).Msg("error running shell")
 						}
 
 						cmdOut, newLine := handler.MatchAndRun(line)
@@ -217,13 +292,13 @@ func handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
 					// Parse body...
 					termLen := req.Payload[3]
 					termEnv := string(req.Payload[4 : termLen+4])
-					log.Printf("pty-req '%s'", termEnv)
+					h.logger.Info().Str("pty-req", termEnv).Msg("pty request")
 				default:
-					log.Printf("[%s] Payload: %s", req.Type, req.Payload)
+					h.logger.Info().Str("type", req.Type).Str("payload", string(req.Payload)).Msg("unknown payload")
 				}
 
 				if !ok {
-					log.Printf("declining %s request...", req.Type)
+					h.logger.Info().Str("type", req.Type).Msg("declining request")
 				}
 
 				req.Reply(ok, nil)
@@ -272,66 +347,4 @@ func keyAuthCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions
 	//log.Println("Fail to authenticate", conn, ":", err)
 	//return nil, errors.New("invalid authentication")
 	return &ssh.Permissions{Extensions: map[string]string{"guid": guid.String()}}, nil
-}
-
-func Start() {
-	generateSshKey()
-	sshConfig := &ssh.ServerConfig{
-		PasswordCallback:  passAuthCallback,
-		PublicKeyCallback: keyAuthCallback,
-		ServerVersion:     "SSH-2.0-OpenSSH_6.4p1, OpenSSL 1.0.1e-fips 11 Feb 2013", // old and vulnerable!
-	}
-
-	// You can generate a keypair with 'ssh-keygen -t rsa -C "test@example.com"'
-	privateBytes, err := ioutil.ReadFile("./honeypot_prv")
-	if err != nil {
-		log.Fatal("Failed to load private key (./honeypot)")
-	}
-
-	private, err := ssh.ParsePrivateKey(privateBytes)
-	if err != nil {
-		log.Fatal("Failed to parse private key")
-	}
-
-	sshConfig.AddHostKey(private)
-
-	// Accept all connections
-	port := os.Getenv("SSH_PORT")
-	if port == "" {
-		port = "22"
-	}
-
-	// Once a ServerConfig has been configured, connections can be accepted.
-	listener, err := net.Listen("tcp4", ":"+port)
-	if err != nil {
-		log.Fatalf("failed to listen on *:2022")
-	}
-
-	// setup http handlers
-	httpHandler["ip-api.com/json"] = []byte(`{"as":"AS701 MCI Communications Services, Inc. d/b/a Verizon Business","city":"Peach","country":"United States","countryCode":"US","isp":"Verizon Fios","lat":22.9166,"lon":-44.8032,"org":"Verizon Fios","query":"13.65.94.13","region":"GA","regionName":"Georgia","status":"success","timezone":"America/New_York","zip":"12345"}`)
-	httpHandler["cetinhechinhis.com/ip.php"] = []byte("45.4.123.22")
-	httpHandler["www.hailsoft.net/ip.php"] = []byte("45.4.123.22")
-
-	log.Printf("listening on %s", "0.0.0.0:"+port)
-	for {
-		tcpConn, err := listener.Accept()
-		if err != nil {
-			log.Printf("failed to accept incoming connection (%s)", err)
-			continue
-		}
-		// Before use, a handshake must be performed on the incoming net.Conn.
-		sshConn, chans, reqs, err := ssh.NewServerConn(tcpConn, sshConfig)
-		if err != nil {
-			log.Printf("failed to handshake (%s)", err)
-			continue
-		}
-
-		// Check remote address
-		log.Printf("new ssh connection from %s (%s)", sshConn.RemoteAddr(), sshConn.ClientVersion())
-
-		// Print incoming out-of-band Requests
-		go handleRequests(reqs)
-		// Accept all channels
-		go handleChannels(chans, sshConn.Permissions)
-	}
 }
