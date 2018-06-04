@@ -16,6 +16,8 @@ services:
 build:binaries:
   image: golang:1.10
   stage: build
+  variables:
+    BUILD_NUMBER: $CI_PIPELINE_ID
   artifacts:
     untracked: true
     paths:
