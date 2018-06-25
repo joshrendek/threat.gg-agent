@@ -144,7 +144,7 @@ func PostToApi(endpoint string, post_data *strings.Reader) {
 	apiKey := os.Getenv("API_KEY")
 	server_url := os.Getenv("SERVER_URL")
 	if server_url == "" {
-		server_url = "https://hnypots.com"
+		server_url = "https://threatwar.com"
 	}
 	ssh_api := fmt.Sprintf("%s/api/%s?api_key=%s", server_url, endpoint, apiKey)
 	req, err := http.NewRequest("POST", ssh_api, post_data)
