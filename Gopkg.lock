@@ -41,9 +41,15 @@
   ]
   revision = "c11f84a56e43e20a78cee75a7c034031ecf57d1f"
 
+[[projects]]
+  name = "gopkg.in/alexcesaro/statsd.v2"
+  packages = ["."]
+  revision = "7fea3f0d2fab1ad973e641e51dba45443a311a90"
+  version = "v2.0.0"
+
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "7046cf502be10e9f754db47cf0d74d2f599eff421d0f5c47b1298e4d5e20a70f"
+  inputs-digest = "aec4c49a3181ab1c7b220ec2d1825a940f681a757cabdacd18846381513cccba"
   solver-name = "gps-cdcl"
   solver-version = 1

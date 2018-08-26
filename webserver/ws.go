@@ -8,6 +8,7 @@ import (
 	"github.com/joshrendek/hnypots-agent/persistence"
 
 	"github.com/joshrendek/hnypots-agent/honeypots"
+	"github.com/joshrendek/hnypots-agent/stats"
 	"github.com/rs/zerolog"
 	"github.com/satori/go.uuid"
 	"os"
@@ -59,6 +60,7 @@ func (h *honeypot) Start() {
 			requestLogger.Info().Strs(k, v).Msg("header")
 		}
 		attack.Save()
+		stats.Increment("web.requests")
 		fmt.Fprintf(w, "Hello World")
 	})
 

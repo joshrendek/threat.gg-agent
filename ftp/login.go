@@ -1,5 +1,7 @@
 package ftp
 
+import "github.com/joshrendek/hnypots-agent/stats"
+
 type AuthUser struct {
 	username string
 	password string
@@ -8,6 +10,8 @@ type AuthUser struct {
 
 func handleLogin(message string, user *AuthUser) string {
 	// Handle login operations
+
+	stats.Increment("ftp.logins")
 
 	cmd, args, err := parseCommand(message)
 	if err != nil {

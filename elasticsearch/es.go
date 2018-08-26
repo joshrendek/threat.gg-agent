@@ -9,6 +9,7 @@ import (
 
 	"github.com/joshrendek/hnypots-agent/honeypots"
 	//"github.com/prometheus/common/log"
+	"github.com/joshrendek/hnypots-agent/stats"
 	"github.com/rs/zerolog"
 	"github.com/satori/go.uuid"
 	"os"
@@ -67,6 +68,7 @@ func (e *ES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		attack.FormData[k] = v[0]
 		requestLogger.Info().Strs(k, v).Msg("form data")
 	}
+	stats.Increment("elastic_search.requests")
 	attack.Save()
 	fmt.Fprintf(w, resp)
 }

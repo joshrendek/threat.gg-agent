@@ -16,6 +16,7 @@ import (
 	"github.com/joshrendek/hnypots-agent/persistence"
 
 	"github.com/joshrendek/hnypots-agent/honeypots"
+	"github.com/joshrendek/hnypots-agent/stats"
 	"github.com/rs/zerolog"
 	"github.com/satori/go.uuid"
 	"golang.org/x/crypto/ssh"
@@ -144,6 +145,8 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 				return
 			}
 		}
+
+		stats.Increment("ssh.proxy_request")
 		read := bufio.NewReader(strings.NewReader(string(b)))
 		toReq, err := http.ReadRequest(read)
 		// TODO: https will panic atm - need to figure this out
@@ -213,6 +216,8 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 			continue
 		}
 
+		sessionTimer := stats.NewTiming()
+
 		var shell string
 		shell = os.Getenv("SHELL")
 		if shell == "" {
@@ -253,6 +258,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 					}
 
 					shellCommand := &persistence.ShellCommand{Cmd: command, Guid: perms.Extensions["guid"]}
+					stats.Increment("ssh.shell_commands")
 					go shellCommand.Save()
 
 					channel.Close()
@@ -263,6 +269,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 						line, err := term.ReadLine()
 						if err == io.EOF {
 							h.logger.Info().Msg("eof detected, closing")
+							sessionTimer.Send("ssh.session_time")
 							channel.Close()
 							ok = true
 							break
@@ -278,6 +285,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 						}
 
 						shellCommand := &persistence.ShellCommand{Cmd: line, Guid: perms.Extensions["guid"]}
+						stats.Increment("ssh.shell_commands")
 						go shellCommand.Save()
 
 						log.Println(line)
