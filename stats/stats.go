@@ -15,7 +15,7 @@ var (
 
 func Setup() {
 	var err error
-	statsd.Address(StatsdHost)
+	statsd.New(statsd.Address(StatsdHost))
 	c, err = statsd.New() // Connect to the UDP port 8125 by default.
 	if err != nil {
 		// If nothing is listening on the target port, an error is returned and
