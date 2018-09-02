@@ -146,8 +146,11 @@ func PostToApi(endpoint string, post_data *strings.Reader) {
 	if server_url == "" {
 		server_url = "https://threatwar.com"
 	}
-	ssh_api := fmt.Sprintf("%s/api/%s?api_key=%s", server_url, endpoint, apiKey)
+	ssh_api := fmt.Sprintf("%s/api/%s", server_url, endpoint)
 	req, err := http.NewRequest("POST", ssh_api, post_data)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", apiKey)
 	logger.Info().Str("endpoint", endpoint).Msg("posting to endpoint")
 
 	if os.Getenv("DEBUG") != "" {
