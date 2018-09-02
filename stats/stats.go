@@ -20,6 +20,10 @@ var (
 
 func Setup() {
 	client := statsd.NewStatsdClient(StatsdHost, "honeypot")
+	err := client.CreateSocket()
+	if err != nil {
+		logger.Print("error statsd: ", err)
+	}
 	interval := time.Second * 10 // aggregate stats and flush every 2 seconds
 	c = statsd.NewStatsdBuffer(interval, client)
 	logger.Print("statsd host: ", StatsdHost)
