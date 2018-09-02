@@ -19,7 +19,7 @@ var (
 )
 
 func Setup() {
-	client := statsd.NewStatsdClient(StatsdHost, "honeypot")
+	client := statsd.NewStatsdClient(StatsdHost, "honeypot.")
 	err := client.CreateSocket()
 	if err != nil {
 		logger.Print("error statsd: ", err)
