@@ -4,7 +4,7 @@ import (
 	"github.com/rs/zerolog"
 	//"github.com/rs/zerolog/log"
 	//"gopkg.in/alexcesaro/statsd.v2"
-	"gopkg.in/alexcesaro/statsd.v2"
+	//"gopkg.in/alexcesaro/statsd.v2"
 	"os"
 )
 
@@ -43,4 +43,5 @@ func (f *fake) Send(s string) {
 
 func NewTiming() *fake {
 	//return c.NewTiming()
+	return &fake{}
 }
