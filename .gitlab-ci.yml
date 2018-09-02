@@ -38,8 +38,8 @@ build:binaries:
 deploy:agents:
   image: $DEPLOY_IMAGE
   stage: deploy
-  tags:
-    - home
+#  tags:
+#    - home
   artifacts:
     untracked: true
     paths:
