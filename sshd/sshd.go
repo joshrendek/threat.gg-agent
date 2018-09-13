@@ -234,6 +234,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 			for req := range in {
 				term := terminal.NewTerminal(channel, "")
 				handler := NewCommandHandler(term)
+				cr := NewCommandService()
 				handler.Register(&Ls{}, &LsAl{},
 					&Help{},
 					&Pwd{},
@@ -278,8 +279,12 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							h.logger.Error().Err(err).Msg("error running shell")
 						}
 
-						cmdOut, newLine := handler.MatchAndRun(line)
-						term.Write([]byte(cmdOut))
+						resp := cr.GetCommandResponse(line)
+						newLine := false
+						term.Write([]byte(resp.Response))
+
+						//cmdOut, newLine := handler.MatchAndRun(line)
+						//term.Write([]byte(cmdOut))
 						if newLine {
 							term.Write([]byte("\r\n"))
 						}
