@@ -233,18 +233,9 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 		go func(in <-chan *ssh.Request) {
 			for req := range in {
 				term := terminal.NewTerminal(channel, "")
-				handler := NewCommandHandler(term)
 				cr := NewCommandService()
-				handler.Register(&Ls{}, &LsAl{},
-					&Help{},
-					&Pwd{},
-					&UnsetHistory{},
-					&Uname{},
-					&Echo{},
-					&Whoami{User: "root"},
-				)
 
-				h.logger.Info().Msgf("payload %+v\n", req.Payload)
+				h.logger.Info().Msgf("payload %+v\n", string(req.Payload))
 				ok := false
 				switch req.Type {
 				// exec is used: ssh user@host 'some command'
@@ -252,11 +243,8 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 					ok = true
 					command := string(req.Payload[4 : req.Payload[3]+4])
 
-					cmdOut, newLine := handler.MatchAndRun(command)
-					term.Write([]byte(cmdOut))
-					if newLine {
-						term.Write([]byte("\r\n"))
-					}
+					resp := cr.GetCommandResponse(command)
+					term.Write([]byte(resp.Response))
 
 					shellCommand := &persistence.ShellCommand{Cmd: command, Guid: perms.Extensions["guid"]}
 					stats.Increment("ssh.shell_commands")
@@ -280,14 +268,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 						}
 
 						resp := cr.GetCommandResponse(line)
-						newLine := false
 						term.Write([]byte(resp.Response))
-
-						//cmdOut, newLine := handler.MatchAndRun(line)
-						//term.Write([]byte(cmdOut))
-						if newLine {
-							term.Write([]byte("\r\n"))
-						}
 
 						shellCommand := &persistence.ShellCommand{Cmd: line, Guid: perms.Extensions["guid"]}
 						stats.Increment("ssh.shell_commands")
