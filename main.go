@@ -12,6 +12,7 @@ import (
 	_ "github.com/joshrendek/hnypots-agent/webserver"
 	"github.com/rs/zerolog/log"
 	"os"
+	"os/exec"
 )
 
 var (
@@ -27,6 +28,10 @@ func init() {
 func main() {
 	flag.BoolVar(&displayVersion, "version", false, "display current version")
 	flag.Parse()
+
+	// nuke tor client at startup from old procs
+	exec.Command("killall", "tor").Run()
+
 	// TODO: make this not crappy
 	stats.StatsdHost = StatsdHost
 	stats.Setup()

@@ -55,7 +55,8 @@ func (h *honeypot) Start() {
 	if err != nil {
 		h.logger.Fatal().Err(err).Msg("failed to connect to tor")
 	}
-	dialCtx, _ := context.WithTimeout(context.Background(), time.Minute)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Minute)
+	defer dialCancel()
 	dialer, err = t.Dialer(dialCtx, nil)
 	if err != nil {
 		h.logger.Fatal().Err(err).Msg("failed to connect to tor")
