@@ -2,6 +2,28 @@
 
 
 [[projects]]
+  branch = "master"
+  name = "github.com/cretz/bine"
+  packages = [
+    "control",
+    "process",
+    "tor",
+    "torutil",
+    "torutil/ed25519",
+    "torutil/ed25519/internal/edwards25519"
+  ]
+  revision = "25e2ee8b213cc0dbd00dd10d8f649539e055c73d"
+
+[[projects]]
+  name = "github.com/quipo/statsd"
+  packages = [
+    ".",
+    "event"
+  ]
+  revision = "977fadbd5cda9975ab87279994ea2029efdbd436"
+  version = "1.4.0"
+
+[[projects]]
   name = "github.com/rs/zerolog"
   packages = [
     ".",
@@ -27,10 +49,20 @@
     "ed25519/internal/edwards25519",
     "internal/chacha20",
     "poly1305",
+    "sha3",
     "ssh",
     "ssh/terminal"
   ]
   revision = "df8d4716b3472e4a531c33cedbe537dae921a1a9"
+
+[[projects]]
+  branch = "master"
+  name = "golang.org/x/net"
+  packages = [
+    "internal/socks",
+    "proxy"
+  ]
+  revision = "49bb7cea24b1df9410e1712aa6433dae904ff66a"
 
 [[projects]]
   branch = "master"
@@ -41,15 +73,9 @@
   ]
   revision = "c11f84a56e43e20a78cee75a7c034031ecf57d1f"
 
-[[projects]]
-  name = "gopkg.in/alexcesaro/statsd.v2"
-  packages = ["."]
-  revision = "7fea3f0d2fab1ad973e641e51dba45443a311a90"
-  version = "v2.0.0"
-
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "aec4c49a3181ab1c7b220ec2d1825a940f681a757cabdacd18846381513cccba"
+  inputs-digest = "5db751429175d0bee53b8c5841abedad8271f1b06c370d80288cc5f63f91d8a2"
   solver-name = "gps-cdcl"
   solver-version = 1

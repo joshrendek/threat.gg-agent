@@ -15,6 +15,8 @@ import (
 
 	"github.com/joshrendek/hnypots-agent/persistence"
 
+	"context"
+	"github.com/cretz/bine/tor"
 	"github.com/joshrendek/hnypots-agent/honeypots"
 	"github.com/joshrendek/hnypots-agent/stats"
 	"github.com/rs/zerolog"
@@ -22,12 +24,16 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
 	"net"
+	"time"
 )
 
 const DEFAULT_SHELL = "bash"
 
 var (
 	httpHandler = map[string][]byte{}
+	t           *tor.Tor
+	dialer      *tor.Dialer
+	httpClient  *http.Client
 )
 
 type honeypot struct {
@@ -43,6 +49,19 @@ func (h *honeypot) Name() string {
 }
 
 func (h *honeypot) Start() {
+
+	var err error
+	t, err = tor.Start(nil, nil)
+	if err != nil {
+		h.logger.Fatal().Err(err).Msg("failed to connect to tor")
+	}
+	dialCtx, _ := context.WithTimeout(context.Background(), time.Minute)
+	dialer, err = t.Dialer(dialCtx, nil)
+	if err != nil {
+		h.logger.Fatal().Err(err).Msg("failed to connect to tor")
+	}
+	httpClient = &http.Client{Transport: &http.Transport{DialContext: dialer.DialContext}}
+
 	h.generateSshKey()
 	sshConfig := &ssh.ServerConfig{
 		PasswordCallback:  passAuthCallback,
@@ -170,8 +189,9 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 			Hostname: toReq.Host,
 		}
 
-		client := &http.Client{}
-		resp, err := client.Get(fmt.Sprintf("http://%s", url))
+		req, _ := http.NewRequest("GET", fmt.Sprintf("http://%s", url), nil)
+		req.Header = toReq.Header
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			log.Fatalf("Body read error: %s", err)
 		}
