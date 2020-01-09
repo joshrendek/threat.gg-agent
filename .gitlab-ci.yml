@@ -65,6 +65,6 @@ mirror:
     - ssh-keyscan -H github.com >> ~/.ssh/known_hosts
   script:
     - git remote add github git@github.com:joshrendek/hnypots-agent.git
-    - git push -f -u github master
+    - git push -f -u github HEAD:master
   only:
     - master
