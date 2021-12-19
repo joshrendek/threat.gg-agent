@@ -3,12 +3,13 @@ package persistence
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/rs/zerolog"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/rs/zerolog"
 )
 
 var (
@@ -144,7 +145,7 @@ func PostToApi(endpoint string, post_data *strings.Reader) {
 	apiKey := os.Getenv("API_KEY")
 	server_url := os.Getenv("SERVER_URL")
 	if server_url == "" {
-		server_url = "https://threatwar.com"
+		server_url = "https://threat.gg"
 	}
 	ssh_api := fmt.Sprintf("%s/api/%s", server_url, endpoint)
 	req, err := http.NewRequest("POST", ssh_api, post_data)

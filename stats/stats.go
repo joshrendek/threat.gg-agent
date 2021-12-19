@@ -7,9 +7,10 @@ import (
 	//"gopkg.in/alexcesaro/statsd.v2"
 	//"gopkg.in/alexcesaro/statsd.v2"
 
-	"github.com/quipo/statsd"
 	"os"
 	"time"
+
+	"github.com/quipo/statsd"
 )
 
 var (
@@ -30,7 +31,9 @@ func Setup() {
 }
 
 func Increment(key string) {
-	c.Incr(key, 1)
+	if c != nil {
+		c.Incr(key, 1)
+	}
 }
 
 func Timing(bucket string) {

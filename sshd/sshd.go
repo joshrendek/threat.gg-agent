@@ -2,6 +2,7 @@ package sshd
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -13,18 +14,21 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joshrendek/hnypots-agent/persistence"
+	"github.com/davecgh/go-spew/spew"
+
+	"github.com/joshrendek/threat.gg-agent/persistence"
 
 	"context"
+	"net"
+	"time"
+
 	"github.com/cretz/bine/tor"
-	"github.com/joshrendek/hnypots-agent/honeypots"
-	"github.com/joshrendek/hnypots-agent/stats"
+	"github.com/joshrendek/threat.gg-agent/honeypots"
+	"github.com/joshrendek/threat.gg-agent/stats"
 	"github.com/rs/zerolog"
 	"github.com/satori/go.uuid"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
-	"net"
-	"time"
 )
 
 const DEFAULT_SHELL = "bash"
@@ -34,6 +38,7 @@ var (
 	t           *tor.Tor
 	dialer      *tor.Dialer
 	httpClient  *http.Client
+	torEnabled  bool
 )
 
 type honeypot struct {
@@ -42,6 +47,11 @@ type honeypot struct {
 
 func init() {
 	honeypots.Register(&honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "ssh").Logger()})
+	torEnabled = os.Getenv("TOR_ENABLED") == "true"
+}
+
+func New() *honeypot {
+	return &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "ssh").Logger()}
 }
 
 func (h *honeypot) Name() string {
@@ -49,19 +59,22 @@ func (h *honeypot) Name() string {
 }
 
 func (h *honeypot) Start() {
-
 	var err error
-	t, err = tor.Start(nil, nil)
-	if err != nil {
-		h.logger.Fatal().Err(err).Msg("failed to connect to tor")
+	fmt.Println("****************")
+
+	if torEnabled {
+		t, err = tor.Start(nil, nil)
+		if err != nil {
+			h.logger.Fatal().Err(err).Msg("failed to connect to tor")
+		}
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Minute)
+		defer dialCancel()
+		dialer, err = t.Dialer(dialCtx, nil)
+		if err != nil {
+			h.logger.Fatal().Err(err).Msg("failed to connect to tor")
+		}
+		httpClient = &http.Client{Transport: &http.Transport{DialContext: dialer.DialContext}}
 	}
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Minute)
-	defer dialCancel()
-	dialer, err = t.Dialer(dialCtx, nil)
-	if err != nil {
-		h.logger.Fatal().Err(err).Msg("failed to connect to tor")
-	}
-	httpClient = &http.Client{Transport: &http.Transport{DialContext: dialer.DialContext}}
 
 	h.generateSshKey()
 	sshConfig := &ssh.ServerConfig{
@@ -90,6 +103,7 @@ func (h *honeypot) Start() {
 	}
 
 	// Once a ServerConfig has been configured, connections can be accepted.
+	fmt.Println("listening")
 	listener, err := net.Listen("tcp4", ":"+port)
 	if err != nil {
 		h.logger.Fatal().Str("port", port).Msg("failed to listen")
@@ -151,6 +165,10 @@ func (h *honeypot) handleRequests(reqs <-chan *ssh.Request) {
 	for req := range reqs {
 		log.Printf("recieved out-of-band request: %+v", req)
 	}
+}
+
+type exitStatusMsg struct {
+	Status uint32
 }
 
 func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.Permissions) {
@@ -264,14 +282,39 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 					ok = true
 					command := string(req.Payload[4 : req.Payload[3]+4])
 
-					resp := cr.GetCommandResponse(command)
-					term.Write([]byte(resp.Response))
+					//resp := cr.GetCommandResponse(command)
+					//term.Write([]byte(resp.Response))
+
+					if strings.Contains(command, "scp") {
+						fmt.Println("*********************")
+						h.logger.Info().Msg("****************** scp command")
+						fmt.Println("*********************")
+
+						// send 10 magic null bytes
+						for i := 0; i <= 10; i++ {
+							channel.Write([]byte("\x00"))
+						}
+
+						b := new(bytes.Buffer)
+						size, err := b.ReadFrom(channel)
+						if err != nil {
+							fmt.Println("ERROR: ", err)
+						}
+						spew.Dump("size: ", size)
+						spew.Dump(b.String())
+
+						//req.Reply(true, nil) // tell the other end that we can run the request
+
+					}
 
 					shellCommand := &persistence.ShellCommand{Cmd: command, Guid: perms.Extensions["guid"]}
 					stats.Increment("ssh.shell_commands")
 					go shellCommand.Save()
 
 					channel.Close()
+				case "subsystem":
+					// ref https://gist.github.com/Timmmm/f351605579046d0a225685943e884621
+					h.logger.Info().Msg("->>>>>>>>>>>>>>> sftp")
 				// shell is used: ssh user@host ... then commands are entered
 				case "shell":
 					for {

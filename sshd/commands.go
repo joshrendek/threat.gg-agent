@@ -6,9 +6,10 @@ import (
 
 	"bytes"
 	"encoding/json"
-	"github.com/rs/zerolog"
 	"net/http"
 	"os"
+
+	"github.com/rs/zerolog"
 )
 
 var (
@@ -37,7 +38,7 @@ func (c *CommandService) GetCommandResponse(command string) *CommandResponse {
 	apiKey := os.Getenv("API_KEY")
 	server_url := os.Getenv("SERVER_URL")
 	if server_url == "" {
-		server_url = "https://threatwar.com"
+		server_url = "https://threat.gg"
 	}
 	ssh_api := fmt.Sprintf("%s/api/command_response", server_url)
 	req, err := http.NewRequest("POST", ssh_api, b)

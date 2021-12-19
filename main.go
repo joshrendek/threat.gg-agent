@@ -2,17 +2,14 @@ package main
 
 import (
 	"flag"
-	"fmt"
-	_ "github.com/joshrendek/hnypots-agent/elasticsearch"
-	_ "github.com/joshrendek/hnypots-agent/ftp"
-	"github.com/joshrendek/hnypots-agent/honeypots"
-	"github.com/joshrendek/hnypots-agent/persistence"
-	_ "github.com/joshrendek/hnypots-agent/sshd"
-	"github.com/joshrendek/hnypots-agent/stats"
-	_ "github.com/joshrendek/hnypots-agent/webserver"
-	"github.com/rs/zerolog/log"
-	"os"
 	"os/exec"
+
+	"github.com/joshrendek/threat.gg-agent/sshd"
+
+	_ "github.com/joshrendek/threat.gg-agent/sshd"
+
+	//_ "github.com/joshrendek/threat.gg-agent/webserver"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -33,16 +30,20 @@ func main() {
 	exec.Command("killall", "tor").Run()
 
 	// TODO: make this not crappy
-	stats.StatsdHost = StatsdHost
-	stats.Setup()
-	log.Print("statsd host: ", StatsdHost)
-	if displayVersion {
-		fmt.Println("Version: ", Version)
-		os.Exit(0)
-	}
-	stats.Increment("startup")
+	//stats.StatsdHost = StatsdHost
+	//stats.Setup()
+	//log.Print("statsd host: ", StatsdHost)
+	//if displayVersion {
+	//	fmt.Println("Version: ", Version)
+	//	os.Exit(0)
+	//}
+	//stats.Increment("startup")
+
 	wait := make(chan bool, 1)
-	persistence.RegisterHoneypot()
-	honeypots.StartHoneypots()
+	//persistence.RegisterHoneypot()
+	s := sshd.New()
+	s.Start()
+	//honeypots.StartHoneypots()
+
 	<-wait
 }
