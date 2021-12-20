@@ -2,7 +2,6 @@ package sshd
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -13,8 +12,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-
-	"github.com/davecgh/go-spew/spew"
 
 	"github.com/joshrendek/threat.gg-agent/persistence"
 
@@ -294,17 +291,91 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							channel.Write([]byte("\x00"))
 						}
 
-						b := bytes.NewBuffer(make([]byte, 0, 1024))
+						//buffer := bytes.NewBuffer(make([]byte, 0, 1024))
+
+						//var foundName bool
+						//bytestoRead := 0
+						//tmp := new(bytes.Buffer)
+						//for {
+						//	part := make([]byte, 1024)
+						//	n, err := channel.Read(part)
+						//	part = part[:n]
+						//	if err != nil {
+						//		h.logger.Error().Err(err).Msg("error reading from scp channel")
+						//		break
+						//	}
+						//	fmt.Println("read: ", n)
+						//
+						//	//buffer.Write(part[:n])
+						//
+						//	if !foundName {
+						//		offset := 0
+						//		for _, b := range part {
+						//			tmp.WriteByte(b)
+						//			offset++
+						//			if b == '\n' {
+						//				foundName = true
+						//				fmt.Println("FILENAME ! ---------> [", tmp.String(), "]")
+						//				break
+						//			}
+						//		}
+						//	}
+						//
+						//	if foundName {
+						//		tmpFileInfo := strings.Split(string(tmp.String()), " ")
+						//		tmpFilePerms := tmpFileInfo[0]
+						//		tmpFileBytes, err := strconv.Atoi(tmpFileInfo[1])
+						//		if err != nil {
+						//			h.logger.Error().Err(err).Msg("error reading file byte size from scp")
+						//			break
+						//		}
+						//		tmpFileName := strings.TrimSpace(tmpFileInfo[2])
+						//		bytestoRead = tmpFileBytes
+						//		fmt.Println("setting Bytes to Read: ", bytestoRead)
+						//		h.logger.Info().Str("permissions", tmpFilePerms).
+						//			Str("filename", tmpFileName).
+						//			Int("size-parsed", tmpFileBytes).
+						//			//Int("actual-size", len(fileTransfer)).
+						//			Msg("received file")
+						//	}
+						//
+						//	fmt.Println("--------------[ reading chunk ]---------------")
+						//	for _, b := range part {
+						//		fmt.Print(string(b))
+						//		bytestoRead--
+						//	}
+						//	fmt.Println("--------------[ /reading chunk ]---------------")
+						//
+						//	if bytestoRead <= 0 {
+						//		fmt.Println("------------------------ resetting found name, bytes to read < 0")
+						//		foundName = false
+						//	}
+
+						//fileInfo, err := buffer.ReadBytes('\n')
+						//if err == io.EOF {
+						//	break
+						//}
+						//
+						//
+						//spew.Dump("file info", fileInfo)
+
+						//}
+
+						//b := bytes.NewBuffer(make([]byte, 0, 1024))
+
 						//// TODO: size check? memory limit?
-						channel.Read(b.Bytes())
-						size, err := b.ReadFrom(channel)
-						if err != nil {
-							fmt.Println("ERROR: ", err)
-						}
-						spew.Dump("size: ", size)
+						//channel.Read(b.Bytes())
+						//b := new(bytes.Buffer)
+						//size, err := b.ReadFrom(channel)
+						//if err != nil {
+						//	fmt.Println("ERROR: ", err)
+						//}
+						b := bufio.NewReader(channel)
+						//spew.Dump("size: ", size)
 						//spew.Dump(b.String())
 						for {
 							fileInfo, err := b.ReadBytes('\n')
+							fmt.Println("[fileInfo] ", string(fileInfo))
 							if err == io.EOF {
 								break
 							}
@@ -320,33 +391,41 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							}
 							tmpFileName := strings.TrimSpace(tmpFileInfo[2])
 
-							// read the rest of the file buffer in chunks so we don't DOS ourselves
 							tmpFile, err := ioutil.TempFile("/tmp", "scp")
 							if err != nil {
 								panic(err)
 							}
-							bytesLeft := tmpFileBytes
-							for bytesLeft > 0 {
-								bytesToRead := bytesLeft - 1024
-								if bytesToRead < 1024 {
-									bytesToRead = bytesLeft
-								}
-								fileBuffer := make([]byte, 0, bytesToRead)
-								n, err := b.Read(fileBuffer[:cap(fileBuffer)])
-								tmpFile.Write(fileBuffer[:n])
-								if n == 0 {
-									if err == nil {
-										continue
-									}
-									if err == io.EOF {
-										break
-									}
-									h.logger.Error().Err(err).Msg("fatal reading file in chunks")
-								}
-								bytesLeft = bytesLeft - bytesToRead
-								fileBuffer = []byte{}
+							writer := bufio.NewWriter(tmpFile)
+							for i := 0; i <= tmpFileBytes; i++ {
+								t, _ := b.ReadByte()
+								writer.WriteByte(t)
 							}
 							fmt.Println("->>>>>>>>>>>>>>> Wrote to: ", tmpFile.Name())
+
+							// read the rest of the file buffer in chunks so we don't DOS ourselves
+							//{
+							//	bytesLeft := tmpFileBytes
+							//	for bytesLeft > 0 {
+							//		bytesToRead := bytesLeft - 1024
+							//		if bytesToRead < 1024 {
+							//			bytesToRead = bytesLeft
+							//		}
+							//		fileBuffer := make([]byte, 0, bytesToRead)
+							//		n, err := b.Read(fileBuffer[:cap(fileBuffer)])
+							//		tmpFile.Write(fileBuffer[:n])
+							//		if n == 0 {
+							//			if err == nil {
+							//				continue
+							//			}
+							//			if err == io.EOF {
+							//				break
+							//			}
+							//			h.logger.Error().Err(err).Msg("fatal reading file in chunks")
+							//		}
+							//		bytesLeft = bytesLeft - bytesToRead
+							//	}
+							//	fmt.Println("->>>>>>>>>>>>>>> Wrote to: ", tmpFile.Name())
+							//}
 							//for {
 							//	n, err := b.Read(fileBuffer[:cap(fileBuffer)])
 							//	fileBuffer = fileBuffer[:n]
@@ -372,7 +451,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 								Msg("received file")
 							//spew.Dump("file contents: ", fileTransfer)
 						}
-						spew.Dump(b.String())
+						//spew.Dump(b.String())
 
 						// send proper exit 0 status code back to scp/ssh
 						channel.SendRequest("exit-status", false, ssh.Marshal(&exitStatusMsg{Status: 0}))
