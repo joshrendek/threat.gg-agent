@@ -6,3 +6,5 @@ honeypot.pub
 .idea
 deploy.sh
 tmp
+test.img
+testfile2

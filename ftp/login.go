@@ -1,6 +1,6 @@
 package ftp
 
-import "github.com/joshrendek/hnypots-agent/stats"
+import "github.com/joshrendek/threat.gg-agent/stats"
 
 type AuthUser struct {
 	username string

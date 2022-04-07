@@ -6,9 +6,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/joshrendek/hnypots-agent/persistence"
+	"github.com/joshrendek/threat.gg-agent/persistence"
 
-	"github.com/joshrendek/hnypots-agent/honeypots"
+	"github.com/joshrendek/threat.gg-agent/proto"
+
+	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/rs/zerolog"
 	"github.com/satori/go.uuid"
 )
@@ -32,13 +34,18 @@ func LoginReceiver(logger zerolog.Logger) {
 		guid := uuid.NewV4()
 		remoteAddr := strings.Split(l.RemoteAddr, ":")
 		logger.Info().Str("remote_ip", remoteAddr[0]).Msg("connection started")
-		attack := &persistence.FtpAttack{}
+		attack := &proto.FtpRequest{}
 		attack.Guid = guid.String()
 		attack.RemoteAddr = remoteAddr[0]
 		attack.Username = l.Username
 		attack.Password = l.Password
 		logger.Info().Msgf("login details: %+v\n", l)
-		attack.Save()
+
+		go func(in *proto.FtpRequest) {
+			if err := persistence.SaveFTPLogin(in); err != nil {
+				logger.Error().Err(err).Msg("error saving ftp request")
+			}
+		}(attack)
 	}
 }
 

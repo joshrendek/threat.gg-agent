@@ -1,6 +1,10 @@
 package honeypots
 
-import "github.com/rs/zerolog/log"
+import (
+	"fmt"
+
+	"github.com/rs/zerolog/log"
+)
 
 type Honeypot interface {
 	Start()
@@ -16,6 +20,7 @@ func Register(h Honeypot) {
 }
 
 func StartHoneypots() {
+	fmt.Println("--------> honeypots: ", honeypots)
 	for _, h := range honeypots {
 		log.Info().Str("honeypot", h.Name()).Msg("starting")
 		go h.Start()

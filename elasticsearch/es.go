@@ -5,17 +5,19 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/joshrendek/hnypots-agent/persistence"
+	"github.com/joshrendek/threat.gg-agent/honeypots"
+	"github.com/joshrendek/threat.gg-agent/persistence"
+	"github.com/joshrendek/threat.gg-agent/proto"
+	"github.com/joshrendek/threat.gg-agent/stats"
 
-	"github.com/joshrendek/hnypots-agent/honeypots"
 	//"github.com/prometheus/common/log"
-	"github.com/joshrendek/hnypots-agent/stats"
+	"os"
+
 	"github.com/rs/zerolog"
 	"github.com/satori/go.uuid"
-	"os"
 )
 
-var resp = `{
+const resp = `{
   "name": "Y6xYwin",
   "cluster_name": "elasticsearch",
   "cluster_uuid": "t-skKQkIQJmBkVlictA8mw",
@@ -29,6 +31,10 @@ var resp = `{
   "tagline": "You Know, for Search"
 }`
 
+var (
+	logger = zerolog.New(os.Stdout).With().Caller().Str("elasticsearch", "").Logger()
+)
+
 type ES struct {
 	logger zerolog.Logger
 }
@@ -40,36 +46,33 @@ type honeypot struct {
 func (e *ES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-type", "application/json")
 	guid := uuid.NewV4()
-	attack := &persistence.EsAttack{}
-	attack.Headers = map[string]string{}
-	attack.FormData = map[string]string{}
-	attack.Guid = guid.String()
-	attack.Hostname = r.Host
-	attack.Method = r.Method
-	attack.UserAgent = r.UserAgent()
+
+	httpReq := &proto.ElasticsearchRequest{
+		Headers:   persistence.HttpToMap(map[string][]string(r.Header)),
+		FormData:  persistence.HttpToMap(map[string][]string(r.Form)),
+		Method:    r.Method,
+		Guid:      guid.String(),
+		Hostname:  r.Host,
+		UserAgent: r.UserAgent(),
+	}
+
 	user, pass, ok := r.BasicAuth()
 	if ok {
-		attack.Username = user
-		attack.Password = pass
+		httpReq.Username = user
+		httpReq.Password = pass
 	}
 	ip := r.RemoteAddr
 	x := strings.Split(ip, ":")
-	attack.RemoteAddr = x[0]
+	httpReq.RemoteAddr = x[0]
 
-	r.ParseForm()
-	requestID := uuid.NewV4()
-	requestLogger := e.logger.With().Str("request_id", requestID.String()).Logger()
-	requestLogger.Info().Str("path", r.RequestURI).Str("remote_ip", r.RemoteAddr).Str("user_agent", r.UserAgent()).Msg("connection accepted")
-	for k, v := range r.Header {
-		attack.Headers[k] = v[0]
-		requestLogger.Info().Strs(k, v).Msg("header")
-	}
-	for k, v := range r.Form {
-		attack.FormData[k] = v[0]
-		requestLogger.Info().Strs(k, v).Msg("form data")
-	}
 	stats.Increment("elastic_search.requests")
-	attack.Save()
+
+	go func(in *proto.ElasticsearchRequest) {
+		if err := persistence.SaveElasticRequest(in); err != nil {
+			logger.Error().Err(err).Msg("error saving http request")
+		}
+	}(httpReq)
+
 	fmt.Fprintf(w, resp)
 }
 

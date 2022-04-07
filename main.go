@@ -3,10 +3,16 @@ package main
 import (
 	"flag"
 	"os/exec"
+	"time"
 
-	"github.com/joshrendek/threat.gg-agent/sshd"
+	"github.com/joshrendek/threat.gg-agent/honeypots"
 
+	"github.com/joshrendek/threat.gg-agent/persistence"
+
+	_ "github.com/joshrendek/threat.gg-agent/elasticsearch"
+	_ "github.com/joshrendek/threat.gg-agent/ftp"
 	_ "github.com/joshrendek/threat.gg-agent/sshd"
+	_ "github.com/joshrendek/threat.gg-agent/webserver"
 
 	//_ "github.com/joshrendek/threat.gg-agent/webserver"
 	"github.com/rs/zerolog/log"
@@ -29,6 +35,20 @@ func main() {
 	// nuke tor client at startup from old procs
 	exec.Command("killall", "tor").Run()
 
+	if err := persistence.Setup(); err != nil {
+		log.Fatal().Err(err).Msg("failed to setup grpc connection")
+	}
+
+	// Checkin and make sure we send a ping every few seconds
+	go func() {
+		for {
+			if err := persistence.Connect(); err != nil {
+				log.Error().Err(err).Msg("failed to checkin to grpc api")
+			}
+			time.Sleep(30 * time.Second)
+		}
+	}()
+
 	// TODO: make this not crappy
 	//stats.StatsdHost = StatsdHost
 	//stats.Setup()
@@ -41,9 +61,7 @@ func main() {
 
 	wait := make(chan bool, 1)
 	//persistence.RegisterHoneypot()
-	s := sshd.New()
-	s.Start()
-	//honeypots.StartHoneypots()
+	honeypots.StartHoneypots()
 
 	<-wait
 }

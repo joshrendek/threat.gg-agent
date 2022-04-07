@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/joshrendek/threat.gg-agent/proto"
+
 	"github.com/joshrendek/threat.gg-agent/persistence"
 
 	"context"
@@ -31,6 +33,7 @@ import (
 const DEFAULT_SHELL = "bash"
 
 var (
+	logger      = zerolog.New(os.Stdout).With().Caller().Str("sshd", "").Logger()
 	httpHandler = map[string][]byte{}
 	t           *tor.Tor
 	dialer      *tor.Dialer
@@ -57,7 +60,6 @@ func (h *honeypot) Name() string {
 
 func (h *honeypot) Start() {
 	var err error
-	fmt.Println("****************")
 
 	if torEnabled {
 		t, err = tor.Start(nil, nil)
@@ -196,13 +198,20 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 		}
 		url := fmt.Sprintf("%s%s", toReq.Host, toReq.URL)
 
-		httpReq := &persistence.HttpRequest{
-			Headers:  toReq.Header,
-			URL:      url,
-			FormData: toReq.Form,
-			Method:   toReq.Method,
-			Guid:     perms.Extensions["guid"],
-			Hostname: toReq.Host,
+		httpReq := &proto.HttpRequest{
+			Headers:   persistence.HttpToMap(map[string][]string(toReq.Header)),
+			Url:       url,
+			FormData:  persistence.HttpToMap(map[string][]string(toReq.Form)),
+			Method:    toReq.Method,
+			UserAgent: toReq.UserAgent(),
+			Guid:      perms.Extensions["guid"],
+			Hostname:  toReq.Host,
+		}
+
+		user, pass, ok := toReq.BasicAuth()
+		if ok {
+			httpReq.Username = user
+			httpReq.Password = pass
 		}
 
 		req, _ := http.NewRequest("GET", fmt.Sprintf("http://%s", url), nil)
@@ -219,18 +228,15 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 		}
 		encodedBody := base64.StdEncoding.EncodeToString(body)
 		httpReq.Response = encodedBody
-		httpReq.Save()
 
-		//log.Printf("[ http://%s ] %s", url, body)
+		go func(in *proto.HttpRequest) {
+			if err := persistence.SaveHTTPRequest(in); err != nil {
+				logger.Error().Err(err).Msg("error saving http request")
+			}
+		}(httpReq)
 
 		channel.Write(body)
-		// make the http request
 
-		//if resp, ok := httpHandler[url]; ok {
-		//	channel.Write(resp)
-		//} else {
-		//	channel.Write([]byte("45.4.5.6"))
-		//}
 		channel.Close()
 	}
 }
@@ -238,14 +244,6 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permissions) {
 	// Service the incoming Channel channel.
 	for newChannel := range chans {
-		// Channels have a type, depending on the application level
-		// protocol intended. In the case of a shell, the type is
-		// "session" and ServerShell may be used to present a simple
-		// terminal interface.
-		//if t := newChannel.ChannelType(); t != "session" {
-		//	newChannel.Reject(ssh.UnknownChannelType, fmt.Sprintf("unknown channel type: %s", t))
-		//	continue
-		//}
 		channel, requests, err := newChannel.Accept()
 		if err != nil {
 			h.logger.Error().Err(err).Msg("could not accept channel")
@@ -269,7 +267,6 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 		go func(in <-chan *ssh.Request) {
 			for req := range in {
 				term := terminal.NewTerminal(channel, "")
-				cr := NewCommandService()
 
 				h.logger.Info().Msgf("payload %+v\n", string(req.Payload))
 				ok := false
@@ -291,88 +288,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							channel.Write([]byte("\x00"))
 						}
 
-						//buffer := bytes.NewBuffer(make([]byte, 0, 1024))
-
-						//var foundName bool
-						//bytestoRead := 0
-						//tmp := new(bytes.Buffer)
-						//for {
-						//	part := make([]byte, 1024)
-						//	n, err := channel.Read(part)
-						//	part = part[:n]
-						//	if err != nil {
-						//		h.logger.Error().Err(err).Msg("error reading from scp channel")
-						//		break
-						//	}
-						//	fmt.Println("read: ", n)
-						//
-						//	//buffer.Write(part[:n])
-						//
-						//	if !foundName {
-						//		offset := 0
-						//		for _, b := range part {
-						//			tmp.WriteByte(b)
-						//			offset++
-						//			if b == '\n' {
-						//				foundName = true
-						//				fmt.Println("FILENAME ! ---------> [", tmp.String(), "]")
-						//				break
-						//			}
-						//		}
-						//	}
-						//
-						//	if foundName {
-						//		tmpFileInfo := strings.Split(string(tmp.String()), " ")
-						//		tmpFilePerms := tmpFileInfo[0]
-						//		tmpFileBytes, err := strconv.Atoi(tmpFileInfo[1])
-						//		if err != nil {
-						//			h.logger.Error().Err(err).Msg("error reading file byte size from scp")
-						//			break
-						//		}
-						//		tmpFileName := strings.TrimSpace(tmpFileInfo[2])
-						//		bytestoRead = tmpFileBytes
-						//		fmt.Println("setting Bytes to Read: ", bytestoRead)
-						//		h.logger.Info().Str("permissions", tmpFilePerms).
-						//			Str("filename", tmpFileName).
-						//			Int("size-parsed", tmpFileBytes).
-						//			//Int("actual-size", len(fileTransfer)).
-						//			Msg("received file")
-						//	}
-						//
-						//	fmt.Println("--------------[ reading chunk ]---------------")
-						//	for _, b := range part {
-						//		fmt.Print(string(b))
-						//		bytestoRead--
-						//	}
-						//	fmt.Println("--------------[ /reading chunk ]---------------")
-						//
-						//	if bytestoRead <= 0 {
-						//		fmt.Println("------------------------ resetting found name, bytes to read < 0")
-						//		foundName = false
-						//	}
-
-						//fileInfo, err := buffer.ReadBytes('\n')
-						//if err == io.EOF {
-						//	break
-						//}
-						//
-						//
-						//spew.Dump("file info", fileInfo)
-
-						//}
-
-						//b := bytes.NewBuffer(make([]byte, 0, 1024))
-
-						//// TODO: size check? memory limit?
-						//channel.Read(b.Bytes())
-						//b := new(bytes.Buffer)
-						//size, err := b.ReadFrom(channel)
-						//if err != nil {
-						//	fmt.Println("ERROR: ", err)
-						//}
 						b := bufio.NewReader(channel)
-						//spew.Dump("size: ", size)
-						//spew.Dump(b.String())
 						for {
 							fileInfo, err := b.ReadBytes('\n')
 							fmt.Println("[fileInfo] ", string(fileInfo))
@@ -396,50 +312,13 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 								panic(err)
 							}
 							writer := bufio.NewWriter(tmpFile)
+							bytesRead := 0
 							for i := 0; i <= tmpFileBytes; i++ {
 								t, _ := b.ReadByte()
+								bytesRead++
 								writer.WriteByte(t)
 							}
 							fmt.Println("->>>>>>>>>>>>>>> Wrote to: ", tmpFile.Name())
-
-							// read the rest of the file buffer in chunks so we don't DOS ourselves
-							//{
-							//	bytesLeft := tmpFileBytes
-							//	for bytesLeft > 0 {
-							//		bytesToRead := bytesLeft - 1024
-							//		if bytesToRead < 1024 {
-							//			bytesToRead = bytesLeft
-							//		}
-							//		fileBuffer := make([]byte, 0, bytesToRead)
-							//		n, err := b.Read(fileBuffer[:cap(fileBuffer)])
-							//		tmpFile.Write(fileBuffer[:n])
-							//		if n == 0 {
-							//			if err == nil {
-							//				continue
-							//			}
-							//			if err == io.EOF {
-							//				break
-							//			}
-							//			h.logger.Error().Err(err).Msg("fatal reading file in chunks")
-							//		}
-							//		bytesLeft = bytesLeft - bytesToRead
-							//	}
-							//	fmt.Println("->>>>>>>>>>>>>>> Wrote to: ", tmpFile.Name())
-							//}
-							//for {
-							//	n, err := b.Read(fileBuffer[:cap(fileBuffer)])
-							//	fileBuffer = fileBuffer[:n]
-							//	if n == 0 {
-							//		if err == nil {
-							//			continue
-							//		}
-							//		if err == io.EOF {
-							//			break
-							//		}
-							//		h.logger.Error().Err(err).Msg("fatal reading file in chunks")
-							//	}
-							//	//fileTransfer := b.Next(tmpFileBytes)
-							//}
 
 							// read the last null seperator
 							b.ReadBytes('\x00')
@@ -447,7 +326,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							h.logger.Info().Str("permissions", tmpFilePerms).
 								Str("filename", tmpFileName).
 								Int("size-parsed", tmpFileBytes).
-								//Int("actual-size", len(fileTransfer)).
+								Int("actual-size", bytesRead).
 								Msg("received file")
 							//spew.Dump("file contents: ", fileTransfer)
 						}
@@ -458,13 +337,27 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 						req.Reply(true, nil) // tell the other end that we can run the request
 
 					} else {
-						resp := cr.GetCommandResponse(command)
-						term.Write([]byte(resp.Response))
+						resp, err := persistence.GetCommandResponse(&proto.CommandRequest{Command: command})
+						if err != nil {
+							h.logger.Error().Err(err).Msg("error getting command response")
+						}
+						if err == nil {
+							term.Write([]byte(resp.Response))
+						}
 					}
 
-					shellCommand := &persistence.ShellCommand{Cmd: command, Guid: perms.Extensions["guid"]}
+					lr := &proto.ShellCommandRequest{
+						Cmd:  command,
+						Guid: perms.Extensions["guid"],
+					}
+
 					stats.Increment("ssh.shell_commands")
-					go shellCommand.Save()
+
+					go func(in *proto.ShellCommandRequest) {
+						if err := persistence.SaveShellCommand(in); err != nil {
+							logger.Error().Err(err).Msg("error saving ssh login request")
+						}
+					}(lr)
 
 					channel.Close()
 				case "subsystem":
@@ -486,14 +379,27 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							h.logger.Error().Err(err).Msg("error running shell")
 						}
 
-						resp := cr.GetCommandResponse(line)
-						term.Write([]byte(resp.Response))
+						resp, err := persistence.GetCommandResponse(&proto.CommandRequest{Command: line})
+						if err != nil {
+							h.logger.Error().Err(err).Msg("error getting command response")
+						}
+						if err == nil {
+							term.Write([]byte(resp.Response))
+						}
 
-						shellCommand := &persistence.ShellCommand{Cmd: line, Guid: perms.Extensions["guid"]}
+						lr := &proto.ShellCommandRequest{
+							Cmd:  line,
+							Guid: perms.Extensions["guid"],
+						}
+
 						stats.Increment("ssh.shell_commands")
-						go shellCommand.Save()
 
-						log.Println(line)
+						go func(in *proto.ShellCommandRequest) {
+							if err := persistence.SaveShellCommand(in); err != nil {
+								logger.Error().Err(err).Msg("error saving ssh login request")
+							}
+						}(lr)
+
 					}
 					if len(req.Payload) == 0 {
 						ok = true
@@ -532,32 +438,46 @@ func parseIpPortFrom(conn ssh.ConnMetadata) (string, int) {
 func passAuthCallback(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 	guid := uuid.NewV4()
 	ip, remotePort := parseIpPortFrom(conn)
-	login := persistence.SshLogin{RemoteAddr: ip,
-		RemotePort: remotePort,
+
+	lr := &proto.SshLoginRequest{
+		RemoteAddr: ip,
+		RemotePort: int32(remotePort),
 		Username:   conn.User(),
-		Password:   string(password),
 		Guid:       guid.String(),
 		Version:    string(conn.ClientVersion()),
+		Password:   string(password),
 		LoginType:  "password",
 	}
-	login.Save()
+
+	go func(in *proto.SshLoginRequest) {
+		if err := persistence.SaveSshLogin(in); err != nil {
+			logger.Error().Err(err).Msg("error saving ssh login request")
+		}
+	}(lr)
+
 	return &ssh.Permissions{Extensions: map[string]string{"guid": guid.String()}}, nil
 }
 
 func keyAuthCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	guid := uuid.NewV4()
 	ip, remotePort := parseIpPortFrom(conn)
-	login := persistence.SshLogin{RemoteAddr: ip,
-		RemotePort: remotePort,
+
+	lr := &proto.SshLoginRequest{
+		RemoteAddr: ip,
+		RemotePort: int32(remotePort),
 		Username:   conn.User(),
 		Guid:       guid.String(),
 		Version:    string(conn.ClientVersion()),
 		PublicKey:  key.Marshal(),
-		KeyType:    string(key.Type()),
+		KeyType:    key.Type(),
 		LoginType:  "key",
 	}
-	go login.Save()
-	//log.Println("Fail to authenticate", conn, ":", err)
-	//return nil, errors.New("invalid authentication")
+
+	go func(in *proto.SshLoginRequest) {
+		if err := persistence.SaveSshLogin(in); err != nil {
+			logger.Error().Err(err).Msg("error saving ssh login request")
+		}
+	}(lr)
+
 	return &ssh.Permissions{Extensions: map[string]string{"guid": guid.String()}}, nil
 }
