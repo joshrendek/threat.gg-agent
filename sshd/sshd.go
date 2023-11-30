@@ -25,7 +25,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/stats"
 	"github.com/rs/zerolog"
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
 )
@@ -154,7 +154,7 @@ func (h *honeypot) generateSshKey() {
 		os.Remove("honeypot_prv.pub")
 	}
 
-	out, err := exec.Command("ssh-keygen", "-t", "rsa", "-q", "-f", "honeypot_prv", "-N", "").CombinedOutput()
+	out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-q", "-f", "honeypot_prv", "-N", "").CombinedOutput()
 	if err != nil {
 		h.logger.Fatal().Err(err).Str("output", string(out)).Msg("error generating key")
 	}

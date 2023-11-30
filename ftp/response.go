@@ -6,7 +6,7 @@ const (
 	PortOk                     = "200 PORT ok\r\n"
 	FeatResponse               = "211-Features:\r\n  FEAT\r\n  MDTM\r\n  PASV\r\n  SIZE\r\n  TYPE A;I\r\n211 End\r\n"
 	SysType                    = "215 UNIX Type: L8\r\n"
-	GoodbyeMsg                 = "221 Goodbye!"
+	GoodbyeMsg                 = "221 Goodbye!\r\n"
 	TxfrCompleteOk             = "226 Data transfer complete\r\n"
 	CmdOk                      = "200 Command ok\r\n"
 	EnteringPasvMode           = "227 Entering Passive Mode (%s)\r\n"
