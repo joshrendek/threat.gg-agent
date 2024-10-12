@@ -10,3 +10,5 @@ test.img
 testfile2
 honeypot_rsa_prv
 honeypot_rsa_prv.pub
+
+dist/
