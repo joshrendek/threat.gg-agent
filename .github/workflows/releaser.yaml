@@ -26,9 +26,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create `date -u +%Y%m%d`${GITHUB_RUN_ID} \
+          gh release create `date -u +%Y%m%d`.${GITHUB_RUN_ID} \
             --repo="$GIT_REPOSITORY" \
-            --title="Release `date -u +%Y%m%d`${GITHUB_RUN_ID}" \
+            --title="Release `date -u +%Y%m%d`.${GITHUB_RUN_ID}" \
             --generate-notes \
             ./dist/*
 
