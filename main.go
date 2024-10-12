@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"github.com/joshrendek/threat.gg-agent/updater"
 	"os/exec"
 	"time"
 
@@ -34,6 +35,8 @@ func init() {
 func main() {
 	flag.BoolVar(&displayVersion, "version", false, "display current version")
 	flag.Parse()
+
+	updater.CheckAndUpdate(Version)
 
 	// nuke tor client at startup from old procs
 	exec.Command("killall", "tor").Run()
