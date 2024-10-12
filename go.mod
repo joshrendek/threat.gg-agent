@@ -4,7 +4,7 @@ go 1.21
 
 toolchain go1.21.3
 
-replace github.com/jeroenrinzema/psql-wire => /Users/jigglypuff/dev/psql-wire
+replace github.com/jeroenrinzema/psql-wire => github.com/joshrendek/psql-wire
 
 require (
 	github.com/cretz/bine v0.0.0-20181016150912-25e2ee8b213c
