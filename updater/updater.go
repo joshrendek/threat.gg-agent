@@ -4,19 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"net/http"
 	"os"
-	"runtime"
+	"os/exec"
 	"strings"
-
-	"github.com/Masterminds/semver/v3"
 )
 
 const (
 	owner         = "joshrendek"
 	repo          = "threat.gg-agent"
 	githubAPIBase = "https://api.github.com/repos/%s/%s/releases/latest"
+	binaryName    = "honeypot"
 )
 
 type Release struct {
@@ -27,48 +27,74 @@ type Release struct {
 	} `json:"assets"`
 }
 
-func CheckAndUpdate(currentVersion string) error {
+func CheckAndUpdate(currentVersion string) (bool, error) {
 	ctx := context.Background()
 	client := &http.Client{}
 
 	url := fmt.Sprintf(githubAPIBase, owner, repo)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return false, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to fetch latest release: %w", err)
+		return false, fmt.Errorf("failed to fetch latest release: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var release Release
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return fmt.Errorf("failed to decode release info: %w", err)
+		return false, fmt.Errorf("failed to decode release info: %w", err)
 	}
 
-	latestVersion, err := semver.NewVersion(strings.TrimPrefix(release.TagName, "v"))
+	latestVersion := strings.Split(release.TagName, ".")
 	if err != nil {
-		return fmt.Errorf("invalid version format: %w", err)
+		return false, fmt.Errorf("invalid version format: %w", err)
 	}
 
-	currentSemver, err := semver.NewVersion(strings.TrimPrefix(currentVersion, "v"))
+	currentVer := strings.Split(currentVersion, ".")
 	if err != nil {
-		return fmt.Errorf("invalid current version format: %w", err)
+		return false, fmt.Errorf("invalid current version format: %w", err)
 	}
 
-	if latestVersion.GreaterThan(currentSemver) {
-		fmt.Printf("New version available: %s (current: %s)\n", latestVersion, currentSemver)
-		return downloadAndReplace(release)
+	// Check calver date first
+	if latestVersion[0] > currentVer[0] {
+		fmt.Printf("New version available: %s (current: %s)\n", release.TagName, currentVersion)
+		return true, downloadAndReplace(release)
+	}
+
+	// Check build number next
+	if latestVersion[1] > currentVer[1] {
+		fmt.Printf("New version available: %s (current: %s)\n", release.TagName, currentVersion)
+		return true, downloadAndReplace(release)
 	}
 
 	fmt.Println("Already running the latest version.")
-	return nil
+	return false, nil
+}
+
+func removeNullBytes(data []byte) []byte {
+	// Create a new slice to hold the result without null bytes
+	result := make([]byte, 0, len(data))
+
+	// Loop through the original slice
+	for _, b := range data {
+		// Only append non-null bytes to the result
+		if b != 0 {
+			result = append(result, b)
+		}
+	}
+	return result
 }
 
 func downloadAndReplace(release Release) error {
-	assetName := fmt.Sprintf("%s_%s_%s", repo, runtime.GOOS, runtime.GOARCH)
+	var uts unix.Utsname
+	if err := unix.Uname(&uts); err != nil {
+		return err
+	}
+
+	assetName := fmt.Sprintf("%s_%s", binaryName, string(removeNullBytes(uts.Machine[:])))
 	var downloadURL string
 
 	for _, asset := range release.Assets {
@@ -79,7 +105,7 @@ func downloadAndReplace(release Release) error {
 	}
 
 	if downloadURL == "" {
-		return fmt.Errorf("no suitable asset found for this system")
+		return fmt.Errorf("no suitable asset found for this system: %s", assetName)
 	}
 
 	resp, err := http.Get(downloadURL)
@@ -115,6 +141,14 @@ func downloadAndReplace(release Release) error {
 		return fmt.Errorf("failed to replace current executable: %w", err)
 	}
 
-	fmt.Println("Successfully updated to the latest version. Please restart the application.")
+	fmt.Println("Successfully updated to the latest version. Honeypot is restarting.")
+	// execute systemctl restart honeypot and print the output
+	cmd := exec.Command("systemctl", "restart", "honeypot")
+	out, ctlErr := cmd.CombinedOutput()
+	if ctlErr != nil {
+		return fmt.Errorf("failed to restart honeypot: %w", ctlErr)
+	}
+	fmt.Println(string(out))
+
 	return nil
 }
