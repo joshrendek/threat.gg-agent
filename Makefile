@@ -13,13 +13,13 @@ build:
 	@echo ${BUILD_NUMBER}
 	@echo "*****"
 	GOOS=linux CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-s' \
-	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${HONEYPOT}
+	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${BINARY}
 	GOOS=linux CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-s' \
-	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${HONEYPOT}_x86_64
+	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${BINARY}_x86_64
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-s' \
-	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${HONEYPOT}_arm64
+	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${BINARY}_arm64
 	GOOS=linux GOARCH=arm CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-s' \
-	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${HONEYPOT}_armv7l
+	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${BINARY}_armv7l
 	GOOS=linux GOARCH=arm CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-s' \
-	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${HONEYPOT}_armv6l
-	cp ${HONEYPOT}_arm64 ${HONEYPOT}_aarch64
+	  -ldflags "-X main.Version=`date -u +%Y%m%d`${BUILD_NUMBER}" -o ${BINARY}_armv6l
+	cp ${BINARY}_arm64 ${BINARY}_aarch64
