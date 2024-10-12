@@ -23,6 +23,7 @@ builds:
 
 release:
   make_latest: true
+  target_commitish: "{{ .Commit }}"
 
 archives:
   - format: tar.gz
@@ -34,10 +35,6 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-      - goos: windows
-        format: zip
 
 changelog:
   sort: asc
@@ -54,3 +51,25 @@ snapshot:
   # Default: `{{ .Version }}-SNAPSHOT-{{.ShortCommit}}`.
   # Templates: allowed.
   version_template: "{{ incpatch .Version }}-devel"
+
+nightly:
+  # Allows you to change the version of the generated nightly release.
+  #
+  # Note that some pipes require this to be semantic version compliant (nfpm,
+  # for example).
+  #
+  # Default: `{{ incpatch .Version }}-{{ .ShortCommit }}-nightly`.
+  # Templates: allowed.
+  version_template: "{{ incpatch .Version }}-devel"
+
+  # Tag name to create if publish_release is enabled.
+  tag_name: devel
+
+  # Whether to publish a release or not.
+  # Only works on GitHub.
+  publish_release: true
+
+  # Whether to delete previous pre-releases for the same `tag_name` when
+  # releasing.
+  # This allows you to keep a single pre-release.
+  keep_single_release: true
