@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  goreleaser:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +22,17 @@ jobs:
       - name: Build
         run: |
           make build
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create `date -u +%Y%m%d`${GITHUB_RUN_ID} \
+            --repo="$GIT_REPOSITORY" \
+            --title="Release `date -u +%Y%m%d`${GITHUB_RUN_ID}" \
+            --generate-notes
 
 #    steps:
 #      -

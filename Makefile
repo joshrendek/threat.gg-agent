@@ -1,6 +1,6 @@
 SHELL=/bin/bash
 BUILD_NUMBER=${GITHUB_RUN_ID}
-BINARY="honeypot"
+BINARY=honeypot
 
 .PHONY: proto
 proto:
