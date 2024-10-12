@@ -21,6 +21,9 @@ builds:
     goos:
       - linux
 
+release:
+  make_latest: true
+
 archives:
   - format: tar.gz
     # this name template makes the OS and Arch compatible with the results of `uname`.
