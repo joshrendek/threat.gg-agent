@@ -11,21 +11,18 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: Calver Release
-        uses: joshrendek/actions-calver@master
-        id: calver
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          date_format: "%Y-%m-%d"
-          release_branch: 'v2'
-          release: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          go-version: '1.22.x'
+      - name: Install dependencies
+        run: |
+          go mod tidy
+      - name: Build
+        run: |
+          make build
 
-      - name: Deploy
-        env:
-          VERSION: ${{ steps.calver.outputs.release }}
-        run: ./deploy ${VERSION}
 #    steps:
 #      -
 #        name: Checkout
