@@ -5,12 +5,15 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/jellydator/ttlcache/v3"
+
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 
 	"github.com/joshrendek/threat.gg-agent/persistence"
 
 	_ "github.com/joshrendek/threat.gg-agent/elasticsearch"
 	_ "github.com/joshrendek/threat.gg-agent/ftp"
+	_ "github.com/joshrendek/threat.gg-agent/postgres"
 	_ "github.com/joshrendek/threat.gg-agent/sshd"
 	_ "github.com/joshrendek/threat.gg-agent/webserver"
 
@@ -34,6 +37,13 @@ func main() {
 
 	// nuke tor client at startup from old procs
 	exec.Command("killall", "tor").Run()
+
+	cache := ttlcache.New[string, string](
+		ttlcache.WithTTL[string, string](5 * time.Minute),
+	)
+
+	honeypots.Cache = cache
+	go honeypots.Cache.Start()
 
 	if err := persistence.Setup(); err != nil {
 		log.Fatal().Err(err).Msg("failed to setup grpc connection")

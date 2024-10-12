@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jellydator/ttlcache/v3"
+
 	"github.com/joshrendek/threat.gg-agent/proto"
 
 	"github.com/joshrendek/threat.gg-agent/persistence"
@@ -77,23 +79,26 @@ func (h *honeypot) Start() {
 
 	h.generateSshKey()
 	sshConfig := &ssh.ServerConfig{
-		PasswordCallback:  passAuthCallback,
-		PublicKeyCallback: keyAuthCallback,
+		PasswordCallback:  h.passAuthCallback,
+		PublicKeyCallback: h.keyAuthCallback,
 		ServerVersion:     "SSH-2.0-OpenSSH_6.4p1, OpenSSL 1.0.1e-fips 11 Feb 2013", // old and vulnerable!
 	}
 
 	// You can generate a keypair with 'ssh-keygen -t rsa -C "test@example.com"'
-	privateBytes, err := ioutil.ReadFile("./honeypot_prv")
-	if err != nil {
-		h.logger.Fatal().Msg("failed to load private key (./honeypot_prv)")
-	}
+	sshKeys := []string{"honeypot_prv", "honeypot_rsa_prv"}
+	for _, sshKey := range sshKeys {
+		privateBytes, err := ioutil.ReadFile(sshKey)
+		if err != nil {
+			h.logger.Fatal().Msgf("failed to load private key (./%s)", sshKey)
+		}
 
-	private, err := ssh.ParsePrivateKey(privateBytes)
-	if err != nil {
-		h.logger.Fatal().Msg("failed to parse private key")
-	}
+		private, err := ssh.ParsePrivateKey(privateBytes)
+		if err != nil {
+			h.logger.Fatal().Msg("failed to parse private key")
+		}
 
-	sshConfig.AddHostKey(private)
+		sshConfig.AddHostKey(private)
+	}
 
 	// Accept all connections
 	port := os.Getenv("SSH_PORT")
@@ -150,11 +155,18 @@ func (h *honeypot) generateSshKey() {
 	h.logger.Info().Msg("generating ssh keys")
 	if Exists("honeypot_prv") {
 		h.logger.Info().Msg("removing old keys")
+		os.Remove("honeypot_rsa_prv")
+		os.Remove("honeypot_rsa_prv.pub")
 		os.Remove("honeypot_prv")
 		os.Remove("honeypot_prv.pub")
 	}
 
 	out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-q", "-f", "honeypot_prv", "-N", "").CombinedOutput()
+	if err != nil {
+		h.logger.Fatal().Err(err).Str("output", string(out)).Msg("error generating key")
+	}
+
+	out, err = exec.Command("ssh-keygen", "-t", "rsa", "-q", "-f", "honeypot_rsa_prv", "-N", "").CombinedOutput()
 	if err != nil {
 		h.logger.Fatal().Err(err).Str("output", string(out)).Msg("error generating key")
 	}
@@ -435,9 +447,17 @@ func parseIpPortFrom(conn ssh.ConnMetadata) (string, int) {
 	return remote[0], port
 }
 
-func passAuthCallback(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+func (h *honeypot) passAuthCallback(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 	guid := uuid.NewV4()
 	ip, remotePort := parseIpPortFrom(conn)
+
+	cacheKey := fmt.Sprintf("%s+%s", ip, conn.User())
+	h.logger.Info().Str("cache-key", cacheKey).Msg("cache-key")
+	cacheUUID, retrieved := honeypots.Cache.GetOrSet(cacheKey, guid.String(), ttlcache.WithTTL[string, string](ttlcache.DefaultTTL))
+	if retrieved {
+		guid, _ = uuid.FromString(cacheUUID.Value())
+		h.logger.Info().Str("retrieved-guid", guid.String()).Msg("retrieved-guid")
+	}
 
 	lr := &proto.SshLoginRequest{
 		RemoteAddr: ip,
@@ -458,9 +478,17 @@ func passAuthCallback(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions,
 	return &ssh.Permissions{Extensions: map[string]string{"guid": guid.String()}}, nil
 }
 
-func keyAuthCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+func (h *honeypot) keyAuthCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	guid := uuid.NewV4()
 	ip, remotePort := parseIpPortFrom(conn)
+
+	cacheKey := fmt.Sprintf("%s+%s", ip, conn.User())
+	h.logger.Info().Str("cache-key", cacheKey).Msg("cache-key")
+	cacheUUID, retrieved := honeypots.Cache.GetOrSet(cacheKey, guid.String(), ttlcache.WithTTL[string, string](ttlcache.DefaultTTL))
+	if retrieved {
+		guid, _ = uuid.FromString(cacheUUID.Value())
+		h.logger.Info().Str("retrieved-guid", guid.String()).Msg("retrieved-guid")
+	}
 
 	lr := &proto.SshLoginRequest{
 		RemoteAddr: ip,

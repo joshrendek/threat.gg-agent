@@ -3,6 +3,7 @@ package honeypots
 import (
 	"fmt"
 
+	"github.com/jellydator/ttlcache/v3"
 	"github.com/rs/zerolog/log"
 )
 
@@ -13,6 +14,7 @@ type Honeypot interface {
 
 var (
 	honeypots = []Honeypot{}
+	Cache     = ttlcache.New[string, string]()
 )
 
 func Register(h Honeypot) {

@@ -29,7 +29,7 @@ func Setup() error {
 		InsecureSkipVerify: false,
 	}
 	var err error
-	grpcTarget := "api.threat.gg"
+	grpcTarget := "grpc.threat.gg:443"
 	if os.Getenv("GO_ENV") == "development" {
 		grpcTarget = ":50051"
 		config.InsecureSkipVerify = true
@@ -66,10 +66,25 @@ func SaveFTPLogin(in *proto.FtpRequest) error {
 	return err
 }
 
+func SavePostgresLogin(in *proto.PostgresRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SavePostgresLogin(ctx, in)
+	return err
+
+}
+
 func SaveSshLogin(in *proto.SshLoginRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveSshLogin(ctx, in)
+	return err
+}
+
+func SaveQuery(in *proto.QueryRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveQuery(ctx, in)
 	return err
 }
 
