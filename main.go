@@ -54,6 +54,7 @@ func main() {
 	// nuke tor client at startup from old procs
 	exec.Command("killall", "tor").Run()
 
+	// cache for ssh sessions
 	cache := ttlcache.New[string, string](
 		ttlcache.WithTTL[string, string](5 * time.Minute),
 	)
