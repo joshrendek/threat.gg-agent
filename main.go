@@ -77,15 +77,6 @@ func main() {
 	}()
 
 	// TODO: make this not crappy
-	//stats.StatsdHost = StatsdHost
-	//stats.Setup()
-	//log.Print("statsd host: ", StatsdHost)
-	//if displayVersion {
-	//	fmt.Println("Version: ", Version)
-	//	os.Exit(0)
-	//}
-	//stats.Increment("startup")
-
 	wait := make(chan bool, 1)
 	//persistence.RegisterHoneypot()
 	honeypots.StartHoneypots()
