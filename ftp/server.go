@@ -228,6 +228,6 @@ func getMsg(conn net.Conn) string {
 }
 
 func sendMsg(c net.Conn, message string) {
-	fmt.Printf("Sending: %s\n", message)
+	//fmt.Printf("Sending: %s\n", message)
 	io.WriteString(c, message)
 }
