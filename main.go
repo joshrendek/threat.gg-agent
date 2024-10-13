@@ -41,7 +41,7 @@ func main() {
 		for {
 			updated, err := updater.CheckAndUpdate(Version)
 			if err != nil {
-				log.Fatal().Err(err).Msg("failed to check and update")
+				log.Error().Err(err).Msg("failed to check and update")
 			}
 
 			if updated {

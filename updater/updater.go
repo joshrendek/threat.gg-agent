@@ -49,7 +49,7 @@ func CheckAndUpdate(currentVersion string) (bool, error) {
   }
 
   latestVersion := strings.Split(release.TagName, ".")
-  
+
   if len(latestVersion) != 2 {
     return false, fmt.Errorf("invalid version format returned from API")
   }
