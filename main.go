@@ -47,7 +47,7 @@ func main() {
 			if updated {
 				os.Exit(0)
 			}
-			time.Sleep(5 * time.Minute)
+			time.Sleep(15 * time.Minute)
 		}
 	}()
 
