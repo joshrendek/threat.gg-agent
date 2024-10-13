@@ -30,7 +30,7 @@ jobs:
             --repo="$GIT_REPOSITORY" \
             --title="Release `date -u +%Y%m%d`.${GITHUB_RUN_ID}" \
             --generate-notes \
-            --notes="`git log --pretty=format:'- %s' $GITHUB_SHA...HEAD`"
+            --notes="`git log --pretty=format:'- %s' $GITHUB_SHA...HEAD`" \
             ./dist/*
 
 #    steps:
