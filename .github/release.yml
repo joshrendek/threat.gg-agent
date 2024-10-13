@@ -6,6 +6,6 @@ changelog:
       exclude:
         labels:
           - dependencies
-#    - title: 👒 Dependencies
-#      labels:
-#        - dependencies
+    - title: 👒 Dependencies
+      labels:
+        - dependencies
