@@ -3,11 +3,14 @@ package main
 import (
 	"flag"
 	"github.com/joshrendek/threat.gg-agent/updater"
+	"net/http"
 	"os"
 	"os/exec"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
+
+	_ "net/http/pprof"
 
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 
@@ -19,7 +22,6 @@ import (
 	_ "github.com/joshrendek/threat.gg-agent/sshd"
 	_ "github.com/joshrendek/threat.gg-agent/webserver"
 
-	//_ "github.com/joshrendek/threat.gg-agent/webserver"
 	"github.com/rs/zerolog/log"
 )
 
@@ -49,6 +51,10 @@ func main() {
 			}
 			time.Sleep(15 * time.Minute)
 		}
+	}()
+
+	go func() {
+		log.Info().Err(http.ListenAndServe("localhost:6060", nil)).Msg("pprof")
 	}()
 
 	// nuke tor client at startup from old procs
