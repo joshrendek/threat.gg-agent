@@ -2,6 +2,7 @@ package ftp
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -31,12 +32,18 @@ func HandleConnection(c net.Conn, logger zerolog.Logger) {
 	sendMsg(c, FtpServerReady)
 	user := AuthUser{}
 
+	loginBreaker := 0
 	for {
 		message := getMsg(c)
 		response := handleLogin(message, &user)
 		sendMsg(c, response)
 		if user.valid == true {
 			break
+		}
+		loginBreaker++
+		time.Sleep(100 * time.Millisecond)
+		if loginBreaker > 10 {
+			return
 		}
 	}
 
@@ -130,8 +137,6 @@ func handleCommand(input string, ch *ConnectionConfig, user *AuthUser, c net.Con
 }
 
 func uploadData(user *AuthUser, filePath string) {
-	// Upload to data.ambition
-
 	//content, err := ioutil.ReadFile(filePath)
 	//if err != nil {
 	//	fmt.Printf("Error reading file %s: %s\n", filePath, err)
@@ -224,13 +229,14 @@ func getMsg(conn net.Conn) string {
 	bufc.Reset(conn)
 	defer bufioReaderPool.Put(bufc)
 
-	line, err := bufc.ReadString('\n')
+	lineBytes, err := bufc.ReadBytes('\n')
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return ""
 	}
-	//fmt.Printf("Received: %s\n", line)
-	return strings.TrimRight(line, "\r")
+	trimmedBytes := bytes.TrimRight(lineBytes, "\r")
+	return string(trimmedBytes) // Convert to string only when necessary
+
 }
 func sendMsg(c net.Conn, message string) {
 	//fmt.Printf("Sending: %s\n", message)
