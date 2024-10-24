@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -212,21 +213,25 @@ func readPortData(ch *ConnectionConfig, username string, out net.Conn) {
 	}
 }
 
-func getMsg(conn net.Conn) string {
-	// Split the response into CMD and ARGS
-	bufc := bufio.NewReader(conn)
-	for {
-		line, err := bufc.ReadString('\n')
-		if err != nil {
-			conn.Close()
-			break
-		}
-		fmt.Printf("Received: %s\n", line)
-		return strings.TrimRight(line, "\r")
-	}
-	return ""
+var bufioReaderPool = sync.Pool{
+	New: func() interface{} {
+		return bufio.NewReader(nil)
+	},
 }
 
+func getMsg(conn net.Conn) string {
+	bufc := bufioReaderPool.Get().(*bufio.Reader)
+	bufc.Reset(conn)
+	defer bufioReaderPool.Put(bufc)
+
+	line, err := bufc.ReadString('\n')
+	if err != nil {
+		conn.Close()
+		return ""
+	}
+	//fmt.Printf("Received: %s\n", line)
+	return strings.TrimRight(line, "\r")
+}
 func sendMsg(c net.Conn, message string) {
 	//fmt.Printf("Sending: %s\n", message)
 	io.WriteString(c, message)
