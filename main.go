@@ -18,6 +18,7 @@ import (
 
 	_ "github.com/joshrendek/threat.gg-agent/elasticsearch"
 	_ "github.com/joshrendek/threat.gg-agent/ftp"
+	_ "github.com/joshrendek/threat.gg-agent/kubernetes"
 	_ "github.com/joshrendek/threat.gg-agent/postgres"
 	_ "github.com/joshrendek/threat.gg-agent/sshd"
 	_ "github.com/joshrendek/threat.gg-agent/webserver"
