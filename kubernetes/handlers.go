@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -20,7 +19,7 @@ var openAPISpec string
 //	 -H "Accept: application/com.github.proto-openapi.spec.v2@v1.0+protobuf" \
 //	 http://127.0.0.1:8001/openapi/v2 \
 //	 -o openapi.pb
-func openapiHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) openapiHandler(w http.ResponseWriter, r *http.Request) {
 	// Attempt to read the openapi.pb file
 	data, err := os.ReadFile("kubernetes/openapi.pb")
 	if err != nil {
@@ -42,7 +41,7 @@ func openapiHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for /version (cluster-info)
-func versionHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) versionHandler(w http.ResponseWriter, r *http.Request) {
 	response := map[string]string{
 		"major":        "1",
 		"minor":        "20",
@@ -59,7 +58,7 @@ func versionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for /api
-func apiHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) apiHandler(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"kind":                       "APIVersions",
 		"apiVersion":                 "v1",
@@ -71,7 +70,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for /api/v1
-func apiV1Handler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) apiV1Handler(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"kind":         "APIResourceList",
 		"apiVersion":   "v1",
@@ -102,7 +101,7 @@ func apiV1Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for /apis
-func apisHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) apisHandler(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"kind":       "APIGroupList",
 		"apiVersion": "v1",
@@ -128,7 +127,7 @@ func apisHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for /apis/apps
-func apiAppsHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) apiAppsHandler(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"kind":       "APIGroup",
 		"apiVersion": "v1",
@@ -149,7 +148,7 @@ func apiAppsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for /apis/apps/v1
-func apiAppsV1Handler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) apiAppsV1Handler(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"kind":         "APIResourceList",
 		"apiVersion":   "v1",
@@ -184,7 +183,7 @@ func apiAppsV1Handler(w http.ResponseWriter, r *http.Request) {
 var namespaceStore = make(map[string]Namespace)
 
 // Handler for /api/v1/namespaces
-func namespacesHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) namespacesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		// Return a list of namespaces
 		var namespaces []Namespace
@@ -207,14 +206,14 @@ func namespacesHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name := namespace.Metadata["name"]
-		namespaceStore[name] = namespace
+		namespaceStore[name.(string)] = namespace
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(namespace)
 	}
 }
 
 // Handler for /api/v1/namespaces/{namespace}
-func namespaceHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) namespaceHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespaceName := vars["namespace"]
 
@@ -234,7 +233,7 @@ var deploymentStore = make(map[string][]Deployment) // Keyed by namespace
 var daemonSetStore = make(map[string][]DaemonSet)   // Keyed by namespace
 
 // Handler for /api/v1/namespaces/{namespace}/pods
-func podsHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) podsHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespaceName := vars["namespace"]
 
@@ -257,7 +256,7 @@ func podsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if pod.Metadata == nil {
-			pod.Metadata = make(map[string]string)
+			pod.Metadata = make(map[string]interface{})
 		}
 		pod.Metadata["namespace"] = namespaceName
 		podStore[namespaceName] = append(podStore[namespaceName], pod)
@@ -266,7 +265,7 @@ func podsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func deploymentHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) deploymentHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespaceName := vars["namespace"]
 	deploymentName := vars["name"]
@@ -284,7 +283,8 @@ func deploymentHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for /apis/apps/v1/namespaces/{namespace}/deployments
-func deploymentsHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) deploymentsHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("deployments handler")
 	vars := mux.Vars(r)
 	namespaceName := vars["namespace"]
 
@@ -301,8 +301,6 @@ func deploymentsHandler(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodPost {
 		// Create a deployment
 		var deployment Deployment
-		bdy, _ := ioutil.ReadAll(r.Body)
-		fmt.Println(string(bdy))
 		err := json.NewDecoder(r.Body).Decode(&deployment)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -311,6 +309,7 @@ func deploymentsHandler(w http.ResponseWriter, r *http.Request) {
 		if deployment.Metadata.Namespace == "" {
 			deployment.Metadata.Namespace = namespaceName
 		}
+		h.logger.Info().Interface("deployment", deployment).Msg("Creating deployment")
 		// Store the deployment
 		deploymentStore[namespaceName] = append(deploymentStore[namespaceName], deployment)
 		w.Header().Set("Content-Type", "application/json")
@@ -319,7 +318,7 @@ func deploymentsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for /apis/apps/v1/namespaces/{namespace}/daemonsets
-func daemonSetsHandler(w http.ResponseWriter, r *http.Request) {
+func (h *honeypot) daemonSetsHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespaceName := vars["namespace"]
 

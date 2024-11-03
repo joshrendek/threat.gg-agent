@@ -1,20 +1,20 @@
 package kubernetes
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"fmt"
-	"github.com/gorilla/mux"
-	"github.com/joshrendek/hnypots-agent/honeypots"
-	"github.com/rs/zerolog"
-	"math/big"
-	"net/http"
-	"os"
-	"time"
+  "crypto/rand"
+  "crypto/rsa"
+  "crypto/tls"
+  "crypto/x509"
+  "crypto/x509/pkix"
+  "encoding/pem"
+  "fmt"
+  "github.com/gorilla/mux"
+  "github.com/joshrendek/hnypots-agent/honeypots"
+  "github.com/rs/zerolog"
+  "math/big"
+  "net/http"
+  "os"
+  "time"
 )
 
 var _ honeypots.Honeypot = &honeypot{}
@@ -35,31 +35,33 @@ func (h *honeypot) Name() string {
 func (h *honeypot) Start() {
 	fmt.Println("----------- START K8s")
 	router := mux.NewRouter()
+	router.Use(h.LoggingMiddleware)
 
 	// Handle /version for cluster-info
-	router.HandleFunc("/version", versionHandler).Methods("GET")
-	router.HandleFunc("/version/", versionHandler).Methods("GET")
+	router.HandleFunc("/version", h.versionHandler).Methods("GET")
+	router.HandleFunc("/version/", h.versionHandler).Methods("GET")
 
-	router.HandleFunc("/openapi/v2", openapiHandler).Methods("GET")
+	router.HandleFunc("/openapi/v2", h.openapiHandler).Methods("GET")
 
 	// Handle /api and /api/v1
-	router.HandleFunc("/api", apiHandler).Methods("GET")
-	router.HandleFunc("/api/v1", apiV1Handler).Methods("GET")
+	router.HandleFunc("/api", h.apiHandler).Methods("GET")
+	router.HandleFunc("/api/v1", h.apiV1Handler).Methods("GET")
 
 	// Handle /apis and related endpoints
-	router.HandleFunc("/apis", apisHandler).Methods("GET")
-	router.HandleFunc("/apis/apps", apiAppsHandler).Methods("GET")
-	router.HandleFunc("/apis/apps/v1", apiAppsV1Handler).Methods("GET")
-	router.HandleFunc("/apis/apps/v1/namespaces/{namespace}/deployments", deploymentsHandler).Methods("GET", "POST")
-	router.HandleFunc("/apis/apps/v1/namespaces/{namespace}/daemonsets", daemonSetsHandler).Methods("GET", "POST")
-	router.HandleFunc("/apis/apps/v1/namespaces/{namespace}/deployments/{name}", deploymentHandler).Methods("GET")
+	router.HandleFunc("/apis", h.apisHandler).Methods("GET")
+	router.HandleFunc("/apis/apps", h.apiAppsHandler).Methods("GET")
+	router.HandleFunc("/apis/apps/v1", h.apiAppsV1Handler).Methods("GET")
+	// /apis/apps/v1/namespaces/default/deployments/test-deployment
+	router.HandleFunc("/apis/apps/v1/namespaces/{namespace}/deployments", h.deploymentsHandler).Methods("GET", "POST")
+	router.HandleFunc("/apis/apps/v1/namespaces/{namespace}/daemonsets", h.daemonSetsHandler).Methods("GET", "POST")
+	router.HandleFunc("/apis/apps/v1/namespaces/{namespace}/deployments/{name}", h.deploymentHandler).Methods("GET")
 
 	// Handle /api/v1/namespaces
-	router.HandleFunc("/api/v1/namespaces", namespacesHandler).Methods("GET", "POST")
-	router.HandleFunc("/api/v1/namespaces/{namespace}", namespaceHandler).Methods("GET")
+	router.HandleFunc("/api/v1/namespaces", h.namespacesHandler).Methods("GET", "POST")
+	router.HandleFunc("/api/v1/namespaces/{namespace}", h.namespaceHandler).Methods("GET")
 
 	// Handle /api/v1/namespaces/{namespace}/pods
-	router.HandleFunc("/api/v1/namespaces/{namespace}/pods", podsHandler).Methods("GET", "POST")
+	router.HandleFunc("/api/v1/namespaces/{namespace}/pods", h.podsHandler).Methods("GET", "POST")
 
 	// Generate the TLS certificate
 	cert, err := generateSelfSignedCert()
@@ -80,11 +82,41 @@ func (h *honeypot) Start() {
 		TLSConfig: tlsConfig,
 	}
 
-	// generate the .crt and .key files
-
 	// Start the server
 	fmt.Println("Starting mock Kubernetes API server on :6443")
 	h.logger.Fatal().Err(server.ListenAndServeTLS("", "")).Msg("failed to start k8s")
+}
+
+// responseWriter wraps http.ResponseWriter to capture the status code.
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (h *honeypot) LoggingMiddleware(next http.Handler) http.Handler {
+  return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    // Start timer
+    start := time.Now()
+
+    // Wrap the ResponseWriter to capture the status code
+    rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+    // Process the request
+    next.ServeHTTP(rw, r)
+
+    // Calculate duration
+    duration := time.Since(start)
+
+    // Log the details
+    h.logger.Info().
+      Str("method", r.Method).
+      Str("url", r.URL.String()).
+      Str("remote_addr", r.RemoteAddr).
+      Str("user_agent", r.UserAgent()).
+      Int("status", rw.statusCode).
+      Dur("duration", duration).
+      Msg("HTTP request processed")
+  })
 }
 
 // Function to generate a self-signed TLS certificate and key

@@ -8,6 +8,7 @@ replace github.com/jeroenrinzema/psql-wire => github.com/joshrendek/psql-wire v0
 
 require (
 	github.com/cretz/bine v0.0.0-20181016150912-25e2ee8b213c
+	github.com/gorilla/handlers v1.5.2
 	github.com/gorilla/mux v1.8.1
 	github.com/jellydator/ttlcache/v3 v3.2.0
 	github.com/jeroenrinzema/psql-wire v0.11.1
@@ -23,6 +24,7 @@ require (
 )
 
 require (
+	github.com/felixge/httpsnoop v1.0.3 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
 	github.com/jackc/pgx/v5 v5.0.3 // indirect
