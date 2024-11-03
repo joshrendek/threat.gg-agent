@@ -2,10 +2,10 @@ package elasticsearch
 
 import (
 	"fmt"
+	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"net/http"
 	"strings"
 
-	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"github.com/joshrendek/threat.gg-agent/stats"
@@ -76,8 +76,9 @@ func (e *ES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, resp)
 }
 
-func init() {
-	honeypots.Register(&honeypot{logger: zerolog.New(os.Stdout).With().Str("honeypot", "elasticsearch").Logger()})
+func New() honeypots.Honeypot {
+	h := &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "elasticsearch").Logger()}
+	return h
 }
 
 func (h *honeypot) Name() string {

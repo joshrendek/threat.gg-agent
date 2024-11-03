@@ -2,28 +2,21 @@ package main
 
 import (
 	"flag"
+	"github.com/jellydator/ttlcache/v3"
+	"github.com/joshrendek/threat.gg-agent/elasticsearch"
+	"github.com/joshrendek/threat.gg-agent/ftp"
+	"github.com/joshrendek/threat.gg-agent/honeypots"
+	"github.com/joshrendek/threat.gg-agent/kubernetes"
+	"github.com/joshrendek/threat.gg-agent/persistence"
+	"github.com/joshrendek/threat.gg-agent/postgres"
+	"github.com/joshrendek/threat.gg-agent/sshd"
 	"github.com/joshrendek/threat.gg-agent/updater"
+	"github.com/rs/zerolog/log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"time"
-
-	"github.com/jellydator/ttlcache/v3"
-
-	_ "net/http/pprof"
-
-	"github.com/joshrendek/threat.gg-agent/honeypots"
-
-	"github.com/joshrendek/threat.gg-agent/persistence"
-
-	_ "github.com/joshrendek/threat.gg-agent/elasticsearch"
-	_ "github.com/joshrendek/threat.gg-agent/ftp"
-	_ "github.com/joshrendek/threat.gg-agent/kubernetes"
-	_ "github.com/joshrendek/threat.gg-agent/postgres"
-	_ "github.com/joshrendek/threat.gg-agent/sshd"
-	_ "github.com/joshrendek/threat.gg-agent/webserver"
-
-	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -85,7 +78,11 @@ func main() {
 
 	// TODO: make this not crappy
 	wait := make(chan bool, 1)
-	//persistence.RegisterHoneypot()
+	honeypots.Register(kubernetes.New())
+	honeypots.Register(postgres.New())
+	honeypots.Register(elasticsearch.New())
+	honeypots.Register(ftp.New())
+	honeypots.Register(sshd.New())
 	honeypots.StartHoneypots()
 
 	<-wait

@@ -48,12 +48,12 @@ type honeypot struct {
 }
 
 func init() {
-	honeypots.Register(&honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "ssh").Logger()})
 	torEnabled = os.Getenv("TOR_ENABLED") == "true"
 }
 
-func New() *honeypot {
-	return &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "ssh").Logger()}
+func New() honeypots.Honeypot {
+	h := &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "ftp").Logger()}
+	return h
 }
 
 func (h *honeypot) Name() string {

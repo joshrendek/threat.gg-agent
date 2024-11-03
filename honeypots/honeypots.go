@@ -1,8 +1,6 @@
 package honeypots
 
 import (
-	"fmt"
-
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/rs/zerolog/log"
 )
@@ -22,7 +20,6 @@ func Register(h Honeypot) {
 }
 
 func StartHoneypots() {
-	fmt.Println("--------> honeypots: ", honeypots)
 	for _, h := range honeypots {
 		log.Info().Str("honeypot", h.Name()).Msg("starting")
 		go h.Start()

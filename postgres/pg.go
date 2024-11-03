@@ -28,12 +28,9 @@ type honeypot struct {
 	logger zerolog.Logger
 }
 
-func init() {
-	honeypots.Register(&honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "postgres").Logger()})
-}
-
-func New() *honeypot {
-	return &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "postgres").Logger()}
+func New() honeypots.Honeypot {
+	h := &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "postgres").Logger()}
+	return h
 }
 
 func (h *honeypot) Name() string {
