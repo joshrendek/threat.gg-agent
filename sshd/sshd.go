@@ -226,7 +226,10 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 			httpReq.Password = pass
 		}
 
-		req, _ := http.NewRequest("GET", fmt.Sprintf("http://%s", url), nil)
+		req, reqErr := http.NewRequest("GET", fmt.Sprintf("http://%s", url), nil)
+		if reqErr != nil {
+			return
+		}
 		req.Header = toReq.Header
 		resp, err := httpClient.Do(req)
 		if err != nil {
