@@ -69,6 +69,12 @@ func (h *honeypot) apiHandler(w http.ResponseWriter, r *http.Request) {
   json.NewEncoder(w).Encode(response)
 }
 
+func (h *honeypot) catchAllHandler(w http.ResponseWriter, r *http.Request) {
+  body := make([]byte, r.ContentLength)
+  _, _ = r.Body.Read(body)
+  h.logger.Info().Str("path", r.URL.Path).Str("method", r.Method).Bytes("body", body).Msg("Request received")
+}
+
 // Handler for /api/v1
 func (h *honeypot) apiV1Handler(w http.ResponseWriter, r *http.Request) {
   response := map[string]interface{}{

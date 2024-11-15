@@ -62,6 +62,10 @@ func (h *honeypot) Start() {
 
 	// Handle /api/v1/namespaces/{namespace}/pods
 	router.HandleFunc("/api/v1/namespaces/{namespace}/pods", h.podsHandler).Methods("GET", "POST")
+  // add a catch all route and log the request and body
+  router.PathPrefix("/").HandlerFunc(h.catchAllHandler).Methods("GET", "POST")
+
+
 
 	// Generate the TLS certificate
 	cert, err := generateSelfSignedCert()
