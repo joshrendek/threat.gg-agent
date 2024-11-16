@@ -62,6 +62,13 @@ func (h *honeypot) Start() {
 
 	// Handle /api/v1/namespaces/{namespace}/pods
 	router.HandleFunc("/api/v1/namespaces/{namespace}/pods", h.podsHandler).Methods("GET", "POST")
+
+  router.HandleFunc("/apis/rbac.authorization.k8s.io", h.apiRBACHandler).Methods("GET")
+  router.HandleFunc("/apis/rbac.authorization.k8s.io/v1", h.apiRBACV1Handler).Methods("GET")
+  router.HandleFunc("/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/roles", h.rolesHandler).Methods("GET", "POST")
+
+
+
   // add a catch all route and log the request and body
   router.PathPrefix("/").HandlerFunc(h.catchAllHandler).Methods("GET", "POST")
 

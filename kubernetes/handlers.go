@@ -155,30 +155,112 @@ func (h *honeypot) apiAppsHandler(w http.ResponseWriter, r *http.Request) {
 
 // Handler for /apis/apps/v1
 func (h *honeypot) apiAppsV1Handler(w http.ResponseWriter, r *http.Request) {
+  // refresh with k get --raw /apis
+  resp := `{"kind":"APIGroupList","apiVersion":"v1","groups":[{"name":"apiregistration.k8s.io","versions":[{"groupVersion":"apiregistration.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"apiregistration.k8s.io/v1","version":"v1"}},{"name":"apps","versions":[{"groupVersion":"apps/v1","version":"v1"}],"preferredVersion":{"groupVersion":"apps/v1","version":"v1"}},{"name":"events.k8s.io","versions":[{"groupVersion":"events.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"events.k8s.io/v1","version":"v1"}},{"name":"authentication.k8s.io","versions":[{"groupVersion":"authentication.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"authentication.k8s.io/v1","version":"v1"}},{"name":"authorization.k8s.io","versions":[{"groupVersion":"authorization.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"authorization.k8s.io/v1","version":"v1"}},{"name":"autoscaling","versions":[{"groupVersion":"autoscaling/v2","version":"v2"},{"groupVersion":"autoscaling/v1","version":"v1"}],"preferredVersion":{"groupVersion":"autoscaling/v2","version":"v2"}},{"name":"batch","versions":[{"groupVersion":"batch/v1","version":"v1"}],"preferredVersion":{"groupVersion":"batch/v1","version":"v1"}},{"name":"certificates.k8s.io","versions":[{"groupVersion":"certificates.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"certificates.k8s.io/v1","version":"v1"}},{"name":"networking.k8s.io","versions":[{"groupVersion":"networking.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"networking.k8s.io/v1","version":"v1"}},{"name":"policy","versions":[{"groupVersion":"policy/v1","version":"v1"}],"preferredVersion":{"groupVersion":"policy/v1","version":"v1"}},{"name":"rbac.authorization.k8s.io","versions":[{"groupVersion":"rbac.authorization.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"rbac.authorization.k8s.io/v1","version":"v1"}},{"name":"storage.k8s.io","versions":[{"groupVersion":"storage.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"storage.k8s.io/v1","version":"v1"}},{"name":"admissionregistration.k8s.io","versions":[{"groupVersion":"admissionregistration.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"admissionregistration.k8s.io/v1","version":"v1"}},{"name":"apiextensions.k8s.io","versions":[{"groupVersion":"apiextensions.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"apiextensions.k8s.io/v1","version":"v1"}},{"name":"scheduling.k8s.io","versions":[{"groupVersion":"scheduling.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"scheduling.k8s.io/v1","version":"v1"}},{"name":"coordination.k8s.io","versions":[{"groupVersion":"coordination.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"coordination.k8s.io/v1","version":"v1"}},{"name":"node.k8s.io","versions":[{"groupVersion":"node.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"node.k8s.io/v1","version":"v1"}},{"name":"discovery.k8s.io","versions":[{"groupVersion":"discovery.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"discovery.k8s.io/v1","version":"v1"}},{"name":"flowcontrol.apiserver.k8s.io","versions":[{"groupVersion":"flowcontrol.apiserver.k8s.io/v1beta3","version":"v1beta3"},{"groupVersion":"flowcontrol.apiserver.k8s.io/v1beta2","version":"v1beta2"}],"preferredVersion":{"groupVersion":"flowcontrol.apiserver.k8s.io/v1beta3","version":"v1beta3"}},{"name":"acme.cert-manager.io","versions":[{"groupVersion":"acme.cert-manager.io/v1","version":"v1"},{"groupVersion":"acme.cert-manager.io/v1beta1","version":"v1beta1"},{"groupVersion":"acme.cert-manager.io/v1alpha3","version":"v1alpha3"},{"groupVersion":"acme.cert-manager.io/v1alpha2","version":"v1alpha2"}],"preferredVersion":{"groupVersion":"acme.cert-manager.io/v1","version":"v1"}},{"name":"cert-manager.io","versions":[{"groupVersion":"cert-manager.io/v1","version":"v1"},{"groupVersion":"cert-manager.io/v1beta1","version":"v1beta1"},{"groupVersion":"cert-manager.io/v1alpha3","version":"v1alpha3"},{"groupVersion":"cert-manager.io/v1alpha2","version":"v1alpha2"}],"preferredVersion":{"groupVersion":"cert-manager.io/v1","version":"v1"}},{"name":"monitoring.coreos.com","versions":[{"groupVersion":"monitoring.coreos.com/v1","version":"v1"},{"groupVersion":"monitoring.coreos.com/v1alpha1","version":"v1alpha1"}],"preferredVersion":{"groupVersion":"monitoring.coreos.com/v1","version":"v1"}},{"name":"operators.coreos.com","versions":[{"groupVersion":"operators.coreos.com/v2","version":"v2"},{"groupVersion":"operators.coreos.com/v1","version":"v1"},{"groupVersion":"operators.coreos.com/v1alpha2","version":"v1alpha2"},{"groupVersion":"operators.coreos.com/v1alpha1","version":"v1alpha1"}],"preferredVersion":{"groupVersion":"operators.coreos.com/v2","version":"v2"}},{"name":"snapshot.storage.k8s.io","versions":[{"groupVersion":"snapshot.storage.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"snapshot.storage.k8s.io/v1","version":"v1"}},{"name":"px.dev","versions":[{"groupVersion":"px.dev/v1alpha1","version":"v1alpha1"}],"preferredVersion":{"groupVersion":"px.dev/v1alpha1","version":"v1alpha1"}},{"name":"cilium.io","versions":[{"groupVersion":"cilium.io/v2","version":"v2"},{"groupVersion":"cilium.io/v2alpha1","version":"v2alpha1"}],"preferredVersion":{"groupVersion":"cilium.io/v2","version":"v2"}},{"name":"metrics.k8s.io","versions":[{"groupVersion":"metrics.k8s.io/v1beta1","version":"v1beta1"}],"preferredVersion":{"groupVersion":"metrics.k8s.io/v1beta1","version":"v1beta1"}}]}`
+  w.Header().Set("Content-Type", "application/json")
+  w.WriteHeader(http.StatusOK)
+  w.Write([]byte(resp))
+}
+
+// Add RBAC structs
+type Role struct {
+  Kind       string       `json:"kind,omitempty"`
+  APIVersion string       `json:"apiVersion,omitempty"`
+  Metadata   ObjectMeta   `json:"metadata,omitempty"`
+  Rules      []PolicyRule `json:"rules,omitempty"`
+}
+
+type PolicyRule struct {
+  APIGroups     []string `json:"apiGroups,omitempty"`
+  Resources     []string `json:"resources,omitempty"`
+  Verbs         []string `json:"verbs,omitempty"`
+  ResourceNames []string `json:"resourceNames,omitempty"`
+}
+
+// In-memory store for roles
+var roleStore = make(map[string][]Role) // Keyed by namespace
+
+func (h *honeypot) rolesHandler(w http.ResponseWriter, r *http.Request) {
+  vars := mux.Vars(r)
+  namespace := vars["namespace"]
+
+  if r.Method == http.MethodGet {
+    roles := roleStore[namespace]
+    response := map[string]interface{}{
+      "kind":       "RoleList",
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "items":      roles,
+    }
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(response)
+  } else if r.Method == http.MethodPost {
+    var role Role
+    err := json.NewDecoder(r.Body).Decode(&role)
+    if err != nil {
+      http.Error(w, err.Error(), http.StatusBadRequest)
+      return
+    }
+    roleStore[namespace] = append(roleStore[namespace], role)
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(role)
+  }
+}
+
+func (h *honeypot) apiRBACV1Handler(w http.ResponseWriter, r *http.Request) {
   response := map[string]interface{}{
     "kind":         "APIResourceList",
     "apiVersion":   "v1",
-    "groupVersion": "apps/v1",
+    "groupVersion": "rbac.authorization.k8s.io/v1",
     "resources": []map[string]interface{}{
       {
-        "name":               "deployments",
-        "namespaced":         true,
-        "kind":               "Deployment",
-        "verbs":              []string{"get", "list", "create", "update", "delete"},
-        "shortNames":         []string{"deploy"},
-        "categories":         []string{"all"},
-        "storageVersionHash": "def456",
+        "name":         "roles",
+        "singularName": "",
+        "namespaced":   true,
+        "kind":         "Role",
+        "verbs":        []string{"create", "delete", "get", "list", "patch", "update", "watch"},
       },
       {
-        "name":               "daemonsets",
-        "namespaced":         true,
-        "kind":               "DaemonSet",
-        "verbs":              []string{"get", "list", "create", "update", "delete"},
-        "shortNames":         []string{"ds"},
-        "categories":         []string{"all"},
-        "storageVersionHash": "ghi789",
+        "name":         "rolebindings",
+        "singularName": "",
+        "namespaced":   true,
+        "kind":         "RoleBinding",
+        "verbs":        []string{"create", "delete", "get", "list", "patch", "update", "watch"},
       },
-      // Add other resources as needed
+      {
+        "name":         "clusterroles",
+        "singularName": "",
+        "namespaced":   false,
+        "kind":         "ClusterRole",
+        "verbs":        []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+      },
+      {
+        "name":         "clusterrolebindings",
+        "singularName": "",
+        "namespaced":   false,
+        "kind":         "ClusterRoleBinding",
+        "verbs":        []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+      },
+      // Add more resources if needed
+    },
+  }
+  w.Header().Set("Content-Type", "application/json")
+  json.NewEncoder(w).Encode(response)
+}
+
+func (h *honeypot) apiRBACHandler(w http.ResponseWriter, r *http.Request) {
+  response := map[string]interface{}{
+    "kind":       "APIGroup",
+    "apiVersion": "v1",
+    "name":       "rbac.authorization.k8s.io",
+    "versions": []map[string]string{
+      {
+        "groupVersion": "rbac.authorization.k8s.io/v1",
+        "version":      "v1",
+      },
+    },
+    "preferredVersion": map[string]string{
+      "groupVersion": "rbac.authorization.k8s.io/v1",
+      "version":      "v1",
     },
   }
   w.Header().Set("Content-Type", "application/json")
