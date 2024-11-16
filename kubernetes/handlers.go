@@ -77,59 +77,595 @@ func (h *honeypot) catchAllHandler(w http.ResponseWriter, r *http.Request) {
 
 // Handler for /api/v1
 func (h *honeypot) apiV1Handler(w http.ResponseWriter, r *http.Request) {
-  response := map[string]interface{}{
-    "kind":         "APIResourceList",
-    "apiVersion":   "v1",
-    "groupVersion": "v1",
-    "resources": []map[string]interface{}{
-      {
-        "name":               "pods",
-        "namespaced":         true,
-        "kind":               "Pod",
-        "verbs":              []string{"get", "list", "create", "update", "delete"},
-        "shortNames":         []string{"po"},
-        "categories":         []string{"all"},
-        "storageVersionHash": "abc123",
-      },
-      {
-        "name":               "namespaces",
-        "namespaced":         false,
-        "kind":               "Namespace",
-        "verbs":              []string{"get", "list", "create", "update", "delete"},
-        "shortNames":         []string{"ns"},
-        "storageVersionHash": "abc456",
-      },
-      // Add other resources as needed
+  resp := `{
+  "kind": "APIResourceList",
+  "groupVersion": "v1",
+  "resources": [
+    {
+      "name": "bindings",
+      "singularName": "binding",
+      "namespaced": true,
+      "kind": "Binding",
+      "verbs": [
+        "create"
+      ]
     },
-  }
+    {
+      "name": "componentstatuses",
+      "singularName": "componentstatus",
+      "namespaced": false,
+      "kind": "ComponentStatus",
+      "verbs": [
+        "get",
+        "list"
+      ],
+      "shortNames": [
+        "cs"
+      ]
+    },
+    {
+      "name": "configmaps",
+      "singularName": "configmap",
+      "namespaced": true,
+      "kind": "ConfigMap",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "cm"
+      ],
+      "storageVersionHash": "qFsyl6wFWjQ="
+    },
+    {
+      "name": "endpoints",
+      "singularName": "endpoints",
+      "namespaced": true,
+      "kind": "Endpoints",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "ep"
+      ],
+      "storageVersionHash": "fWeeMqaN/OA="
+    },
+    {
+      "name": "events",
+      "singularName": "event",
+      "namespaced": true,
+      "kind": "Event",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "ev"
+      ],
+      "storageVersionHash": "r2yiGXH7wu8="
+    },
+    {
+      "name": "limitranges",
+      "singularName": "limitrange",
+      "namespaced": true,
+      "kind": "LimitRange",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "limits"
+      ],
+      "storageVersionHash": "EBKMFVe6cwo="
+    },
+    {
+      "name": "namespaces",
+      "singularName": "namespace",
+      "namespaced": false,
+      "kind": "Namespace",
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "ns"
+      ],
+      "storageVersionHash": "Q3oi5N2YM8M="
+    },
+    {
+      "name": "namespaces/finalize",
+      "singularName": "",
+      "namespaced": false,
+      "kind": "Namespace",
+      "verbs": [
+        "update"
+      ]
+    },
+    {
+      "name": "namespaces/status",
+      "singularName": "",
+      "namespaced": false,
+      "kind": "Namespace",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "nodes",
+      "singularName": "node",
+      "namespaced": false,
+      "kind": "Node",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "no"
+      ],
+      "storageVersionHash": "XwShjMxG9Fs="
+    },
+    {
+      "name": "nodes/proxy",
+      "singularName": "",
+      "namespaced": false,
+      "kind": "NodeProxyOptions",
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "nodes/status",
+      "singularName": "",
+      "namespaced": false,
+      "kind": "Node",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "persistentvolumeclaims",
+      "singularName": "persistentvolumeclaim",
+      "namespaced": true,
+      "kind": "PersistentVolumeClaim",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "pvc"
+      ],
+      "storageVersionHash": "QWTyNDq0dC4="
+    },
+    {
+      "name": "persistentvolumeclaims/status",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "PersistentVolumeClaim",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "persistentvolumes",
+      "singularName": "persistentvolume",
+      "namespaced": false,
+      "kind": "PersistentVolume",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "pv"
+      ],
+      "storageVersionHash": "HN/zwEC+JgM="
+    },
+    {
+      "name": "persistentvolumes/status",
+      "singularName": "",
+      "namespaced": false,
+      "kind": "PersistentVolume",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "pods",
+      "singularName": "pod",
+      "namespaced": true,
+      "kind": "Pod",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "po"
+      ],
+      "categories": [
+        "all"
+      ],
+      "storageVersionHash": "xPOwRZ+Yhw8="
+    },
+    {
+      "name": "pods/attach",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "PodAttachOptions",
+      "verbs": [
+        "create",
+        "get"
+      ]
+    },
+    {
+      "name": "pods/binding",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "Binding",
+      "verbs": [
+        "create"
+      ]
+    },
+    {
+      "name": "pods/ephemeralcontainers",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "Pod",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "pods/eviction",
+      "singularName": "",
+      "namespaced": true,
+      "group": "policy",
+      "version": "v1",
+      "kind": "Eviction",
+      "verbs": [
+        "create"
+      ]
+    },
+    {
+      "name": "pods/exec",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "PodExecOptions",
+      "verbs": [
+        "create",
+        "get"
+      ]
+    },
+    {
+      "name": "pods/log",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "Pod",
+      "verbs": [
+        "get"
+      ]
+    },
+    {
+      "name": "pods/portforward",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "PodPortForwardOptions",
+      "verbs": [
+        "create",
+        "get"
+      ]
+    },
+    {
+      "name": "pods/proxy",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "PodProxyOptions",
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "pods/status",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "Pod",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "podtemplates",
+      "singularName": "podtemplate",
+      "namespaced": true,
+      "kind": "PodTemplate",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "storageVersionHash": "LIXB2x4IFpk="
+    },
+    {
+      "name": "replicationcontrollers",
+      "singularName": "replicationcontroller",
+      "namespaced": true,
+      "kind": "ReplicationController",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "rc"
+      ],
+      "categories": [
+        "all"
+      ],
+      "storageVersionHash": "Jond2If31h0="
+    },
+    {
+      "name": "replicationcontrollers/scale",
+      "singularName": "",
+      "namespaced": true,
+      "group": "autoscaling",
+      "version": "v1",
+      "kind": "Scale",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "replicationcontrollers/status",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "ReplicationController",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "resourcequotas",
+      "singularName": "resourcequota",
+      "namespaced": true,
+      "kind": "ResourceQuota",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "quota"
+      ],
+      "storageVersionHash": "8uhSgffRX6w="
+    },
+    {
+      "name": "resourcequotas/status",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "ResourceQuota",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "secrets",
+      "singularName": "secret",
+      "namespaced": true,
+      "kind": "Secret",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "storageVersionHash": "S6u1pOWzb84="
+    },
+    {
+      "name": "serviceaccounts",
+      "singularName": "serviceaccount",
+      "namespaced": true,
+      "kind": "ServiceAccount",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "sa"
+      ],
+      "storageVersionHash": "pbx9ZvyFpBE="
+    },
+    {
+      "name": "serviceaccounts/token",
+      "singularName": "",
+      "namespaced": true,
+      "group": "authentication.k8s.io",
+      "version": "v1",
+      "kind": "TokenRequest",
+      "verbs": [
+        "create"
+      ]
+    },
+    {
+      "name": "services",
+      "singularName": "service",
+      "namespaced": true,
+      "kind": "Service",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "svc"
+      ],
+      "categories": [
+        "all"
+      ],
+      "storageVersionHash": "0/CO1lhkEBI="
+    },
+    {
+      "name": "services/proxy",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "ServiceProxyOptions",
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "services/status",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "Service",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    }
+  ]
+}`
   w.Header().Set("Content-Type", "application/json")
-  json.NewEncoder(w).Encode(response)
+  w.WriteHeader(http.StatusOK)
+  w.Write([]byte(resp))
 }
 
 // Handler for /apis
 func (h *honeypot) apisHandler(w http.ResponseWriter, r *http.Request) {
-  response := map[string]interface{}{
-    "kind":       "APIGroupList",
-    "apiVersion": "v1",
-    "groups": []map[string]interface{}{
-      {
-        "name": "apps",
-        "versions": []map[string]string{
-          {
-            "groupVersion": "apps/v1",
-            "version":      "v1",
-          },
-        },
-        "preferredVersion": map[string]string{
+  resp := `{
+  "kind": "APIGroupList",
+  "apiVersion": "v1",
+  "groups": [
+    {
+      "name": "apps",
+      "versions": [
+        {
           "groupVersion": "apps/v1",
-          "version":      "v1",
-        },
-      },
-      // Add other API groups as needed
-    },
-  }
+          "version": "v1"
+        }
+      ],
+      "preferredVersion": {
+        "groupVersion": "apps/v1",
+        "version": "v1"
+      }
+    }
+  ]
+}`
   w.Header().Set("Content-Type", "application/json")
-  json.NewEncoder(w).Encode(response)
+  w.WriteHeader(http.StatusOK)
+  w.Write([]byte(resp))
 }
 
 // Handler for /apis/apps
@@ -156,7 +692,205 @@ func (h *honeypot) apiAppsHandler(w http.ResponseWriter, r *http.Request) {
 // Handler for /apis/apps/v1
 func (h *honeypot) apiAppsV1Handler(w http.ResponseWriter, r *http.Request) {
   // refresh with k get --raw /apis
-  resp := `{"kind":"APIGroupList","apiVersion":"v1","groups":[{"name":"apiregistration.k8s.io","versions":[{"groupVersion":"apiregistration.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"apiregistration.k8s.io/v1","version":"v1"}},{"name":"apps","versions":[{"groupVersion":"apps/v1","version":"v1"}],"preferredVersion":{"groupVersion":"apps/v1","version":"v1"}},{"name":"events.k8s.io","versions":[{"groupVersion":"events.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"events.k8s.io/v1","version":"v1"}},{"name":"authentication.k8s.io","versions":[{"groupVersion":"authentication.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"authentication.k8s.io/v1","version":"v1"}},{"name":"authorization.k8s.io","versions":[{"groupVersion":"authorization.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"authorization.k8s.io/v1","version":"v1"}},{"name":"autoscaling","versions":[{"groupVersion":"autoscaling/v2","version":"v2"},{"groupVersion":"autoscaling/v1","version":"v1"}],"preferredVersion":{"groupVersion":"autoscaling/v2","version":"v2"}},{"name":"batch","versions":[{"groupVersion":"batch/v1","version":"v1"}],"preferredVersion":{"groupVersion":"batch/v1","version":"v1"}},{"name":"certificates.k8s.io","versions":[{"groupVersion":"certificates.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"certificates.k8s.io/v1","version":"v1"}},{"name":"networking.k8s.io","versions":[{"groupVersion":"networking.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"networking.k8s.io/v1","version":"v1"}},{"name":"policy","versions":[{"groupVersion":"policy/v1","version":"v1"}],"preferredVersion":{"groupVersion":"policy/v1","version":"v1"}},{"name":"rbac.authorization.k8s.io","versions":[{"groupVersion":"rbac.authorization.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"rbac.authorization.k8s.io/v1","version":"v1"}},{"name":"storage.k8s.io","versions":[{"groupVersion":"storage.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"storage.k8s.io/v1","version":"v1"}},{"name":"admissionregistration.k8s.io","versions":[{"groupVersion":"admissionregistration.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"admissionregistration.k8s.io/v1","version":"v1"}},{"name":"apiextensions.k8s.io","versions":[{"groupVersion":"apiextensions.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"apiextensions.k8s.io/v1","version":"v1"}},{"name":"scheduling.k8s.io","versions":[{"groupVersion":"scheduling.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"scheduling.k8s.io/v1","version":"v1"}},{"name":"coordination.k8s.io","versions":[{"groupVersion":"coordination.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"coordination.k8s.io/v1","version":"v1"}},{"name":"node.k8s.io","versions":[{"groupVersion":"node.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"node.k8s.io/v1","version":"v1"}},{"name":"discovery.k8s.io","versions":[{"groupVersion":"discovery.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"discovery.k8s.io/v1","version":"v1"}},{"name":"flowcontrol.apiserver.k8s.io","versions":[{"groupVersion":"flowcontrol.apiserver.k8s.io/v1beta3","version":"v1beta3"},{"groupVersion":"flowcontrol.apiserver.k8s.io/v1beta2","version":"v1beta2"}],"preferredVersion":{"groupVersion":"flowcontrol.apiserver.k8s.io/v1beta3","version":"v1beta3"}},{"name":"acme.cert-manager.io","versions":[{"groupVersion":"acme.cert-manager.io/v1","version":"v1"},{"groupVersion":"acme.cert-manager.io/v1beta1","version":"v1beta1"},{"groupVersion":"acme.cert-manager.io/v1alpha3","version":"v1alpha3"},{"groupVersion":"acme.cert-manager.io/v1alpha2","version":"v1alpha2"}],"preferredVersion":{"groupVersion":"acme.cert-manager.io/v1","version":"v1"}},{"name":"cert-manager.io","versions":[{"groupVersion":"cert-manager.io/v1","version":"v1"},{"groupVersion":"cert-manager.io/v1beta1","version":"v1beta1"},{"groupVersion":"cert-manager.io/v1alpha3","version":"v1alpha3"},{"groupVersion":"cert-manager.io/v1alpha2","version":"v1alpha2"}],"preferredVersion":{"groupVersion":"cert-manager.io/v1","version":"v1"}},{"name":"monitoring.coreos.com","versions":[{"groupVersion":"monitoring.coreos.com/v1","version":"v1"},{"groupVersion":"monitoring.coreos.com/v1alpha1","version":"v1alpha1"}],"preferredVersion":{"groupVersion":"monitoring.coreos.com/v1","version":"v1"}},{"name":"operators.coreos.com","versions":[{"groupVersion":"operators.coreos.com/v2","version":"v2"},{"groupVersion":"operators.coreos.com/v1","version":"v1"},{"groupVersion":"operators.coreos.com/v1alpha2","version":"v1alpha2"},{"groupVersion":"operators.coreos.com/v1alpha1","version":"v1alpha1"}],"preferredVersion":{"groupVersion":"operators.coreos.com/v2","version":"v2"}},{"name":"snapshot.storage.k8s.io","versions":[{"groupVersion":"snapshot.storage.k8s.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"snapshot.storage.k8s.io/v1","version":"v1"}},{"name":"px.dev","versions":[{"groupVersion":"px.dev/v1alpha1","version":"v1alpha1"}],"preferredVersion":{"groupVersion":"px.dev/v1alpha1","version":"v1alpha1"}},{"name":"cilium.io","versions":[{"groupVersion":"cilium.io/v2","version":"v2"},{"groupVersion":"cilium.io/v2alpha1","version":"v2alpha1"}],"preferredVersion":{"groupVersion":"cilium.io/v2","version":"v2"}},{"name":"metrics.k8s.io","versions":[{"groupVersion":"metrics.k8s.io/v1beta1","version":"v1beta1"}],"preferredVersion":{"groupVersion":"metrics.k8s.io/v1beta1","version":"v1beta1"}}]}`
+  resp := `{
+  "kind": "APIResourceList",
+  "apiVersion": "v1",
+  "groupVersion": "apps/v1",
+  "resources": [
+    {
+      "name": "controllerrevisions",
+      "singularName": "controllerrevision",
+      "namespaced": true,
+      "kind": "ControllerRevision",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "storageVersionHash": "85nkx63pcBU="
+    },
+    {
+      "name": "daemonsets",
+      "singularName": "daemonset",
+      "namespaced": true,
+      "kind": "DaemonSet",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "ds"
+      ],
+      "categories": [
+        "all"
+      ],
+      "storageVersionHash": "dd7pWHUlMKQ="
+    },
+    {
+      "name": "daemonsets/status",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "DaemonSet",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "deployments",
+      "singularName": "deployment",
+      "namespaced": true,
+      "kind": "Deployment",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "deploy"
+      ],
+      "categories": [
+        "all"
+      ],
+      "storageVersionHash": "8aSe+NMegvE="
+    },
+    {
+      "name": "deployments/scale",
+      "singularName": "",
+      "namespaced": true,
+      "group": "autoscaling",
+      "version": "v1",
+      "kind": "Scale",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "deployments/status",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "Deployment",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "replicasets",
+      "singularName": "replicaset",
+      "namespaced": true,
+      "kind": "ReplicaSet",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "rs"
+      ],
+      "categories": [
+        "all"
+      ],
+      "storageVersionHash": "P1RzHs8/mWQ="
+    },
+    {
+      "name": "replicasets/scale",
+      "singularName": "",
+      "namespaced": true,
+      "group": "autoscaling",
+      "version": "v1",
+      "kind": "Scale",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "replicasets/status",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "ReplicaSet",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "statefulsets",
+      "singularName": "statefulset",
+      "namespaced": true,
+      "kind": "StatefulSet",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ],
+      "shortNames": [
+        "sts"
+      ],
+      "categories": [
+        "all"
+      ],
+      "storageVersionHash": "H+vl74LkKdo="
+    },
+    {
+      "name": "statefulsets/scale",
+      "singularName": "",
+      "namespaced": true,
+      "group": "autoscaling",
+      "version": "v1",
+      "kind": "Scale",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    },
+    {
+      "name": "statefulsets/status",
+      "singularName": "",
+      "namespaced": true,
+      "kind": "StatefulSet",
+      "verbs": [
+        "get",
+        "patch",
+        "update"
+      ]
+    }
+  ]
+}`
   w.Header().Set("Content-Type", "application/json")
   w.WriteHeader(http.StatusOK)
   w.Write([]byte(resp))
