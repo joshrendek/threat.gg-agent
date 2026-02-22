@@ -7,6 +7,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/ftp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
+	"github.com/joshrendek/threat.gg-agent/openclaw"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/postgres"
 	"github.com/joshrendek/threat.gg-agent/sshd"
@@ -83,6 +84,7 @@ func main() {
 	honeypots.Register(elasticsearch.New())
 	honeypots.Register(ftp.New())
 	honeypots.Register(sshd.New())
+	honeypots.Register(openclaw.New())
 	honeypots.StartHoneypots()
 
 	<-wait

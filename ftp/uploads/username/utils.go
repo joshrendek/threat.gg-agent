@@ -1,4 +1,4 @@
-package main
+package username
 
 import (
 	"errors"
@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 )
+
+const SyntaxErr = "500 Syntax Error\r\n"
 
 func stringInList(search string, data []string) bool {
 	for _, d := range data {

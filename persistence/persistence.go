@@ -109,6 +109,13 @@ func SaveShellCommand(in *proto.ShellCommandRequest) error {
 	return err
 }
 
+func SaveOpenclawConnect(in *proto.OpenclawRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveOpenclawConnect(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

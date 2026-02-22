@@ -117,6 +117,7 @@ type HoneypotClient interface {
 	SaveHttpHeaders(ctx context.Context, in *HttpHeaderRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveShellCommand(ctx context.Context, in *ShellCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	GetCommandResponse(ctx context.Context, in *CommandRequest, opts ...grpc.CallOption) (*CommandResponse, error)
+	SaveOpenclawConnect(ctx context.Context, in *OpenclawRequest, opts ...grpc.CallOption) (*SaveReply, error)
 }
 
 type honeypotClient struct {
@@ -226,6 +227,15 @@ func (c *honeypotClient) GetCommandResponse(ctx context.Context, in *CommandRequ
 	return out, nil
 }
 
+func (c *honeypotClient) SaveOpenclawConnect(ctx context.Context, in *OpenclawRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveOpenclawConnect", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoneypotServer is the server API for Honeypot service.
 // All implementations must embed UnimplementedHoneypotServer
 // for forward compatibility
@@ -241,6 +251,7 @@ type HoneypotServer interface {
 	SaveHttpHeaders(context.Context, *HttpHeaderRequest) (*SaveReply, error)
 	SaveShellCommand(context.Context, *ShellCommandRequest) (*SaveReply, error)
 	GetCommandResponse(context.Context, *CommandRequest) (*CommandResponse, error)
+	SaveOpenclawConnect(context.Context, *OpenclawRequest) (*SaveReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
 
@@ -280,6 +291,9 @@ func (UnimplementedHoneypotServer) SaveShellCommand(context.Context, *ShellComma
 }
 func (UnimplementedHoneypotServer) GetCommandResponse(context.Context, *CommandRequest) (*CommandResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCommandResponse not implemented")
+}
+func (UnimplementedHoneypotServer) SaveOpenclawConnect(context.Context, *OpenclawRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveOpenclawConnect not implemented")
 }
 func (UnimplementedHoneypotServer) mustEmbedUnimplementedHoneypotServer() {}
 
@@ -492,6 +506,24 @@ func _Honeypot_GetCommandResponse_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveOpenclawConnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpenclawRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveOpenclawConnect(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveOpenclawConnect",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveOpenclawConnect(ctx, req.(*OpenclawRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Honeypot_ServiceDesc is the grpc.ServiceDesc for Honeypot service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -542,6 +574,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetCommandResponse",
 			Handler:    _Honeypot_GetCommandResponse_Handler,
+		},
+		{
+			MethodName: "SaveOpenclawConnect",
+			Handler:    _Honeypot_SaveOpenclawConnect_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
