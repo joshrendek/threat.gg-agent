@@ -116,6 +116,20 @@ func SaveOpenclawConnect(in *proto.OpenclawRequest) error {
 	return err
 }
 
+func SaveKafkaConnect(in *proto.KafkaRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveKafkaConnect(ctx, in)
+	return err
+}
+
+func SaveKafkaApiRequest(in *proto.KafkaApiRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveKafkaApiRequest(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

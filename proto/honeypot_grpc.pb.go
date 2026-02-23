@@ -118,6 +118,8 @@ type HoneypotClient interface {
 	SaveShellCommand(ctx context.Context, in *ShellCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	GetCommandResponse(ctx context.Context, in *CommandRequest, opts ...grpc.CallOption) (*CommandResponse, error)
 	SaveOpenclawConnect(ctx context.Context, in *OpenclawRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveKafkaConnect(ctx context.Context, in *KafkaRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveKafkaApiRequest(ctx context.Context, in *KafkaApiRequest, opts ...grpc.CallOption) (*SaveReply, error)
 }
 
 type honeypotClient struct {
@@ -236,6 +238,24 @@ func (c *honeypotClient) SaveOpenclawConnect(ctx context.Context, in *OpenclawRe
 	return out, nil
 }
 
+func (c *honeypotClient) SaveKafkaConnect(ctx context.Context, in *KafkaRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveKafkaConnect", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveKafkaApiRequest(ctx context.Context, in *KafkaApiRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveKafkaApiRequest", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoneypotServer is the server API for Honeypot service.
 // All implementations must embed UnimplementedHoneypotServer
 // for forward compatibility
@@ -252,6 +272,8 @@ type HoneypotServer interface {
 	SaveShellCommand(context.Context, *ShellCommandRequest) (*SaveReply, error)
 	GetCommandResponse(context.Context, *CommandRequest) (*CommandResponse, error)
 	SaveOpenclawConnect(context.Context, *OpenclawRequest) (*SaveReply, error)
+	SaveKafkaConnect(context.Context, *KafkaRequest) (*SaveReply, error)
+	SaveKafkaApiRequest(context.Context, *KafkaApiRequest) (*SaveReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
 
@@ -294,6 +316,12 @@ func (UnimplementedHoneypotServer) GetCommandResponse(context.Context, *CommandR
 }
 func (UnimplementedHoneypotServer) SaveOpenclawConnect(context.Context, *OpenclawRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveOpenclawConnect not implemented")
+}
+func (UnimplementedHoneypotServer) SaveKafkaConnect(context.Context, *KafkaRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveKafkaConnect not implemented")
+}
+func (UnimplementedHoneypotServer) SaveKafkaApiRequest(context.Context, *KafkaApiRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveKafkaApiRequest not implemented")
 }
 func (UnimplementedHoneypotServer) mustEmbedUnimplementedHoneypotServer() {}
 
@@ -524,6 +552,42 @@ func _Honeypot_SaveOpenclawConnect_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveKafkaConnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(KafkaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveKafkaConnect(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveKafkaConnect",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveKafkaConnect(ctx, req.(*KafkaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveKafkaApiRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(KafkaApiRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveKafkaApiRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveKafkaApiRequest",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveKafkaApiRequest(ctx, req.(*KafkaApiRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Honeypot_ServiceDesc is the grpc.ServiceDesc for Honeypot service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -578,6 +642,14 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveOpenclawConnect",
 			Handler:    _Honeypot_SaveOpenclawConnect_Handler,
+		},
+		{
+			MethodName: "SaveKafkaConnect",
+			Handler:    _Honeypot_SaveKafkaConnect_Handler,
+		},
+		{
+			MethodName: "SaveKafkaApiRequest",
+			Handler:    _Honeypot_SaveKafkaApiRequest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
