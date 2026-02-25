@@ -19,6 +19,14 @@ import (
 )
 
 var _ honeypots.Honeypot = &honeypot{}
+var persistOpenclawConnect = persistence.SaveOpenclawConnect
+
+const (
+	maxSessionMessages        = 100
+	maxPersistedMessages      = 50
+	maxPersistedMessageBytes  = 4096
+	maxPersistedTotalMsgBytes = 64 * 1024
+)
 
 type honeypot struct {
 	logger zerolog.Logger
@@ -57,18 +65,18 @@ type connectMsg struct {
 	Type    string `json:"type"`
 	ID      string `json:"id"`
 	Payload struct {
-		Type           string   `json:"type"`
-		AuthToken      string   `json:"auth_token"`
-		ClientID       string   `json:"client_id"`
-		ClientVersion  string   `json:"client_version"`
-		ClientPlatform string   `json:"client_platform"`
-		ClientMode     string   `json:"client_mode"`
-		Role           string   `json:"role"`
-		Scopes         []string `json:"scopes"`
-		DeviceID       string   `json:"device_id"`
-		DevicePublicKey string  `json:"device_public_key"`
-		MinProtocol    int32    `json:"min_protocol"`
-		MaxProtocol    int32    `json:"max_protocol"`
+		Type            string   `json:"type"`
+		AuthToken       string   `json:"auth_token"`
+		ClientID        string   `json:"client_id"`
+		ClientVersion   string   `json:"client_version"`
+		ClientPlatform  string   `json:"client_platform"`
+		ClientMode      string   `json:"client_mode"`
+		Role            string   `json:"role"`
+		Scopes          []string `json:"scopes"`
+		DeviceID        string   `json:"device_id"`
+		DevicePublicKey string   `json:"device_public_key"`
+		MinProtocol     int32    `json:"min_protocol"`
+		MaxProtocol     int32    `json:"max_protocol"`
 	} `json:"payload"`
 }
 
@@ -87,6 +95,7 @@ func (h *honeypot) wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.Info().Str("session", sessionID).Str("remote", remoteAddr).Msg("new connection")
+	h.persist(buildConnectionRequest(sessionID, remoteAddr), sessionID, "connect")
 
 	// Send challenge
 	nonce := randomHex(16)
@@ -109,7 +118,7 @@ func (h *honeypot) wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var cm connectMsg
 	if err := conn.ReadJSON(&cm); err != nil {
-		h.logger.Warn().Err(err).Str("session", sessionID).Msg("no connect message")
+		h.logger.Warn().Err(err).Str("session", sessionID).Str("remote", remoteAddr).Msg("invalid or missing connect message")
 		return
 	}
 
@@ -140,7 +149,7 @@ func (h *honeypot) wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Read loop: capture subsequent messages
 	var messages []string
-	for i := 0; i < 100; i++ {
+	for i := 0; i < maxSessionMessages; i++ {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -168,28 +177,7 @@ func (h *honeypot) wsHandler(w http.ResponseWriter, r *http.Request) {
 		Int("messages", len(messages)).
 		Msg("session ended")
 
-	// Persist asynchronously
-	go func() {
-		req := &proto.OpenclawRequest{
-			RemoteAddr:      remoteAddr,
-			Guid:            sessionID,
-			AuthToken:       cm.Payload.AuthToken,
-			ClientId:        cm.Payload.ClientID,
-			ClientVersion:   cm.Payload.ClientVersion,
-			ClientPlatform:  cm.Payload.ClientPlatform,
-			ClientMode:      cm.Payload.ClientMode,
-			Role:            cm.Payload.Role,
-			Scopes:          cm.Payload.Scopes,
-			DeviceId:        cm.Payload.DeviceID,
-			DevicePublicKey: cm.Payload.DevicePublicKey,
-			MinProtocol:     cm.Payload.MinProtocol,
-			MaxProtocol:     cm.Payload.MaxProtocol,
-			Messages:        messages,
-		}
-		if err := persistence.SaveOpenclawConnect(req); err != nil {
-			h.logger.Error().Err(err).Str("session", sessionID).Msg("failed to persist")
-		}
-	}()
+	h.persist(buildEnrichedRequest(sessionID, remoteAddr, cm, messages), sessionID, "enrich")
 }
 
 func randomHex(n int) string {
@@ -203,4 +191,78 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return fmt.Sprintf("%s...", s[:maxLen])
+}
+
+func (h *honeypot) persist(req *proto.OpenclawRequest, sessionID string, stage string) {
+	if err := persistOpenclawConnect(req); err != nil {
+		h.logger.Error().Err(err).Str("session", sessionID).Str("stage", stage).Msg("failed to persist openclaw event")
+	}
+}
+
+func buildConnectionRequest(sessionID string, remoteAddr string) *proto.OpenclawRequest {
+	return &proto.OpenclawRequest{
+		RemoteAddr: remoteAddr,
+		Guid:       sessionID,
+	}
+}
+
+func buildEnrichedRequest(sessionID string, remoteAddr string, cm connectMsg, messages []string) *proto.OpenclawRequest {
+	return &proto.OpenclawRequest{
+		RemoteAddr:      remoteAddr,
+		Guid:            sessionID,
+		AuthToken:       cm.Payload.AuthToken,
+		ClientId:        cm.Payload.ClientID,
+		ClientVersion:   cm.Payload.ClientVersion,
+		ClientPlatform:  cm.Payload.ClientPlatform,
+		ClientMode:      cm.Payload.ClientMode,
+		Role:            cm.Payload.Role,
+		Scopes:          cm.Payload.Scopes,
+		DeviceId:        cm.Payload.DeviceID,
+		DevicePublicKey: cm.Payload.DevicePublicKey,
+		MinProtocol:     cm.Payload.MinProtocol,
+		MaxProtocol:     cm.Payload.MaxProtocol,
+		Messages:        limitMessages(messages),
+	}
+}
+
+func limitMessages(messages []string) []string {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, minInt(len(messages), maxPersistedMessages))
+	totalBytes := 0
+	droppedCount := 0
+
+	for i, message := range messages {
+		if i >= maxPersistedMessages {
+			droppedCount = len(messages) - i
+			break
+		}
+
+		if len(message) > maxPersistedMessageBytes {
+			message = message[:maxPersistedMessageBytes] + "...[truncated]"
+		}
+
+		if totalBytes+len(message) > maxPersistedTotalMsgBytes {
+			droppedCount = len(messages) - i
+			break
+		}
+
+		totalBytes += len(message)
+		result = append(result, message)
+	}
+
+	if droppedCount > 0 {
+		result = append(result, fmt.Sprintf("[truncated %d message(s)]", droppedCount))
+	}
+
+	return result
+}
+
+func minInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
