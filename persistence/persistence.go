@@ -52,10 +52,10 @@ func HttpToMap(in map[string][]string) map[string]string {
 	return ret
 }
 
-func Connect() error {
+func Connect(version string) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
-	_, err := honeypotClient.Connect(ctx, &proto.ConnectRequest{})
+	_, err := honeypotClient.Connect(ctx, &proto.ConnectRequest{Version: version})
 	return err
 }
 

@@ -71,7 +71,7 @@ func main() {
 	// Checkin and make sure we send a ping every few seconds
 	go func() {
 		for {
-			if err := persistence.Connect(); err != nil {
+			if err := persistence.Connect(Version); err != nil {
 				log.Error().Err(err).Msg("failed to checkin to grpc api")
 			}
 			time.Sleep(30 * time.Second)
