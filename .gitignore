@@ -12,3 +12,4 @@ honeypot_rsa_prv
 honeypot_rsa_prv.pub
 
 dist/
+.worktrees/
