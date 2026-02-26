@@ -83,7 +83,7 @@ type connectMsg struct {
 func (h *honeypot) wsHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("websocket upgrade failed")
+		h.persistHTTPProbe(r)
 		return
 	}
 	defer conn.Close()
@@ -167,7 +167,9 @@ func (h *honeypot) wsHandler(w http.ResponseWriter, r *http.Request) {
 					"ok":      true,
 					"payload": map[string]interface{}{},
 				}
-				conn.WriteJSON(ack)
+				if err := conn.WriteJSON(ack); err != nil {
+					h.logger.Warn().Err(err).Str("session", sessionID).Msg("failed to send ack")
+				}
 			}
 		}
 	}
@@ -197,6 +199,31 @@ func (h *honeypot) persist(req *proto.OpenclawRequest, sessionID string, stage s
 	if err := persistOpenclawConnect(req); err != nil {
 		h.logger.Error().Err(err).Str("session", sessionID).Str("stage", stage).Msg("failed to persist openclaw event")
 	}
+}
+
+func (h *honeypot) persistHTTPProbe(r *http.Request) {
+	remoteAddr, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if remoteAddr == "" {
+		remoteAddr = r.RemoteAddr
+	}
+
+	sessionID := uuid.NewV4().String()
+	h.logger.Info().Str("session", sessionID).Str("remote", remoteAddr).Str("method", r.Method).Str("path", r.URL.Path).Msg("non-websocket probe")
+
+	probe := fmt.Sprintf("%s %s %s", r.Method, r.URL.RequestURI(), r.Proto)
+	var messages []string
+	messages = append(messages, probe)
+	if ua := r.UserAgent(); ua != "" {
+		messages = append(messages, "User-Agent: "+ua)
+	}
+
+	req := &proto.OpenclawRequest{
+		RemoteAddr:    remoteAddr,
+		Guid:          sessionID,
+		ClientVersion: r.UserAgent(),
+		Messages:      messages,
+	}
+	h.persist(req, sessionID, "http-probe")
 }
 
 func buildConnectionRequest(sessionID string, remoteAddr string) *proto.OpenclawRequest {

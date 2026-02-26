@@ -2,8 +2,12 @@ package openclaw
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/joshrendek/threat.gg-agent/proto"
 )
 
 func TestLimitMessagesEnforcesMaxMessageCount(t *testing.T) {
@@ -32,6 +36,42 @@ func TestLimitMessagesTruncatesLargeMessage(t *testing.T) {
 
 	if !strings.HasSuffix(got[0], "...[truncated]") {
 		t.Fatalf("expected truncated suffix, got: %s", got[0])
+	}
+}
+
+func TestPersistHTTPProbeCaptures(t *testing.T) {
+	var captured *proto.OpenclawRequest
+	orig := persistOpenclawConnect
+	persistOpenclawConnect = func(in *proto.OpenclawRequest) error {
+		captured = in
+		return nil
+	}
+	defer func() { persistOpenclawConnect = orig }()
+
+	h := &honeypot{logger: New().(*honeypot).logger}
+	req := httptest.NewRequest(http.MethodGet, "/scan?q=test", nil)
+	req.Header.Set("User-Agent", "scanner/1.0")
+	req.RemoteAddr = "1.2.3.4:12345"
+
+	h.persistHTTPProbe(req)
+
+	if captured == nil {
+		t.Fatal("expected persist to be called")
+	}
+	if captured.RemoteAddr != "1.2.3.4" {
+		t.Fatalf("expected remote addr 1.2.3.4, got %s", captured.RemoteAddr)
+	}
+	if captured.ClientVersion != "scanner/1.0" {
+		t.Fatalf("expected client version scanner/1.0, got %s", captured.ClientVersion)
+	}
+	if len(captured.Messages) < 1 {
+		t.Fatal("expected at least one message with request line")
+	}
+	if !strings.Contains(captured.Messages[0], "GET /scan?q=test") {
+		t.Fatalf("expected request line in first message, got: %s", captured.Messages[0])
+	}
+	if captured.Guid == "" {
+		t.Fatal("expected non-empty GUID")
 	}
 }
 
