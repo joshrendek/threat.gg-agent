@@ -165,6 +165,13 @@ func SaveEtcdRequest(in *proto.EtcdRequest) error {
 	return err
 }
 
+func SaveSmbConnect(in *proto.SmbRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveSmbConnect(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

@@ -6,6 +6,7 @@ import (
 	dockerhp "github.com/joshrendek/threat.gg-agent/docker"
 	"github.com/joshrendek/threat.gg-agent/elasticsearch"
 	etcdhp "github.com/joshrendek/threat.gg-agent/etcd"
+	smbhp "github.com/joshrendek/threat.gg-agent/smb"
 	"github.com/joshrendek/threat.gg-agent/ftp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/kafka"
@@ -95,6 +96,7 @@ func main() {
 	honeypots.Register(mysqlhp.New())
 	honeypots.Register(dockerhp.New())
 	honeypots.Register(etcdhp.New())
+	honeypots.Register(smbhp.New())
 	honeypots.StartHoneypots()
 
 	<-wait
