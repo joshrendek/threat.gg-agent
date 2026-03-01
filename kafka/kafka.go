@@ -54,12 +54,16 @@ func (h *honeypot) Start() {
 
 // session tracks state for a single attacker connection.
 type session struct {
-	guid     string
-	clientID string
-	username string
-	password string
-	remoteIP string
-	requests []apiRequestLog
+	guid         string
+	clientID     string
+	username     string
+	password     string
+	remoteIP     string
+	requests     []apiRequestLog
+	fetchOffsets map[string]int64 // topic -> next offset to serve
+	memberID     string           // assigned on JoinGroup
+	groupID      string           // consumer group name
+	generation   int32            // increments per JoinGroup
 }
 
 // apiRequestLog captures one Kafka API request for persistence.
@@ -85,10 +89,10 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 
 	h.logger.Info().Str("session", sess.guid).Str("remote", remoteAddr).Msg("new connection")
 
-	conn.SetDeadline(time.Now().Add(60 * time.Second))
+	conn.SetDeadline(time.Now().Add(300 * time.Second))
 
-	for i := 0; i < 100; i++ { // max 100 requests per connection
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	for i := 0; i < 500; i++ { // max 500 requests per connection
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 		hdr, body, err := readRequest(conn)
 		if err != nil {
@@ -133,13 +137,13 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 				Details: map[string]any{"topic": topic, "message_count": msgCount, "message_size": msgSize}}
 
 		case apiFetch:
-			respPayload = buildFetchResponse()
-			topic, partition := parseFetchInfo(body)
+			respPayload = buildFetchResponse(sess, body)
+			topic, partition, fetchOffset := parseFetchInfo(body)
 			reqLog = apiRequestLog{ApiKeyName: "Fetch", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion,
-				Details: map[string]any{"topic": topic, "partition": partition}}
+				Details: map[string]any{"topic": topic, "partition": partition, "fetch_offset": fetchOffset}}
 
 		case apiListOffsets:
-			respPayload = buildListOffsetsResponse()
+			respPayload = buildListOffsetsResponse(body, hdr.ApiVersion)
 			reqLog = apiRequestLog{ApiKeyName: "ListOffsets", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion}
 
 		case apiFindCoordinator:
@@ -161,6 +165,60 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 				Str("session", sess.guid).
 				Str("username", user).
 				Msg("SASL auth attempt")
+
+		case apiJoinGroup:
+			groupID, sessionTimeout, memberID, protocolType, protocols := parseJoinGroupRequest(body, hdr.ApiVersion)
+			if memberID == "" {
+				memberID = fmt.Sprintf("consumer-%s-%d", sess.guid[:8], sess.generation)
+			}
+			sess.groupID = groupID
+			sess.memberID = memberID
+			sess.generation++
+			respPayload = buildJoinGroupResponse(sess, groupID, memberID, sess.generation)
+			reqLog = apiRequestLog{ApiKeyName: "JoinGroup", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion,
+				Details: map[string]any{"group_id": groupID, "session_timeout": sessionTimeout,
+					"protocol_type": protocolType, "protocols": protocols}}
+
+		case apiSyncGroup:
+			groupID, generationID, memberID := parseSyncGroupRequest(body)
+			respPayload = buildSyncGroupResponse()
+			reqLog = apiRequestLog{ApiKeyName: "SyncGroup", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion,
+				Details: map[string]any{"group_id": groupID, "generation_id": generationID, "member_id": memberID}}
+
+		case apiHeartbeat:
+			groupID, generationID, memberID := parseHeartbeatRequest(body)
+			respPayload = buildHeartbeatResponse()
+			reqLog = apiRequestLog{ApiKeyName: "Heartbeat", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion,
+				Details: map[string]any{"group_id": groupID, "generation_id": generationID, "member_id": memberID}}
+
+		case apiLeaveGroup:
+			groupID, memberID := parseLeaveGroupRequest(body)
+			sess.groupID = ""
+			sess.memberID = ""
+			sess.generation = 0
+			respPayload = buildLeaveGroupResponse()
+			reqLog = apiRequestLog{ApiKeyName: "LeaveGroup", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion,
+				Details: map[string]any{"group_id": groupID, "member_id": memberID}}
+
+		case apiOffsetFetch:
+			topics := parseOffsetFetchTopics(body)
+			respPayload = buildOffsetFetchResponse(body)
+			reqLog = apiRequestLog{ApiKeyName: "OffsetFetch", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion,
+				Details: map[string]any{"topics": topics}}
+
+		case apiOffsetCommit:
+			respPayload = buildOffsetCommitResponse(body)
+			reqLog = apiRequestLog{ApiKeyName: "OffsetCommit", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion}
+
+		case apiListGroups:
+			respPayload = buildListGroupsResponse()
+			reqLog = apiRequestLog{ApiKeyName: "ListGroups", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion}
+
+		case apiDescribeGroups:
+			groupIDs := parseDescribeGroupsRequest(body)
+			respPayload = buildDescribeGroupsResponse(groupIDs)
+			reqLog = apiRequestLog{ApiKeyName: "DescribeGroups", ApiKey: hdr.ApiKey, ApiVersion: hdr.ApiVersion,
+				Details: map[string]any{"group_ids": groupIDs}}
 
 		default:
 			// Unknown API key — return an error response (UNSUPPORTED_VERSION)
@@ -268,19 +326,19 @@ func parseProduceInfo(body []byte) (topic string, msgCount, msgSize int) {
 	return topic, msgCount, msgSize
 }
 
-// parseFetchInfo extracts topic and partition from a Fetch request.
-func parseFetchInfo(body []byte) (topic string, partition int32) {
-	// v0: replica_id(4) + max_wait(4) + min_bytes(4) + topics_count(4) + topic_string + partitions...
+// parseFetchInfo extracts topic, partition, and fetch offset from a Fetch request.
+func parseFetchInfo(body []byte) (topic string, partition int32, fetchOffset int64) {
+	// v0: replica_id(4) + max_wait(4) + min_bytes(4) + topics_count(4) + topic_string + partitions[partition(4) + fetch_offset(8) + max_bytes(4)]
 	if len(body) < 16 {
-		return "unknown", -1
+		return "unknown", -1, 0
 	}
 	offset := 12 // skip replica_id + max_wait + min_bytes
 	if offset+4 > len(body) {
-		return "unknown", -1
+		return "unknown", -1, 0
 	}
 	offset += 4 // skip array count
 	if offset+2 > len(body) {
-		return "unknown", -1
+		return "unknown", -1, 0
 	}
 	tLen := int(binary.BigEndian.Uint16(body[offset : offset+2]))
 	offset += 2
@@ -288,12 +346,18 @@ func parseFetchInfo(body []byte) (topic string, partition int32) {
 		topic = string(body[offset : offset+tLen])
 		offset += tLen
 	} else {
-		return "unknown", -1
+		return "unknown", -1, 0
 	}
-	// partitions: count(4) + partition_id(4)...
-	if offset+8 <= len(body) {
+	// partitions: count(4) + [partition(4) + fetch_offset(8) + max_bytes(4)]
+	if offset+4 <= len(body) {
 		offset += 4 // skip partition count
-		partition = int32(binary.BigEndian.Uint32(body[offset : offset+4]))
+		if offset+4 <= len(body) {
+			partition = int32(binary.BigEndian.Uint32(body[offset : offset+4]))
+			offset += 4
+		}
+		if offset+8 <= len(body) {
+			fetchOffset = int64(binary.BigEndian.Uint64(body[offset : offset+8]))
+		}
 	}
-	return topic, partition
+	return topic, partition, fetchOffset
 }
