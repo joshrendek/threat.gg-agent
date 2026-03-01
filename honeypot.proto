@@ -31,6 +31,8 @@ service Honeypot {
   rpc SaveSmbConnect(SmbRequest) returns (SaveReply) {}
   rpc SaveLdapBind(LdapBindRequest) returns (SaveReply) {}
   rpc SaveLdapSearch(LdapSearchRequest) returns (SaveReply) {}
+  rpc SaveTelnetLogin(TelnetLoginRequest) returns (SaveReply) {}
+  rpc SaveTelnetCommand(TelnetCommandRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -235,4 +237,16 @@ message LdapSearchRequest {
   string filter = 3;
   string scope = 4;
   string attributes = 5;
+}
+
+message TelnetLoginRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string username = 3;
+  string password = 4;
+}
+
+message TelnetCommandRequest {
+  string guid = 1;
+  string command = 2;
 }

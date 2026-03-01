@@ -15,6 +15,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/openclaw"
 	redishp "github.com/joshrendek/threat.gg-agent/redis"
 	smbhp "github.com/joshrendek/threat.gg-agent/smb"
+	telnethp "github.com/joshrendek/threat.gg-agent/telnet"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/postgres"
 	"github.com/joshrendek/threat.gg-agent/sshd"
@@ -99,6 +100,7 @@ func main() {
 	honeypots.Register(etcdhp.New())
 	honeypots.Register(smbhp.New())
 	honeypots.Register(ldaphp.New())
+	honeypots.Register(telnethp.New())
 	honeypots.StartHoneypots()
 
 	<-wait

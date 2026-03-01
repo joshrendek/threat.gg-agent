@@ -186,6 +186,20 @@ func SaveLdapSearch(in *proto.LdapSearchRequest) error {
 	return err
 }
 
+func SaveTelnetLogin(in *proto.TelnetLoginRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveTelnetLogin(ctx, in)
+	return err
+}
+
+func SaveTelnetCommand(in *proto.TelnetCommandRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveTelnetCommand(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

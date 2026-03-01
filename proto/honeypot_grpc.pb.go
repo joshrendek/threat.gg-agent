@@ -127,6 +127,8 @@ type HoneypotClient interface {
 	SaveSmbConnect(ctx context.Context, in *SmbRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveLdapBind(ctx context.Context, in *LdapBindRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveLdapSearch(ctx context.Context, in *LdapSearchRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveTelnetLogin(ctx context.Context, in *TelnetLoginRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveTelnetCommand(ctx context.Context, in *TelnetCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
 }
 
 type honeypotClient struct {
@@ -326,6 +328,24 @@ func (c *honeypotClient) SaveLdapSearch(ctx context.Context, in *LdapSearchReque
 	return out, nil
 }
 
+func (c *honeypotClient) SaveTelnetLogin(ctx context.Context, in *TelnetLoginRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveTelnetLogin", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveTelnetCommand(ctx context.Context, in *TelnetCommandRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveTelnetCommand", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoneypotServer is the server API for Honeypot service.
 // All implementations must embed UnimplementedHoneypotServer
 // for forward compatibility
@@ -351,6 +371,8 @@ type HoneypotServer interface {
 	SaveSmbConnect(context.Context, *SmbRequest) (*SaveReply, error)
 	SaveLdapBind(context.Context, *LdapBindRequest) (*SaveReply, error)
 	SaveLdapSearch(context.Context, *LdapSearchRequest) (*SaveReply, error)
+	SaveTelnetLogin(context.Context, *TelnetLoginRequest) (*SaveReply, error)
+	SaveTelnetCommand(context.Context, *TelnetCommandRequest) (*SaveReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
 
@@ -420,6 +442,12 @@ func (UnimplementedHoneypotServer) SaveLdapBind(context.Context, *LdapBindReques
 }
 func (UnimplementedHoneypotServer) SaveLdapSearch(context.Context, *LdapSearchRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveLdapSearch not implemented")
+}
+func (UnimplementedHoneypotServer) SaveTelnetLogin(context.Context, *TelnetLoginRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveTelnetLogin not implemented")
+}
+func (UnimplementedHoneypotServer) SaveTelnetCommand(context.Context, *TelnetCommandRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveTelnetCommand not implemented")
 }
 func (UnimplementedHoneypotServer) mustEmbedUnimplementedHoneypotServer() {}
 
@@ -812,6 +840,42 @@ func _Honeypot_SaveLdapSearch_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveTelnetLogin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TelnetLoginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveTelnetLogin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveTelnetLogin",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveTelnetLogin(ctx, req.(*TelnetLoginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveTelnetCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TelnetCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveTelnetCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveTelnetCommand",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveTelnetCommand(ctx, req.(*TelnetCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Honeypot_ServiceDesc is the grpc.ServiceDesc for Honeypot service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -902,6 +966,14 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveLdapSearch",
 			Handler:    _Honeypot_SaveLdapSearch_Handler,
+		},
+		{
+			MethodName: "SaveTelnetLogin",
+			Handler:    _Honeypot_SaveTelnetLogin_Handler,
+		},
+		{
+			MethodName: "SaveTelnetCommand",
+			Handler:    _Honeypot_SaveTelnetCommand_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
