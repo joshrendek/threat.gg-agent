@@ -27,6 +27,7 @@ service Honeypot {
   rpc SaveRedisConnect(RedisConnectRequest) returns (SaveReply) {}
   rpc SaveRedisCommand(RedisCommandRequest) returns (SaveReply) {}
   rpc SaveDockerRequest(DockerRequest) returns (SaveReply) {}
+  rpc SaveEtcdRequest(EtcdRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -176,6 +177,12 @@ message DockerRequest {
   string guid = 8;
   string hostname = 9;
   string user_agent = 10;
+}
+
+message EtcdRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string data = 3;
 }
 
 message ConnectRequest {
