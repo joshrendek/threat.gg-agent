@@ -28,6 +28,7 @@ service Honeypot {
   rpc SaveRedisCommand(RedisCommandRequest) returns (SaveReply) {}
   rpc SaveDockerRequest(DockerRequest) returns (SaveReply) {}
   rpc SaveEtcdRequest(EtcdRequest) returns (SaveReply) {}
+  rpc SaveSmbConnect(SmbRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -183,6 +184,19 @@ message EtcdRequest {
   string remote_addr = 1;
   string guid = 2;
   string data = 3;
+}
+
+message SmbRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string ntlm_username = 3;
+  string ntlm_domain = 4;
+  string ntlm_workstation = 5;
+  string ntlm_hash = 6;
+  string os_version = 7;
+  string smb_dialect = 8;
+  repeated string shares_accessed = 9;
+  string data = 10;
 }
 
 message ConnectRequest {
