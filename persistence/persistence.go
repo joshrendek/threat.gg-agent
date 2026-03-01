@@ -130,6 +130,13 @@ func SaveKafkaApiRequest(in *proto.KafkaApiRequest) error {
 	return err
 }
 
+func SaveMysqlLogin(in *proto.MysqlRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMysqlLogin(ctx, in)
+	return err
+}
+
 func SaveRedisConnect(in *proto.RedisConnectRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
