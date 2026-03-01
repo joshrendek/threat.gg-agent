@@ -5,6 +5,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	dockerhp "github.com/joshrendek/threat.gg-agent/docker"
 	"github.com/joshrendek/threat.gg-agent/elasticsearch"
+	etcdhp "github.com/joshrendek/threat.gg-agent/etcd"
 	"github.com/joshrendek/threat.gg-agent/ftp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/kafka"
@@ -93,6 +94,7 @@ func main() {
 	honeypots.Register(redishp.New())
 	honeypots.Register(mysqlhp.New())
 	honeypots.Register(dockerhp.New())
+	honeypots.Register(etcdhp.New())
 	honeypots.StartHoneypots()
 
 	<-wait

@@ -158,6 +158,13 @@ func SaveDockerRequest(in *proto.DockerRequest) error {
 	return err
 }
 
+func SaveEtcdRequest(in *proto.EtcdRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveEtcdRequest(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
