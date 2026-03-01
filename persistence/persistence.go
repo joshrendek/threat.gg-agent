@@ -130,6 +130,20 @@ func SaveKafkaApiRequest(in *proto.KafkaApiRequest) error {
 	return err
 }
 
+func SaveRedisConnect(in *proto.RedisConnectRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveRedisConnect(ctx, in)
+	return err
+}
+
+func SaveRedisCommand(in *proto.RedisCommandRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveRedisCommand(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

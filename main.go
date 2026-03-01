@@ -7,6 +7,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/ftp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/kafka"
+	redishp "github.com/joshrendek/threat.gg-agent/redis"
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
 	"github.com/joshrendek/threat.gg-agent/persistence"
@@ -87,6 +88,7 @@ func main() {
 	honeypots.Register(sshd.New())
 	honeypots.Register(openclaw.New())
 	honeypots.Register(kafka.New())
+	honeypots.Register(redishp.New())
 	honeypots.StartHoneypots()
 
 	<-wait

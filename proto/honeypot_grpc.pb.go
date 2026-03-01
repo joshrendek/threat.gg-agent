@@ -120,6 +120,8 @@ type HoneypotClient interface {
 	SaveOpenclawConnect(ctx context.Context, in *OpenclawRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveKafkaConnect(ctx context.Context, in *KafkaRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveKafkaApiRequest(ctx context.Context, in *KafkaApiRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveRedisConnect(ctx context.Context, in *RedisConnectRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveRedisCommand(ctx context.Context, in *RedisCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
 }
 
 type honeypotClient struct {
@@ -256,6 +258,24 @@ func (c *honeypotClient) SaveKafkaApiRequest(ctx context.Context, in *KafkaApiRe
 	return out, nil
 }
 
+func (c *honeypotClient) SaveRedisConnect(ctx context.Context, in *RedisConnectRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveRedisConnect", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveRedisCommand(ctx context.Context, in *RedisCommandRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveRedisCommand", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoneypotServer is the server API for Honeypot service.
 // All implementations must embed UnimplementedHoneypotServer
 // for forward compatibility
@@ -274,6 +294,8 @@ type HoneypotServer interface {
 	SaveOpenclawConnect(context.Context, *OpenclawRequest) (*SaveReply, error)
 	SaveKafkaConnect(context.Context, *KafkaRequest) (*SaveReply, error)
 	SaveKafkaApiRequest(context.Context, *KafkaApiRequest) (*SaveReply, error)
+	SaveRedisConnect(context.Context, *RedisConnectRequest) (*SaveReply, error)
+	SaveRedisCommand(context.Context, *RedisCommandRequest) (*SaveReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
 
@@ -322,6 +344,12 @@ func (UnimplementedHoneypotServer) SaveKafkaConnect(context.Context, *KafkaReque
 }
 func (UnimplementedHoneypotServer) SaveKafkaApiRequest(context.Context, *KafkaApiRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveKafkaApiRequest not implemented")
+}
+func (UnimplementedHoneypotServer) SaveRedisConnect(context.Context, *RedisConnectRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveRedisConnect not implemented")
+}
+func (UnimplementedHoneypotServer) SaveRedisCommand(context.Context, *RedisCommandRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveRedisCommand not implemented")
 }
 func (UnimplementedHoneypotServer) mustEmbedUnimplementedHoneypotServer() {}
 
@@ -588,6 +616,42 @@ func _Honeypot_SaveKafkaApiRequest_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveRedisConnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RedisConnectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveRedisConnect(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveRedisConnect",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveRedisConnect(ctx, req.(*RedisConnectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveRedisCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RedisCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveRedisCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveRedisCommand",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveRedisCommand(ctx, req.(*RedisCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Honeypot_ServiceDesc is the grpc.ServiceDesc for Honeypot service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -650,6 +714,14 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveKafkaApiRequest",
 			Handler:    _Honeypot_SaveKafkaApiRequest_Handler,
+		},
+		{
+			MethodName: "SaveRedisConnect",
+			Handler:    _Honeypot_SaveRedisConnect_Handler,
+		},
+		{
+			MethodName: "SaveRedisCommand",
+			Handler:    _Honeypot_SaveRedisCommand_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
