@@ -172,6 +172,20 @@ func SaveSmbConnect(in *proto.SmbRequest) error {
 	return err
 }
 
+func SaveLdapBind(in *proto.LdapBindRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveLdapBind(ctx, in)
+	return err
+}
+
+func SaveLdapSearch(in *proto.LdapSearchRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveLdapSearch(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

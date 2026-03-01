@@ -8,15 +8,17 @@ replace github.com/jeroenrinzema/psql-wire => github.com/joshrendek/psql-wire v0
 
 require (
 	github.com/cretz/bine v0.0.0-20181016150912-25e2ee8b213c
-	github.com/gorilla/handlers v1.5.2
 	github.com/gorilla/mux v1.8.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/jellydator/ttlcache/v3 v3.2.0
 	github.com/jeroenrinzema/psql-wire v0.11.1
 	github.com/joshrendek/hnypots-agent v0.0.0-20200109003340-57ef63b6588e
 	github.com/lib/pq v1.10.9
+	github.com/lor00x/goldap v0.0.0-20180618054307-a546dffdd1a3
 	github.com/quipo/statsd v0.0.0-20171211171823-977fadbd5cda
 	github.com/rs/zerolog v1.15.0
 	github.com/satori/go.uuid v1.2.0
+	github.com/vjeantet/ldapserver v1.0.1
 	golang.org/x/crypto v0.20.0
 	golang.org/x/sys v0.17.0
 	google.golang.org/grpc v1.43.0
@@ -24,9 +26,7 @@ require (
 )
 
 require (
-	github.com/felixge/httpsnoop v1.0.3 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
 	github.com/jackc/pgx/v5 v5.0.3 // indirect
 	github.com/rogpeppe/go-internal v1.12.0 // indirect

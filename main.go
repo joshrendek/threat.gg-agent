@@ -6,14 +6,15 @@ import (
 	dockerhp "github.com/joshrendek/threat.gg-agent/docker"
 	"github.com/joshrendek/threat.gg-agent/elasticsearch"
 	etcdhp "github.com/joshrendek/threat.gg-agent/etcd"
-	smbhp "github.com/joshrendek/threat.gg-agent/smb"
 	"github.com/joshrendek/threat.gg-agent/ftp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/kafka"
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
+	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
 	mysqlhp "github.com/joshrendek/threat.gg-agent/mysql"
-	redishp "github.com/joshrendek/threat.gg-agent/redis"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
+	redishp "github.com/joshrendek/threat.gg-agent/redis"
+	smbhp "github.com/joshrendek/threat.gg-agent/smb"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/postgres"
 	"github.com/joshrendek/threat.gg-agent/sshd"
@@ -97,6 +98,7 @@ func main() {
 	honeypots.Register(dockerhp.New())
 	honeypots.Register(etcdhp.New())
 	honeypots.Register(smbhp.New())
+	honeypots.Register(ldaphp.New())
 	honeypots.StartHoneypots()
 
 	<-wait

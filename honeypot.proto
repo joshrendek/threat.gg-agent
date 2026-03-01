@@ -29,6 +29,8 @@ service Honeypot {
   rpc SaveDockerRequest(DockerRequest) returns (SaveReply) {}
   rpc SaveEtcdRequest(EtcdRequest) returns (SaveReply) {}
   rpc SaveSmbConnect(SmbRequest) returns (SaveReply) {}
+  rpc SaveLdapBind(LdapBindRequest) returns (SaveReply) {}
+  rpc SaveLdapSearch(LdapSearchRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -216,4 +218,21 @@ message HelloRequest {
 // The response message containing the greetings
 message HelloReply {
   string message = 1;
+}
+
+message LdapBindRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string bind_dn = 3;
+  string password = 4;
+  string auth_type = 5;
+  string sasl_mechanism = 6;
+}
+
+message LdapSearchRequest {
+  string guid = 1;
+  string base_dn = 2;
+  string filter = 3;
+  string scope = 4;
+  string attributes = 5;
 }
