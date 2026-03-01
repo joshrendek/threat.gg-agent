@@ -1,0 +1,198 @@
+syntax = "proto3";
+
+option go_package = "github.com/joshrendek/threat.gg;proto";
+package honeypot;
+
+// The greeting service definition.
+service Greeter {
+  // Sends a greeting
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+service Honeypot {
+  rpc Connect (ConnectRequest) returns (ConnectReply) {}
+  rpc SaveFtpLogin(FtpRequest) returns (SaveReply) {}
+  rpc SaveElasticsearch(ElasticsearchRequest) returns (SaveReply) {}
+  rpc SaveHttp(HttpRequest) returns (SaveReply) {}
+  rpc SaveSshLogin(SshLoginRequest) returns (SaveReply) {}
+  rpc SavePostgresLogin(PostgresRequest) returns (SaveReply) {}
+  rpc SaveMysqlLogin(MysqlRequest) returns (SaveReply) {}
+  rpc SaveQuery(QueryRequest) returns (SaveReply) {}
+  rpc SaveHttpHeaders(HttpHeaderRequest) returns (SaveReply) {}
+  rpc SaveShellCommand(ShellCommandRequest) returns (SaveReply) {}
+  rpc GetCommandResponse(CommandRequest) returns (CommandResponse) {}
+  rpc SaveOpenclawConnect(OpenclawRequest) returns (SaveReply) {}
+  rpc SaveKafkaConnect(KafkaRequest) returns (SaveReply) {}
+  rpc SaveKafkaApiRequest(KafkaApiRequest) returns (SaveReply) {}
+  rpc SaveRedisConnect(RedisConnectRequest) returns (SaveReply) {}
+  rpc SaveRedisCommand(RedisCommandRequest) returns (SaveReply) {}
+  rpc SaveDockerRequest(DockerRequest) returns (SaveReply) {}
+}
+
+message SaveReply {
+  string message = 1;
+}
+
+message CommandRequest {
+  string Command = 1;
+}
+
+message PostgresRequest {
+  string username = 1;
+  string password = 2;
+  string remote_addr = 3;
+  string guid = 4;
+}
+
+message MysqlRequest {
+  string username = 1;
+  string password = 2;
+  string remote_addr = 3;
+  string guid = 4;
+}
+
+message QueryRequest {
+ string Query = 1;
+ string guid = 2;
+}
+
+message CommandResponse {
+  string Response = 1;
+}
+
+message FtpRequest {
+  string username = 1;
+  string password = 2;
+  string remote_addr = 3;
+  string guid = 4;
+}
+
+message ElasticsearchRequest {
+  string username = 1;
+  string password = 2;
+  string remote_addr = 3;
+  map<string,string> headers = 4;
+  string path = 5;
+  map<string,string> form_data = 6;
+  string method = 7;
+  string guid = 8;
+  string hostname = 9;
+  string user_agent = 10;
+}
+
+message HttpRequest {
+  string username = 1;
+  string password = 2;
+  string remote_addr = 3;
+  map<string,string> headers = 4;
+  string path = 5;
+  map<string,string> form_data = 6;
+  string method = 7;
+  string guid = 8;
+  string hostname = 9;
+  string user_agent = 10;
+  string url = 11;
+  string response = 12;
+}
+
+message SshLoginRequest {
+  string remote_addr = 1;
+  int32 remote_port = 2;
+  string username = 3;
+  string password = 4;
+  string guid = 5;
+  string version = 6;
+  bytes public_key = 7;
+  string key_type = 8;
+  string login_type = 9;
+}
+
+message HttpHeaderRequest {
+  map<string,string> headers = 1;
+  string url = 2;
+  map<string,string> form_data = 3;
+  string method = 4;
+  string guid = 5;
+  string hostname = 6;
+  string response = 7;
+}
+
+message ShellCommandRequest {
+  string cmd = 1;
+  string guid = 2;
+}
+
+message OpenclawRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string auth_token = 3;
+  string client_id = 4;
+  string client_version = 5;
+  string client_platform = 6;
+  string client_mode = 7;
+  string role = 8;
+  repeated string scopes = 9;
+  string device_id = 10;
+  string device_public_key = 11;
+  int32 min_protocol = 12;
+  int32 max_protocol = 13;
+  repeated string messages = 14;
+}
+
+message KafkaRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string username = 3;
+  string password = 4;
+  string client_id = 5;
+}
+
+message KafkaApiRequest {
+  string guid = 1;
+  string api_key_name = 2;
+  string data = 3;
+}
+
+message RedisConnectRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string username = 3;
+  string password = 4;
+}
+
+message RedisCommandRequest {
+  string guid = 1;
+  string command = 2;
+}
+
+message DockerRequest {
+  string remote_addr = 1;
+  string username = 2;
+  string password = 3;
+  map<string,string> headers = 4;
+  string path = 5;
+  string method = 6;
+  string body = 7;
+  string guid = 8;
+  string hostname = 9;
+  string user_agent = 10;
+}
+
+message ConnectRequest {
+  string version = 1;
+}
+
+message ConnectReply {
+  string message = 1;
+}
+
+
+// The request message containing the user's name.
+message HelloRequest {
+  string name = 1;
+}
+
+// The response message containing the greetings
+message HelloReply {
+  string message = 1;
+}

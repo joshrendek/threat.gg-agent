@@ -3,13 +3,14 @@ package main
 import (
 	"flag"
 	"github.com/jellydator/ttlcache/v3"
+	dockerhp "github.com/joshrendek/threat.gg-agent/docker"
 	"github.com/joshrendek/threat.gg-agent/elasticsearch"
 	"github.com/joshrendek/threat.gg-agent/ftp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/kafka"
+	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	mysqlhp "github.com/joshrendek/threat.gg-agent/mysql"
 	redishp "github.com/joshrendek/threat.gg-agent/redis"
-	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/postgres"
@@ -91,6 +92,7 @@ func main() {
 	honeypots.Register(kafka.New())
 	honeypots.Register(redishp.New())
 	honeypots.Register(mysqlhp.New())
+	honeypots.Register(dockerhp.New())
 	honeypots.StartHoneypots()
 
 	<-wait

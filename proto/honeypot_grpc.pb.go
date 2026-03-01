@@ -122,6 +122,7 @@ type HoneypotClient interface {
 	SaveKafkaApiRequest(ctx context.Context, in *KafkaApiRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveRedisConnect(ctx context.Context, in *RedisConnectRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveRedisCommand(ctx context.Context, in *RedisCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveDockerRequest(ctx context.Context, in *DockerRequest, opts ...grpc.CallOption) (*SaveReply, error)
 }
 
 type honeypotClient struct {
@@ -276,6 +277,15 @@ func (c *honeypotClient) SaveRedisCommand(ctx context.Context, in *RedisCommandR
 	return out, nil
 }
 
+func (c *honeypotClient) SaveDockerRequest(ctx context.Context, in *DockerRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveDockerRequest", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoneypotServer is the server API for Honeypot service.
 // All implementations must embed UnimplementedHoneypotServer
 // for forward compatibility
@@ -296,6 +306,7 @@ type HoneypotServer interface {
 	SaveKafkaApiRequest(context.Context, *KafkaApiRequest) (*SaveReply, error)
 	SaveRedisConnect(context.Context, *RedisConnectRequest) (*SaveReply, error)
 	SaveRedisCommand(context.Context, *RedisCommandRequest) (*SaveReply, error)
+	SaveDockerRequest(context.Context, *DockerRequest) (*SaveReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
 
@@ -350,6 +361,9 @@ func (UnimplementedHoneypotServer) SaveRedisConnect(context.Context, *RedisConne
 }
 func (UnimplementedHoneypotServer) SaveRedisCommand(context.Context, *RedisCommandRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveRedisCommand not implemented")
+}
+func (UnimplementedHoneypotServer) SaveDockerRequest(context.Context, *DockerRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveDockerRequest not implemented")
 }
 func (UnimplementedHoneypotServer) mustEmbedUnimplementedHoneypotServer() {}
 
@@ -652,6 +666,24 @@ func _Honeypot_SaveRedisCommand_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveDockerRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DockerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveDockerRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveDockerRequest",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveDockerRequest(ctx, req.(*DockerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Honeypot_ServiceDesc is the grpc.ServiceDesc for Honeypot service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -722,6 +754,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveRedisCommand",
 			Handler:    _Honeypot_SaveRedisCommand_Handler,
+		},
+		{
+			MethodName: "SaveDockerRequest",
+			Handler:    _Honeypot_SaveDockerRequest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

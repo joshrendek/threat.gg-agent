@@ -151,6 +151,13 @@ func SaveRedisCommand(in *proto.RedisCommandRequest) error {
 	return err
 }
 
+func SaveDockerRequest(in *proto.DockerRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveDockerRequest(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
