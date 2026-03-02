@@ -12,6 +12,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
 	mysqlhp "github.com/joshrendek/threat.gg-agent/mysql"
+	rdphp "github.com/joshrendek/threat.gg-agent/rdp"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
 	redishp "github.com/joshrendek/threat.gg-agent/redis"
 	smbhp "github.com/joshrendek/threat.gg-agent/smb"
@@ -101,6 +102,7 @@ func main() {
 	honeypots.Register(smbhp.New())
 	honeypots.Register(ldaphp.New())
 	honeypots.Register(telnethp.New())
+	honeypots.Register(rdphp.New())
 	honeypots.StartHoneypots()
 
 	<-wait

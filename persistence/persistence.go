@@ -200,6 +200,13 @@ func SaveTelnetCommand(in *proto.TelnetCommandRequest) error {
 	return err
 }
 
+func SaveRdpConnect(in *proto.RdpRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveRdpConnect(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
