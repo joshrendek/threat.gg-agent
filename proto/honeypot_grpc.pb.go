@@ -123,12 +123,17 @@ type HoneypotClient interface {
 	SaveRedisConnect(ctx context.Context, in *RedisConnectRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveRedisCommand(ctx context.Context, in *RedisCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveDockerRequest(ctx context.Context, in *DockerRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveMongoConnect(ctx context.Context, in *MongoConnectRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveMongoCommand(ctx context.Context, in *MongoCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveMemcachedConnect(ctx context.Context, in *MemcachedConnectRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveMemcachedCommand(ctx context.Context, in *MemcachedCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveEtcdRequest(ctx context.Context, in *EtcdRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveSmbConnect(ctx context.Context, in *SmbRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveLdapBind(ctx context.Context, in *LdapBindRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveLdapSearch(ctx context.Context, in *LdapSearchRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveTelnetLogin(ctx context.Context, in *TelnetLoginRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveTelnetCommand(ctx context.Context, in *TelnetCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveRdpConnect(ctx context.Context, in *RdpRequest, opts ...grpc.CallOption) (*SaveReply, error)
 }
 
 type honeypotClient struct {
@@ -292,6 +297,42 @@ func (c *honeypotClient) SaveDockerRequest(ctx context.Context, in *DockerReques
 	return out, nil
 }
 
+func (c *honeypotClient) SaveMongoConnect(ctx context.Context, in *MongoConnectRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveMongoConnect", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveMongoCommand(ctx context.Context, in *MongoCommandRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveMongoCommand", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveMemcachedConnect(ctx context.Context, in *MemcachedConnectRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveMemcachedConnect", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveMemcachedCommand(ctx context.Context, in *MemcachedCommandRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveMemcachedCommand", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *honeypotClient) SaveEtcdRequest(ctx context.Context, in *EtcdRequest, opts ...grpc.CallOption) (*SaveReply, error) {
 	out := new(SaveReply)
 	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveEtcdRequest", in, out, opts...)
@@ -346,6 +387,15 @@ func (c *honeypotClient) SaveTelnetCommand(ctx context.Context, in *TelnetComman
 	return out, nil
 }
 
+func (c *honeypotClient) SaveRdpConnect(ctx context.Context, in *RdpRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, "/honeypot.Honeypot/SaveRdpConnect", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoneypotServer is the server API for Honeypot service.
 // All implementations must embed UnimplementedHoneypotServer
 // for forward compatibility
@@ -367,12 +417,17 @@ type HoneypotServer interface {
 	SaveRedisConnect(context.Context, *RedisConnectRequest) (*SaveReply, error)
 	SaveRedisCommand(context.Context, *RedisCommandRequest) (*SaveReply, error)
 	SaveDockerRequest(context.Context, *DockerRequest) (*SaveReply, error)
+	SaveMongoConnect(context.Context, *MongoConnectRequest) (*SaveReply, error)
+	SaveMongoCommand(context.Context, *MongoCommandRequest) (*SaveReply, error)
+	SaveMemcachedConnect(context.Context, *MemcachedConnectRequest) (*SaveReply, error)
+	SaveMemcachedCommand(context.Context, *MemcachedCommandRequest) (*SaveReply, error)
 	SaveEtcdRequest(context.Context, *EtcdRequest) (*SaveReply, error)
 	SaveSmbConnect(context.Context, *SmbRequest) (*SaveReply, error)
 	SaveLdapBind(context.Context, *LdapBindRequest) (*SaveReply, error)
 	SaveLdapSearch(context.Context, *LdapSearchRequest) (*SaveReply, error)
 	SaveTelnetLogin(context.Context, *TelnetLoginRequest) (*SaveReply, error)
 	SaveTelnetCommand(context.Context, *TelnetCommandRequest) (*SaveReply, error)
+	SaveRdpConnect(context.Context, *RdpRequest) (*SaveReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
 
@@ -431,6 +486,18 @@ func (UnimplementedHoneypotServer) SaveRedisCommand(context.Context, *RedisComma
 func (UnimplementedHoneypotServer) SaveDockerRequest(context.Context, *DockerRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveDockerRequest not implemented")
 }
+func (UnimplementedHoneypotServer) SaveMongoConnect(context.Context, *MongoConnectRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveMongoConnect not implemented")
+}
+func (UnimplementedHoneypotServer) SaveMongoCommand(context.Context, *MongoCommandRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveMongoCommand not implemented")
+}
+func (UnimplementedHoneypotServer) SaveMemcachedConnect(context.Context, *MemcachedConnectRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveMemcachedConnect not implemented")
+}
+func (UnimplementedHoneypotServer) SaveMemcachedCommand(context.Context, *MemcachedCommandRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveMemcachedCommand not implemented")
+}
 func (UnimplementedHoneypotServer) SaveEtcdRequest(context.Context, *EtcdRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveEtcdRequest not implemented")
 }
@@ -448,6 +515,9 @@ func (UnimplementedHoneypotServer) SaveTelnetLogin(context.Context, *TelnetLogin
 }
 func (UnimplementedHoneypotServer) SaveTelnetCommand(context.Context, *TelnetCommandRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveTelnetCommand not implemented")
+}
+func (UnimplementedHoneypotServer) SaveRdpConnect(context.Context, *RdpRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveRdpConnect not implemented")
 }
 func (UnimplementedHoneypotServer) mustEmbedUnimplementedHoneypotServer() {}
 
@@ -768,6 +838,78 @@ func _Honeypot_SaveDockerRequest_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveMongoConnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MongoConnectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveMongoConnect(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveMongoConnect",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveMongoConnect(ctx, req.(*MongoConnectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveMongoCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MongoCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveMongoCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveMongoCommand",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveMongoCommand(ctx, req.(*MongoCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveMemcachedConnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MemcachedConnectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveMemcachedConnect(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveMemcachedConnect",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveMemcachedConnect(ctx, req.(*MemcachedConnectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveMemcachedCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MemcachedCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveMemcachedCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveMemcachedCommand",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveMemcachedCommand(ctx, req.(*MemcachedCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Honeypot_SaveEtcdRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(EtcdRequest)
 	if err := dec(in); err != nil {
@@ -876,6 +1018,24 @@ func _Honeypot_SaveTelnetCommand_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveRdpConnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RdpRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveRdpConnect(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/honeypot.Honeypot/SaveRdpConnect",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveRdpConnect(ctx, req.(*RdpRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Honeypot_ServiceDesc is the grpc.ServiceDesc for Honeypot service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -952,6 +1112,22 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Honeypot_SaveDockerRequest_Handler,
 		},
 		{
+			MethodName: "SaveMongoConnect",
+			Handler:    _Honeypot_SaveMongoConnect_Handler,
+		},
+		{
+			MethodName: "SaveMongoCommand",
+			Handler:    _Honeypot_SaveMongoCommand_Handler,
+		},
+		{
+			MethodName: "SaveMemcachedConnect",
+			Handler:    _Honeypot_SaveMemcachedConnect_Handler,
+		},
+		{
+			MethodName: "SaveMemcachedCommand",
+			Handler:    _Honeypot_SaveMemcachedCommand_Handler,
+		},
+		{
 			MethodName: "SaveEtcdRequest",
 			Handler:    _Honeypot_SaveEtcdRequest_Handler,
 		},
@@ -974,6 +1150,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveTelnetCommand",
 			Handler:    _Honeypot_SaveTelnetCommand_Handler,
+		},
+		{
+			MethodName: "SaveRdpConnect",
+			Handler:    _Honeypot_SaveRdpConnect_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

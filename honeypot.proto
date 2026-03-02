@@ -27,12 +27,17 @@ service Honeypot {
   rpc SaveRedisConnect(RedisConnectRequest) returns (SaveReply) {}
   rpc SaveRedisCommand(RedisCommandRequest) returns (SaveReply) {}
   rpc SaveDockerRequest(DockerRequest) returns (SaveReply) {}
+  rpc SaveMongoConnect(MongoConnectRequest) returns (SaveReply) {}
+  rpc SaveMongoCommand(MongoCommandRequest) returns (SaveReply) {}
+  rpc SaveMemcachedConnect(MemcachedConnectRequest) returns (SaveReply) {}
+  rpc SaveMemcachedCommand(MemcachedCommandRequest) returns (SaveReply) {}
   rpc SaveEtcdRequest(EtcdRequest) returns (SaveReply) {}
   rpc SaveSmbConnect(SmbRequest) returns (SaveReply) {}
   rpc SaveLdapBind(LdapBindRequest) returns (SaveReply) {}
   rpc SaveLdapSearch(LdapSearchRequest) returns (SaveReply) {}
   rpc SaveTelnetLogin(TelnetLoginRequest) returns (SaveReply) {}
   rpc SaveTelnetCommand(TelnetCommandRequest) returns (SaveReply) {}
+  rpc SaveRdpConnect(RdpRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -184,6 +189,30 @@ message DockerRequest {
   string user_agent = 10;
 }
 
+message MongoConnectRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string username = 3;
+  string password = 4;
+  string client_version = 5;
+}
+
+message MongoCommandRequest {
+  string guid = 1;
+  string command = 2;
+}
+
+message MemcachedConnectRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string protocol = 3;
+}
+
+message MemcachedCommandRequest {
+  string guid = 1;
+  string command = 2;
+}
+
 message EtcdRequest {
   string remote_addr = 1;
   string guid = 2;
@@ -201,25 +230,6 @@ message SmbRequest {
   string smb_dialect = 8;
   repeated string shares_accessed = 9;
   string data = 10;
-}
-
-message ConnectRequest {
-  string version = 1;
-}
-
-message ConnectReply {
-  string message = 1;
-}
-
-
-// The request message containing the user's name.
-message HelloRequest {
-  string name = 1;
-}
-
-// The response message containing the greetings
-message HelloReply {
-  string message = 1;
 }
 
 message LdapBindRequest {
@@ -249,4 +259,35 @@ message TelnetLoginRequest {
 message TelnetCommandRequest {
   string guid = 1;
   string command = 2;
+}
+
+message RdpRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  uint32 requested_protocols = 3;
+  string cookie_username = 4;
+  string ntlm_username = 5;
+  string ntlm_domain = 6;
+  string ntlm_workstation = 7;
+  string ntlm_hash = 8;
+  string os_version = 9;
+}
+
+message ConnectRequest {
+  string version = 1;
+}
+
+message ConnectReply {
+  string message = 1;
+}
+
+
+// The request message containing the user's name.
+message HelloRequest {
+  string name = 1;
+}
+
+// The response message containing the greetings
+message HelloReply {
+  string message = 1;
 }
