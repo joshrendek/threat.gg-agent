@@ -26,6 +26,8 @@ service Honeypot {
   rpc SaveKafkaApiRequest(KafkaApiRequest) returns (SaveReply) {}
   rpc SaveRedisConnect(RedisConnectRequest) returns (SaveReply) {}
   rpc SaveRedisCommand(RedisCommandRequest) returns (SaveReply) {}
+  rpc SaveMqttConnect(MqttConnectRequest) returns (SaveReply) {}
+  rpc SaveMqttCommand(MqttCommandRequest) returns (SaveReply) {}
   rpc SaveDockerRequest(DockerRequest) returns (SaveReply) {}
   rpc SaveMongoConnect(MongoConnectRequest) returns (SaveReply) {}
   rpc SaveMongoCommand(MongoCommandRequest) returns (SaveReply) {}
@@ -173,6 +175,23 @@ message RedisConnectRequest {
 }
 
 message RedisCommandRequest {
+  string guid = 1;
+  string command = 2;
+}
+
+message MqttConnectRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string client_id = 3;
+  string username = 4;
+  string password = 5;
+  string protocol_name = 6;
+  int32 protocol_level = 7;
+  bool clean_session = 8;
+  int32 keepalive_secs = 9;
+}
+
+message MqttCommandRequest {
   string guid = 1;
   string command = 2;
 }

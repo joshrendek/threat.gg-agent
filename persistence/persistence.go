@@ -151,6 +151,20 @@ func SaveRedisCommand(in *proto.RedisCommandRequest) error {
 	return err
 }
 
+func SaveMqttConnect(in *proto.MqttConnectRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMqttConnect(ctx, in)
+	return err
+}
+
+func SaveMqttCommand(in *proto.MqttCommandRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMqttCommand(ctx, in)
+	return err
+}
+
 func SaveDockerRequest(in *proto.DockerRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
