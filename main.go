@@ -8,6 +8,7 @@ import (
 	etcdhp "github.com/joshrendek/threat.gg-agent/etcd"
 	"github.com/joshrendek/threat.gg-agent/ftp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
+	"github.com/joshrendek/threat.gg-agent/jenkins"
 	"github.com/joshrendek/threat.gg-agent/kafka"
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
@@ -107,6 +108,7 @@ func main() {
 	honeypots.Register(telnethp.New())
 	honeypots.Register(rdphp.New())
 	honeypots.Register(vnchp.New())
+	honeypots.Register(jenkins.New())
 	honeypots.StartHoneypots()
 
 	<-wait
