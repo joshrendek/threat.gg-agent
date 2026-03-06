@@ -3,6 +3,7 @@ package kafka
 import (
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 )
@@ -15,6 +16,9 @@ import (
 //	kcat -C -b 127.0.0.1:19092 -t api-keys -o beginning -c 10    # consume messages
 //	echo '{"test":true}' | kcat -P -b 127.0.0.1:19092 -t api-keys # produce
 func TestKcatServer(t *testing.T) {
+	if os.Getenv("ENABLE_MANUAL_KCAT_TEST") != "1" {
+		t.Skip("manual kcat integration test; set ENABLE_MANUAL_KCAT_TEST=1 to run")
+	}
 	if testing.Short() {
 		t.Skip("skipping manual kcat test in short mode")
 	}
