@@ -150,7 +150,10 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 }
 
 func persistSession(sess *session) {
-	if sess.cookieUsername == "" && sess.ntlmUsername == "" {
+	cookieUsername := sanitizeRdpUsername(sess.cookieUsername)
+	ntlmUsername := sanitizeRdpUsername(sess.ntlmUsername)
+
+	if cookieUsername == "" && ntlmUsername == "" {
 		return
 	}
 
@@ -158,8 +161,8 @@ func persistSession(sess *session) {
 		RemoteAddr:         sess.remoteIP,
 		Guid:               sess.guid,
 		RequestedProtocols: sess.requestedProtocols,
-		CookieUsername:     sess.cookieUsername,
-		NtlmUsername:       sess.ntlmUsername,
+		CookieUsername:     cookieUsername,
+		NtlmUsername:       ntlmUsername,
 		NtlmDomain:         sess.ntlmDomain,
 		NtlmWorkstation:    sess.ntlmWorkstation,
 		NtlmHash:           sess.ntlmHash,
