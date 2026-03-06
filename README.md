@@ -18,6 +18,7 @@ The agent is a Go binary that runs on honeypot nodes and emulates multiple netwo
 | Kubernetes API | 6443 | Emulates the Kubernetes API server |
 | OpenClaw | 18789 | WebSocket-based honeypot for custom protocol interactions |
 | Kafka | 9092 | Emulates an Apache Kafka broker, captures client reconnaissance and SASL/PLAIN credentials |
+| VNC | 5900 | Emulates VNC/RFB handshake and captures auth challenge-response + client preferences |
 
 ## Architecture
 

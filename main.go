@@ -12,15 +12,16 @@ import (
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
 	mysqlhp "github.com/joshrendek/threat.gg-agent/mysql"
-	rdphp "github.com/joshrendek/threat.gg-agent/rdp"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
-	redishp "github.com/joshrendek/threat.gg-agent/redis"
-	smbhp "github.com/joshrendek/threat.gg-agent/smb"
-	telnethp "github.com/joshrendek/threat.gg-agent/telnet"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/postgres"
+	rdphp "github.com/joshrendek/threat.gg-agent/rdp"
+	redishp "github.com/joshrendek/threat.gg-agent/redis"
+	smbhp "github.com/joshrendek/threat.gg-agent/smb"
 	"github.com/joshrendek/threat.gg-agent/sshd"
+	telnethp "github.com/joshrendek/threat.gg-agent/telnet"
 	"github.com/joshrendek/threat.gg-agent/updater"
+	vnchp "github.com/joshrendek/threat.gg-agent/vnc"
 	"github.com/rs/zerolog/log"
 	"net/http"
 	_ "net/http/pprof"
@@ -103,6 +104,7 @@ func main() {
 	honeypots.Register(ldaphp.New())
 	honeypots.Register(telnethp.New())
 	honeypots.Register(rdphp.New())
+	honeypots.Register(vnchp.New())
 	honeypots.StartHoneypots()
 
 	<-wait

@@ -38,6 +38,7 @@ service Honeypot {
   rpc SaveTelnetLogin(TelnetLoginRequest) returns (SaveReply) {}
   rpc SaveTelnetCommand(TelnetCommandRequest) returns (SaveReply) {}
   rpc SaveRdpConnect(RdpRequest) returns (SaveReply) {}
+  rpc SaveVncConnect(VncRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -271,6 +272,15 @@ message RdpRequest {
   string ntlm_workstation = 7;
   string ntlm_hash = 8;
   string os_version = 9;
+}
+
+message VncRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string client_version = 3;
+  string challenge_hex = 4;
+  string response_hex = 5;
+  string data = 6;
 }
 
 message ConnectRequest {

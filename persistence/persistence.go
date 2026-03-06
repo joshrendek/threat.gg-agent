@@ -207,6 +207,13 @@ func SaveRdpConnect(in *proto.RdpRequest) error {
 	return err
 }
 
+func SaveVncConnect(in *proto.VncRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveVncConnect(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
