@@ -228,6 +228,13 @@ func SaveVncConnect(in *proto.VncRequest) error {
 	return err
 }
 
+func SaveJenkinsRequest(in *proto.JenkinsRequest) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveJenkinsRequest(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
