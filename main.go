@@ -11,6 +11,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/kafka"
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
+	"github.com/joshrendek/threat.gg-agent/mqtt"
 	mysqlhp "github.com/joshrendek/threat.gg-agent/mysql"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
 	"github.com/joshrendek/threat.gg-agent/persistence"
@@ -97,6 +98,7 @@ func main() {
 	honeypots.Register(openclaw.New())
 	honeypots.Register(kafka.New())
 	honeypots.Register(redishp.New())
+	honeypots.Register(mqtt.New())
 	honeypots.Register(mysqlhp.New())
 	honeypots.Register(dockerhp.New())
 	honeypots.Register(etcdhp.New())

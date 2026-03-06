@@ -143,6 +143,8 @@ const (
 	Honeypot_SaveKafkaApiRequest_FullMethodName  = "/honeypot.Honeypot/SaveKafkaApiRequest"
 	Honeypot_SaveRedisConnect_FullMethodName     = "/honeypot.Honeypot/SaveRedisConnect"
 	Honeypot_SaveRedisCommand_FullMethodName     = "/honeypot.Honeypot/SaveRedisCommand"
+	Honeypot_SaveMqttConnect_FullMethodName      = "/honeypot.Honeypot/SaveMqttConnect"
+	Honeypot_SaveMqttCommand_FullMethodName      = "/honeypot.Honeypot/SaveMqttCommand"
 	Honeypot_SaveDockerRequest_FullMethodName    = "/honeypot.Honeypot/SaveDockerRequest"
 	Honeypot_SaveMongoConnect_FullMethodName     = "/honeypot.Honeypot/SaveMongoConnect"
 	Honeypot_SaveMongoCommand_FullMethodName     = "/honeypot.Honeypot/SaveMongoCommand"
@@ -178,6 +180,8 @@ type HoneypotClient interface {
 	SaveKafkaApiRequest(ctx context.Context, in *KafkaApiRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveRedisConnect(ctx context.Context, in *RedisConnectRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveRedisCommand(ctx context.Context, in *RedisCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveMqttConnect(ctx context.Context, in *MqttConnectRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveMqttCommand(ctx context.Context, in *MqttCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveDockerRequest(ctx context.Context, in *DockerRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveMongoConnect(ctx context.Context, in *MongoConnectRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveMongoCommand(ctx context.Context, in *MongoCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
@@ -361,6 +365,26 @@ func (c *honeypotClient) SaveRedisCommand(ctx context.Context, in *RedisCommandR
 	return out, nil
 }
 
+func (c *honeypotClient) SaveMqttConnect(ctx context.Context, in *MqttConnectRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveMqttConnect_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveMqttCommand(ctx context.Context, in *MqttCommandRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveMqttCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *honeypotClient) SaveDockerRequest(ctx context.Context, in *DockerRequest, opts ...grpc.CallOption) (*SaveReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SaveReply)
@@ -511,6 +535,8 @@ type HoneypotServer interface {
 	SaveKafkaApiRequest(context.Context, *KafkaApiRequest) (*SaveReply, error)
 	SaveRedisConnect(context.Context, *RedisConnectRequest) (*SaveReply, error)
 	SaveRedisCommand(context.Context, *RedisCommandRequest) (*SaveReply, error)
+	SaveMqttConnect(context.Context, *MqttConnectRequest) (*SaveReply, error)
+	SaveMqttCommand(context.Context, *MqttCommandRequest) (*SaveReply, error)
 	SaveDockerRequest(context.Context, *DockerRequest) (*SaveReply, error)
 	SaveMongoConnect(context.Context, *MongoConnectRequest) (*SaveReply, error)
 	SaveMongoCommand(context.Context, *MongoCommandRequest) (*SaveReply, error)
@@ -581,6 +607,12 @@ func (UnimplementedHoneypotServer) SaveRedisConnect(context.Context, *RedisConne
 }
 func (UnimplementedHoneypotServer) SaveRedisCommand(context.Context, *RedisCommandRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveRedisCommand not implemented")
+}
+func (UnimplementedHoneypotServer) SaveMqttConnect(context.Context, *MqttConnectRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveMqttConnect not implemented")
+}
+func (UnimplementedHoneypotServer) SaveMqttCommand(context.Context, *MqttCommandRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveMqttCommand not implemented")
 }
 func (UnimplementedHoneypotServer) SaveDockerRequest(context.Context, *DockerRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveDockerRequest not implemented")
@@ -930,6 +962,42 @@ func _Honeypot_SaveRedisCommand_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveMqttConnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MqttConnectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveMqttConnect(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveMqttConnect_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveMqttConnect(ctx, req.(*MqttConnectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveMqttCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MqttCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveMqttCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveMqttCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveMqttCommand(ctx, req.(*MqttCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Honeypot_SaveDockerRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DockerRequest)
 	if err := dec(in); err != nil {
@@ -1234,6 +1302,14 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveRedisCommand",
 			Handler:    _Honeypot_SaveRedisCommand_Handler,
+		},
+		{
+			MethodName: "SaveMqttConnect",
+			Handler:    _Honeypot_SaveMqttConnect_Handler,
+		},
+		{
+			MethodName: "SaveMqttCommand",
+			Handler:    _Honeypot_SaveMqttCommand_Handler,
 		},
 		{
 			MethodName: "SaveDockerRequest",
