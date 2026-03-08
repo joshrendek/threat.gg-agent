@@ -228,6 +228,26 @@ func SaveVncConnect(in *proto.VncRequest) error {
 	return err
 }
 
+func SaveSmtpLogin(in *proto.SmtpLoginRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveSmtpLogin(ctx, in)
+	return err
+}
+
+func SaveSmtpEmail(in *proto.SmtpEmailRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveSmtpEmail(ctx, in)
+	return err
+}
+
 func SaveJenkinsRequest(in *proto.JenkinsRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
