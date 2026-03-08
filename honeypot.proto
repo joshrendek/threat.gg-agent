@@ -41,6 +41,9 @@ service Honeypot {
   rpc SaveTelnetCommand(TelnetCommandRequest) returns (SaveReply) {}
   rpc SaveRdpConnect(RdpRequest) returns (SaveReply) {}
   rpc SaveVncConnect(VncRequest) returns (SaveReply) {}
+  rpc SaveJenkinsRequest(JenkinsRequest) returns (SaveReply) {}
+  rpc SaveSmtpLogin(SmtpLoginRequest) returns (SaveReply) {}
+  rpc SaveSmtpEmail(SmtpEmailRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -300,6 +303,34 @@ message VncRequest {
   string challenge_hex = 4;
   string response_hex = 5;
   string data = 6;
+}
+
+message JenkinsRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string method = 3;
+  string path = 4;
+  string username = 5;
+  string password = 6;
+  string script = 7;
+  string data = 8;
+}
+
+message SmtpLoginRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string ehlo_domain = 3;
+  string username = 4;
+  string password = 5;
+  string auth_method = 6;
+}
+
+message SmtpEmailRequest {
+  string guid = 1;
+  string mail_from = 2;
+  repeated string rcpt_to = 3;
+  string body = 4;
+  string subject = 5;
 }
 
 message ConnectRequest {

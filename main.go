@@ -22,6 +22,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/sshd"
 	telnethp "github.com/joshrendek/threat.gg-agent/telnet"
 	"github.com/joshrendek/threat.gg-agent/updater"
+	smtphp "github.com/joshrendek/threat.gg-agent/smtp"
 	vnchp "github.com/joshrendek/threat.gg-agent/vnc"
 	"github.com/rs/zerolog/log"
 	"net/http"
@@ -107,6 +108,7 @@ func main() {
 	honeypots.Register(telnethp.New())
 	honeypots.Register(rdphp.New())
 	honeypots.Register(vnchp.New())
+	honeypots.Register(smtphp.New())
 	honeypots.StartHoneypots()
 
 	<-wait
