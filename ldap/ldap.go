@@ -10,7 +10,7 @@ import (
 	ldapmsg "github.com/lor00x/goldap/message"
 	"github.com/rs/zerolog"
 	uuid "github.com/satori/go.uuid"
-	ldapserver "github.com/vjeantet/ldapserver"
+	ldapserver "github.com/joshrendek/threat.gg-agent/internal/ldapserver"
 
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/persistence"
