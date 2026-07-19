@@ -65,6 +65,10 @@ func (h *honeypot) Start() {
 	})
 	server, _ := wire.NewServer(handler)
 	server.Auth = auth
+	// Advertise a server_version in the startup handshake. Without this, psql-wire omits the
+	// parameter entirely (a honeypot tell — a real postgres always sends it). Must stay
+	// coherent with the `select version()` command_responses seed (PostgreSQL 14.11).
+	server.Version = serverVersion
 	port := os.Getenv("POSTGRES_PORT")
 	if port == "" {
 		port = "5432"

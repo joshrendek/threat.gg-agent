@@ -144,6 +144,18 @@ func TestLookupServerStatement(t *testing.T) {
 	}
 }
 
+// TestServerVersionSet pins the handshake server_version: it must be non-empty (an empty
+// value makes psql-wire omit the parameter, a honeypot tell) and carry the 14.11 version
+// that the `select version()` command_responses seed advertises, so the two stay coherent.
+func TestServerVersionSet(t *testing.T) {
+	if serverVersion == "" {
+		t.Fatal("serverVersion is empty — the pg handshake would omit server_version (a tell)")
+	}
+	if !strings.HasPrefix(serverVersion, "14.11") {
+		t.Fatalf("serverVersion = %q, want it to match the select version() seed (14.11)", serverVersion)
+	}
+}
+
 // compile-time assurance the fake satisfies the wire interface used by the framing code.
 var _ wire.DataWriter = (*fakeWriter)(nil)
 
