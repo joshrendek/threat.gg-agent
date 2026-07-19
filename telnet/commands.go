@@ -3,6 +3,9 @@ package telnet
 import (
 	"fmt"
 	"strings"
+
+	"github.com/joshrendek/threat.gg-agent/persistence"
+	pb "github.com/joshrendek/threat.gg-agent/proto"
 )
 
 var commandHandlers = map[string]func(args []string) string{
@@ -38,6 +41,14 @@ func executeCommand(input string) (string, bool) {
 	// Check for exit commands
 	if cmd == "exit" || cmd == "quit" || cmd == "logout" {
 		return "", true
+	}
+
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="telnet"). Matched distinguishes an intentionally-empty response from
+	// a miss; on miss or any error we fall through to the local handlers below, so
+	// behavior never regresses if the server is unreachable.
+	if resp, err := persistence.GetCommandResponse(&pb.CommandRequest{Command: input, CommandType: "telnet"}); err == nil && resp.Matched {
+		return resp.Response, false
 	}
 
 	// Handle /bin/busybox prefix

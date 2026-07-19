@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -256,6 +257,11 @@ func SaveJenkinsRequest(in *proto.JenkinsRequest) error {
 }
 
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
+	// Guard against an uninitialized client (e.g. before Connect, or in unit tests) so
+	// callers get a clean error and fall back to their local behavior instead of panicking.
+	if honeypotClient == nil {
+		return nil, errors.New("honeypot client not connected")
+	}
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	return honeypotClient.GetCommandResponse(ctx, in)
