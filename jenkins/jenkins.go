@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	pb "github.com/joshrendek/threat.gg-agent/proto"
@@ -78,6 +79,13 @@ func (h *honeypot) handleRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "Jetty(10.0.18)")
 	w.Header().Set("X-Jenkins", "2.426.3")
 	w.Header().Set("X-Jenkins-Session", "ad9f8d49")
+
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="jenkins"), keyed by "METHOD /path". The common Jenkins headers above
+	// are preserved; on a miss/error we fall through to the hardcoded routes below.
+	if cmdresp.HTTPOverride(w, r, "jenkins") {
+		return
+	}
 
 	switch r.URL.Path {
 	case "/script", "/scriptText":

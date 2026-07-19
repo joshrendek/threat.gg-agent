@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	uuid "github.com/satori/go.uuid"
 	"github.com/rs/zerolog/log"
+	uuid "github.com/satori/go.uuid"
 
+	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	pb "github.com/joshrendek/threat.gg-agent/proto"
 )
@@ -166,6 +167,18 @@ func handleConnection(conn net.Conn) {
 		sess.cmdCount++
 
 		cmd, args := parseCommand(line)
+
+		// Server-authored response override (admin-editable command_responses, scoped to
+		// command_type="smtp"), keyed by the CRLF-trimmed command line. Written verbatim
+		// (admins author the full "NNN ...\r\n" reply). On a miss/error we fall through to
+		// the hardcoded switch, so behavior never regresses if the server is unreachable.
+		// Note: a verbatim override replies but does not advance the session FSM, so it is
+		// best used for stateless verbs (VRFY/EXPN/NOOP/HELP/unknown), not MAIL/RCPT/DATA.
+		if resp, ok := cmdresp.Lookup("smtp", strings.TrimRight(line, "\r\n")); ok {
+			writer.WriteString(resp) //nolint:errcheck
+			writer.Flush()
+			continue
+		}
 
 		switch cmd {
 		case "EHLO":

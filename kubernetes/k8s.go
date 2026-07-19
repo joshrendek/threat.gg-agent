@@ -10,6 +10,7 @@ import (
   "fmt"
   "github.com/gorilla/mux"
   "github.com/joshrendek/hnypots-agent/honeypots"
+  "github.com/joshrendek/threat.gg-agent/cmdresp"
   "github.com/rs/zerolog"
   "math/big"
   "net/http"
@@ -36,6 +37,10 @@ func (h *honeypot) Start() {
 	fmt.Println("----------- START K8s")
 	router := mux.NewRouter()
 	router.Use(h.LoggingMiddleware)
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="kubernetes"), keyed by "METHOD /path". Intercepts before the routes
+	// below (including the catch-all); on a miss/error it falls through unchanged.
+	router.Use(cmdresp.MuxMiddleware("kubernetes"))
 
 	// Handle /version for cluster-info
 	router.HandleFunc("/version", h.versionHandler).Methods("GET")
