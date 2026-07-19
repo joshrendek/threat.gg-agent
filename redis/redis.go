@@ -2,6 +2,7 @@ package redis
 
 import (
 	"bufio"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -15,10 +16,38 @@ import (
 )
 
 const (
-	maxCommands    = 500
-	totalTimeout   = 300 * time.Second
-	idleTimeout    = 30 * time.Second
+	maxCommands  = 500
+	totalTimeout = 300 * time.Second
+	idleTimeout  = 30 * time.Second
+
+	// maxServerLookupLen bounds the attacker-controlled command we forward to the server's
+	// response lookup; anything longer skips the lookup and falls back to local handlers.
+	maxServerLookupLen = 4096
 )
+
+// getCommandResponse is an injectable seam over the gRPC call so the server-matched and
+// miss/error paths are unit-testable without a live server.
+var getCommandResponse = persistence.GetCommandResponse
+
+// serverResponse writes an admin-authored redis response VERBATIM to w when the server has
+// a Matched row for (command_type="redis", payload=fullCmd). RESP is line-oriented text, so
+// the stored response is exact RESP frames authored by the admin (e.g. "+PONG\r\n",
+// "$4\r\nPONG\r\n"). Returns handled=true when it served the command (caller skips the
+// hardcoded switch); on miss, error, or oversized input it returns handled=false and the
+// caller falls back to the local handlers, so behavior never regresses if the server is
+// unreachable or has no row. Matched (not an empty Response) distinguishes an intentionally
+// silent authored row from a miss.
+func serverResponse(fullCmd string, w io.Writer) (handled bool, err error) {
+	if len(fullCmd) > maxServerLookupLen {
+		return false, nil
+	}
+	resp, lookupErr := getCommandResponse(&proto.CommandRequest{Command: fullCmd, CommandType: "redis"})
+	if lookupErr != nil || resp == nil || !resp.Matched {
+		return false, nil
+	}
+	_, werr := io.WriteString(w, resp.Response)
+	return true, werr
+}
 
 var _ honeypots.Honeypot = &honeypot{}
 
@@ -104,6 +133,17 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			Str("session", sess.guid).
 			Str("command", cmd).
 			Msg("command received")
+
+		// Server-authored response override (admin-editable command_responses, scoped to
+		// command_type="redis"). On a Matched row we write it verbatim and skip the
+		// hardcoded switch; on miss/error we fall through so behavior never regresses if
+		// the server is unreachable.
+		if handled, respErr := serverResponse(fullCmd, conn); handled {
+			if respErr != nil {
+				break
+			}
+			continue
+		}
 
 		var cmdErr error
 		switch cmd {

@@ -95,6 +95,16 @@ func handler(ctx context.Context, query string) (wire.PreparedStatements, error)
 		})), nil
 	}
 
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="postgres"). Postgres is binary/message-framed, so lookupServerStatement
+	// FRAMES the stored plain text: row-returning queries render as a single ("result" text)
+	// row; set/begin-style statements render as a CommandComplete tag. On miss/error/oversize
+	// it returns ok=false and we fall through to the hardcoded responses map, so behavior
+	// never regresses if the server is unreachable.
+	if stmt, ok := lookupServerStatement(query); ok {
+		return stmt, nil
+	}
+
 	resp, ok := responses[query]
 	//litter.Dump(wire.ClientParameters(ctx))
 	//litter.Dump(wire.ServerParameters(ctx))
