@@ -3,9 +3,11 @@ package persistence
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"google.golang.org/grpc/metadata"
@@ -256,7 +258,15 @@ func SaveJenkinsRequest(in *proto.JenkinsRequest) error {
 }
 
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
-	ctx := context.Background()
+	// Guard against an uninitialized client (e.g. before Connect, or in unit tests) so
+	// callers get a clean error and fall back to their local behavior instead of panicking.
+	if honeypotClient == nil {
+		return nil, errors.New("honeypot client not connected")
+	}
+	// Bound the call so a slow or stalled server can't hang the interactive honeypot
+	// session (this runs on the per-command hot path for ssh and telnet).
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	return honeypotClient.GetCommandResponse(ctx, in)
 }
