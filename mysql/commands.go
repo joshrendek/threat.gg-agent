@@ -3,14 +3,16 @@ package mysql
 import (
 	"io"
 	"strings"
+
+	"github.com/joshrendek/threat.gg-agent/cmdresp"
 )
 
 // MySQL COM_* command bytes
 const (
-	comQuit     byte = 0x01
-	comInitDB   byte = 0x02
-	comQuery    byte = 0x03
-	comPing     byte = 0x0E
+	comQuit       byte = 0x01
+	comInitDB     byte = 0x02
+	comQuery      byte = 0x03
+	comPing       byte = 0x0E
 	comStatistics byte = 0x09
 )
 
@@ -101,6 +103,16 @@ func init() {
 func handleComQuery(w io.Writer, seqID uint8, query string) (uint8, error) {
 	normalized := strings.ToLower(strings.TrimSpace(query))
 
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="mysql"), keyed by the normalized query. mysql is binary/packet-framed,
+	// so the stored plain text is FRAMED (like postgres): a row-returning query renders as a
+	// single ("result") column/row result set; a non-row statement renders an OK packet. On
+	// a miss/error we fall through to the hardcoded handling below, so behavior never
+	// regresses if the server is unreachable.
+	if resp, ok := cmdresp.Lookup("mysql", normalized); ok {
+		return writeServerResponse(w, seqID, normalized, resp)
+	}
+
 	// Check for exact match in known queries
 	if resp, ok := queryResponses[normalized]; ok {
 		return writeResultSet(w, seqID, resp.columns, resp.rows)
@@ -145,6 +157,21 @@ func handleComQuery(w io.Writer, seqID uint8, query string) (uint8, error) {
 		err := writeOKPacket(w, seqID, 0, 0)
 		return seqID + 1, err
 	}
+}
+
+// writeServerResponse frames an admin-authored mysql response into the binary wire result.
+// A row-returning query renders the stored text as a single ("result") column/row result
+// set; a non-row statement renders an OK packet (mysql OK packets carry no display text, so
+// the stored text is unused there — its value is for row-returning queries).
+func writeServerResponse(w io.Writer, seqID uint8, query, response string) (uint8, error) {
+	if cmdresp.IsRowReturning(query) {
+		col := columnDef{Name: "result", ColType: 0xFD, MaxLen: 65535} // MYSQL_TYPE_VAR_STRING
+		return writeResultSet(w, seqID, []columnDef{col}, [][]string{{response}})
+	}
+	if err := writeOKPacket(w, seqID, 0, 0); err != nil {
+		return seqID, err
+	}
+	return seqID + 1, nil
 }
 
 // handleComPing responds to COM_PING.

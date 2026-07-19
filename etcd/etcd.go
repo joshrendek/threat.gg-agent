@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
@@ -43,6 +44,10 @@ func (h *honeypot) Start() {
 	}
 
 	r := mux.NewRouter()
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="etcd"), keyed by "METHOD /path". Intercepts before the routes below;
+	// on a miss/error it falls through unchanged.
+	r.Use(cmdresp.MuxMiddleware("etcd"))
 	registerRoutes(r)
 
 	h.logger.Info().Str("port", port).Msg("starting etcd honeypot")

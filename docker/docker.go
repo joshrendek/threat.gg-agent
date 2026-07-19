@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
@@ -16,10 +17,10 @@ import (
 )
 
 const (
-	defaultPort    = "2375"
-	maxBodySize    = 1 << 20 // 1MB
-	serverVersion  = "24.0.7"
-	apiVersion     = "1.43"
+	defaultPort     = "2375"
+	maxBodySize     = 1 << 20 // 1MB
+	serverVersion   = "24.0.7"
+	apiVersion      = "1.43"
 	fakeContainerID = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	fakeExecID      = "e1f2a3b4c5d6e1f2a3b4c5d6e1f2a3b4c5d6e1f2a3b4c5d6e1f2a3b4c5d6e1f2"
 )
@@ -45,6 +46,10 @@ func (h *honeypot) Start() {
 	}
 
 	r := mux.NewRouter()
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="docker"), keyed by "METHOD /path". Intercepts before the routes below;
+	// on a miss/error it falls through unchanged.
+	r.Use(cmdresp.MuxMiddleware("docker"))
 	registerRoutes(r)
 
 	h.logger.Info().Str("port", port).Msg("starting docker api honeypot")

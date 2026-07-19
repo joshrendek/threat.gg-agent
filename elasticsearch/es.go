@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"github.com/joshrendek/threat.gg-agent/stats"
@@ -72,6 +73,13 @@ func (e *ES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			logger.Error().Err(err).Msg("error saving http request")
 		}
 	}(httpReq)
+
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="elasticsearch"), keyed by "METHOD /path". On a miss/error we fall
+	// through to the hardcoded version banner below.
+	if cmdresp.HTTPOverride(w, r, "elasticsearch") {
+		return
+	}
 
 	fmt.Fprintf(w, resp)
 }

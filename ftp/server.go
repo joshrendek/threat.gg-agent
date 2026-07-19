@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/rs/zerolog"
 )
 
@@ -73,6 +74,15 @@ func handleCommand(input string, ch *ConnectionConfig, user *AuthUser, c net.Con
 
 	if err != nil {
 		return SyntaxErr, err
+	}
+
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="ftp"), keyed by the raw command line. FTP replies are numeric-code
+	// prefixed and carry their own trailing CRLF, and sendMsg writes verbatim, so an
+	// authored response is returned as-is. On a miss/error we fall through to the hardcoded
+	// replies below, so behavior never regresses if the server is unreachable.
+	if resp, ok := cmdresp.Lookup("ftp", input); ok {
+		return resp, nil
 	}
 
 	ignoredCommands := []string{

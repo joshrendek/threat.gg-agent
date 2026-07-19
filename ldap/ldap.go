@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync"
 
+	ldapserver "github.com/joshrendek/threat.gg-agent/internal/ldapserver"
 	ldapmsg "github.com/lor00x/goldap/message"
 	"github.com/rs/zerolog"
 	uuid "github.com/satori/go.uuid"
-	ldapserver "github.com/joshrendek/threat.gg-agent/internal/ldapserver"
 
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/persistence"
@@ -221,8 +221,17 @@ func handleSearch(w ldapserver.ResponseWriter, m *ldapserver.Message) {
 		return
 	}
 
-	// Search fake directory
-	entries := searchEntries(baseDN, filter, scope)
+	// Server-authored response override (admin-editable command_responses, scoped to
+	// command_type="ldap"), keyed by "baseDN filter". The admin authors LDIF; parseLDIF
+	// turns it into entries and the ldap library frames the BER wire response. On a
+	// miss/error we fall through to the hardcoded fake directory below, so behavior never
+	// regresses if the server is unreachable. (RootDSE and JNDI handling above are left
+	// intact.)
+	entries, overridden := ldapSearchOverride(baseDN, filter)
+	if !overridden {
+		// Search fake directory
+		entries = searchEntries(baseDN, filter, scope)
+	}
 	for _, entry := range entries {
 		e := ldapserver.NewSearchResultEntry(entry.dn)
 		for k, vals := range entry.attributes {
