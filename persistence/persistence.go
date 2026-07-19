@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"google.golang.org/grpc/metadata"
@@ -262,7 +263,10 @@ func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error
 	if honeypotClient == nil {
 		return nil, errors.New("honeypot client not connected")
 	}
-	ctx := context.Background()
+	// Bound the call so a slow or stalled server can't hang the interactive honeypot
+	// session (this runs on the per-command hot path for ssh and telnet).
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	return honeypotClient.GetCommandResponse(ctx, in)
 }

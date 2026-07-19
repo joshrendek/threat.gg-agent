@@ -8,6 +8,14 @@ import (
 	pb "github.com/joshrendek/threat.gg-agent/proto"
 )
 
+// maxServerLookupLen bounds the attacker-controlled command we forward to the server's
+// response lookup; anything longer skips the lookup and falls back to local handlers.
+const maxServerLookupLen = 4096
+
+// getCommandResponse is an injectable seam over the gRPC call so the server-matched and
+// miss/error paths are unit-testable without a live server.
+var getCommandResponse = persistence.GetCommandResponse
+
 var commandHandlers = map[string]func(args []string) string{
 	"uname":      handleUname,
 	"ls":         handleLs,
@@ -46,9 +54,12 @@ func executeCommand(input string) (string, bool) {
 	// Server-authored response override (admin-editable command_responses, scoped to
 	// command_type="telnet"). Matched distinguishes an intentionally-empty response from
 	// a miss; on miss or any error we fall through to the local handlers below, so
-	// behavior never regresses if the server is unreachable.
-	if resp, err := persistence.GetCommandResponse(&pb.CommandRequest{Command: input, CommandType: "telnet"}); err == nil && resp.Matched {
-		return resp.Response, false
+	// behavior never regresses if the server is unreachable. Input is length-bounded so
+	// an oversized command can't be forwarded to the gRPC lookup.
+	if len(input) <= maxServerLookupLen {
+		if resp, err := getCommandResponse(&pb.CommandRequest{Command: input, CommandType: "telnet"}); err == nil && resp.Matched {
+			return resp.Response, false
+		}
 	}
 
 	// Handle /bin/busybox prefix
