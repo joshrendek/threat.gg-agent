@@ -15,6 +15,11 @@ import (
 // response lookup; anything longer skips the lookup and falls back to local handlers.
 const maxServerLookupLen = 4096
 
+// serverVersion is advertised in the pg startup handshake (server_version parameter). It is
+// the short form of the `select version()` command_responses seed and must stay coherent
+// with it — a mismatch between the handshake version and version() is a honeypot tell.
+const serverVersion = "14.11 (Ubuntu 14.11-0ubuntu0.22.04.1)"
+
 // getCommandResponse is an injectable seam over the gRPC call so the server-matched and
 // miss/error paths are unit-testable without a live server.
 var getCommandResponse = persistence.GetCommandResponse
