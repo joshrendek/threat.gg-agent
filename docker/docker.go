@@ -1,10 +1,13 @@
 package docker
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -26,6 +29,39 @@ const (
 )
 
 var logger = zerolog.New(os.Stdout).With().Caller().Str("honeypot", "docker").Logger()
+var saveDockerRequest = persistence.SaveDockerRequest
+
+type originalPathContextKey struct{}
+
+var dockerAPIVersionSegment = regexp.MustCompile(`^v[0-9]+\.[0-9]+$`)
+
+func normalizeAPIVersion(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
+		if len(parts) == 0 || !dockerAPIVersionSegment.MatchString(parts[0]) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		normalizedPath := "/"
+		if len(parts) == 2 {
+			normalizedPath += parts[1]
+		}
+
+		ctx := context.WithValue(r.Context(), originalPathContextKey{}, r.URL.Path)
+		normalized := r.Clone(ctx)
+		normalized.URL.Path = normalizedPath
+		normalized.URL.RawPath = ""
+		next.ServeHTTP(w, normalized)
+	})
+}
+
+func capturedRequestPath(r *http.Request) string {
+	if path, ok := r.Context().Value(originalPathContextKey{}).(string); ok {
+		return path
+	}
+	return r.URL.Path
+}
 
 type honeypot struct {
 	logger zerolog.Logger
@@ -46,14 +82,13 @@ func (h *honeypot) Start() {
 	}
 
 	r := mux.NewRouter()
-	// Server-authored response override (admin-editable command_responses, scoped to
-	// command_type="docker"), keyed by "METHOD /path". Intercepts before the routes below;
-	// on a miss/error it falls through unchanged.
-	r.Use(cmdresp.MuxMiddleware("docker"))
 	registerRoutes(r)
+	// Normalize versioned API paths before both response lookup and mux route matching.
+	// Server-authored responses remain keyed by the canonical "METHOD /path" form.
+	handler := normalizeAPIVersion(captureRequests(cmdresp.MuxMiddleware("docker")(r)))
 
 	h.logger.Info().Str("port", port).Msg("starting docker api honeypot")
-	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), r)).Msg("failed to start")
+	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), handler)).Msg("failed to start")
 }
 
 func registerRoutes(r *mux.Router) {
@@ -76,11 +111,17 @@ func captureAndSave(r *http.Request) {
 
 	var body string
 	if r.Body != nil && (r.Method == "POST" || r.Method == "PUT") {
-		data, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+		originalBody := r.Body
+		data, err := io.ReadAll(io.LimitReader(originalBody, maxBodySize+1))
+		_ = originalBody.Close()
 		if err == nil {
-			body = string(data)
+			captured := data
+			if len(captured) > maxBodySize {
+				captured = captured[:maxBodySize]
+			}
+			body = string(captured)
+			r.Body = io.NopCloser(bytes.NewReader(data))
 		}
-		r.Body.Close()
 	}
 
 	ip := r.RemoteAddr
@@ -91,7 +132,7 @@ func captureAndSave(r *http.Request) {
 	req := &proto.DockerRequest{
 		RemoteAddr: ip,
 		Headers:    persistence.HttpToMap(map[string][]string(r.Header)),
-		Path:       r.URL.Path,
+		Path:       capturedRequestPath(r),
 		Method:     r.Method,
 		Body:       body,
 		Guid:       guid.String(),
@@ -111,8 +152,15 @@ func captureAndSave(r *http.Request) {
 				logger.Error().Interface("panic", r).Msg("panic saving docker request")
 			}
 		}()
-		if err := persistence.SaveDockerRequest(in); err != nil {
+		if err := saveDockerRequest(in); err != nil {
 			logger.Error().Err(err).Msg("error saving docker request")
 		}
 	}(req)
+}
+
+func captureRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captureAndSave(r)
+		next.ServeHTTP(w, r)
+	})
 }

@@ -3,6 +3,7 @@ package ftp
 import (
 	"net"
 	"testing"
+	"time"
 
 	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/joshrendek/threat.gg-agent/proto"
@@ -42,5 +43,32 @@ func TestHandleCommand_ServerOverride(t *testing.T) {
 	out, err = handleCommand("SYST", &ConnectionConfig{}, &AuthUser{}, fakeConn{}, zerolog.Nop())
 	if err != nil || out != SysType {
 		t.Fatalf("miss: (%q,%v), want SysType,nil", out, err)
+	}
+}
+
+func TestHandleCommandRecordsTheExactLookupKey(t *testing.T) {
+	originalLookup := cmdresp.GetCommandResponse
+	originalSave := cmdresp.SaveResponseLookup
+	defer func() {
+		cmdresp.GetCommandResponse = originalLookup
+		cmdresp.SaveResponseLookup = originalSave
+	}()
+	saved := make(chan *proto.ResponseLookupRequest, 1)
+	cmdresp.SaveResponseLookup = func(request *proto.ResponseLookupRequest) error { saved <- request; return nil }
+	cmdresp.GetCommandResponse = func(*proto.CommandRequest) (*proto.CommandResponse, error) {
+		return &proto.CommandResponse{Matched: false}, nil
+	}
+
+	user := &AuthUser{guid: "ftp-session"}
+	if _, err := handleCommand("SITE CHMOD 755 payload", &ConnectionConfig{}, user, fakeConn{}, zerolog.Nop()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case request := <-saved:
+		if request.CommandType != "ftp" || request.Guid != user.guid || request.LookupKey != "SITE CHMOD 755 payload" {
+			t.Fatalf("saved request = %+v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lookup key was not saved")
 	}
 }

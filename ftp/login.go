@@ -3,6 +3,7 @@ package ftp
 import "github.com/joshrendek/threat.gg-agent/stats"
 
 type AuthUser struct {
+	guid     string
 	username string
 	password string
 	valid    bool

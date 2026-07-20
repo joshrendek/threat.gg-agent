@@ -12,10 +12,10 @@ import (
 
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/rs/zerolog"
-	"github.com/satori/go.uuid"
 )
 
 type LoginDetails struct {
+	Guid       string
 	Username   string
 	Password   string
 	RemoteAddr string
@@ -31,11 +31,10 @@ func CommandReceiver() {
 
 func LoginReceiver(logger zerolog.Logger) {
 	for l := range loginDetails {
-		guid := uuid.NewV4()
 		remoteAddr := strings.Split(l.RemoteAddr, ":")
 		logger.Info().Str("remote_ip", remoteAddr[0]).Msg("connection started")
 		attack := &proto.FtpRequest{}
-		attack.Guid = guid.String()
+		attack.Guid = l.Guid
 		attack.RemoteAddr = remoteAddr[0]
 		attack.Username = l.Username
 		attack.Password = l.Password

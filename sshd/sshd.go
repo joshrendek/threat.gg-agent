@@ -3,6 +3,7 @@ package sshd
 import (
 	"bufio"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -33,6 +34,24 @@ import (
 )
 
 const DEFAULT_SHELL = "bash"
+
+const maxExecCommandLen = 64 * 1024
+
+func parseExecCommand(payload []byte) (string, error) {
+	if len(payload) < 4 {
+		return "", fmt.Errorf("exec payload is shorter than the SSH string header")
+	}
+
+	commandLen := uint64(binary.BigEndian.Uint32(payload[:4]))
+	if commandLen > maxExecCommandLen {
+		return "", fmt.Errorf("exec command length %d exceeds limit %d", commandLen, maxExecCommandLen)
+	}
+	if commandLen > uint64(len(payload)-4) {
+		return "", fmt.Errorf("exec command length %d exceeds payload size %d", commandLen, len(payload)-4)
+	}
+
+	return string(payload[4 : 4+int(commandLen)]), nil
+}
 
 var (
 	logger      = zerolog.New(os.Stdout).With().Caller().Str("sshd", "").Logger()
@@ -288,8 +307,12 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 				switch req.Type {
 				// exec is used: ssh user@host 'some command'
 				case "exec":
+					command, parseErr := parseExecCommand(req.Payload)
+					if parseErr != nil {
+						h.logger.Warn().Err(parseErr).Msg("invalid ssh exec request")
+						break
+					}
 					ok = true
-					command := string(req.Payload[4 : req.Payload[3]+4])
 
 					isScp := strings.Contains(command, "scp")
 

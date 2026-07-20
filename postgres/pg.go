@@ -93,6 +93,10 @@ func handler(ctx context.Context, query string) (wire.PreparedStatements, error)
 		}
 	}(q)
 
+	if response, ok := statefulPostgresResponse(uid.String(), query); ok {
+		return structuredStatement(response), nil
+	}
+
 	if strings.Contains(query, "create role") {
 		return wire.Prepared(wire.NewStatement(func(ctx context.Context, writer wire.DataWriter, parameters []wire.Parameter) error {
 			return writer.Complete("CREATE ROLE")

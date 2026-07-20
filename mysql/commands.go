@@ -101,6 +101,10 @@ func init() {
 
 // handleComQuery dispatches a SQL query and writes a fake response.
 func handleComQuery(w io.Writer, seqID uint8, query string) (uint8, error) {
+	return handleComQueryForSession(w, seqID, query, "")
+}
+
+func handleComQueryForSession(w io.Writer, seqID uint8, query, guid string) (uint8, error) {
 	normalized := strings.ToLower(strings.TrimSpace(query))
 
 	// Server-authored response override (admin-editable command_responses, scoped to
@@ -109,8 +113,10 @@ func handleComQuery(w io.Writer, seqID uint8, query string) (uint8, error) {
 	// single ("result") column/row result set; a non-row statement renders an OK packet. On
 	// a miss/error we fall through to the hardcoded handling below, so behavior never
 	// regresses if the server is unreachable.
-	if resp, ok := cmdresp.Lookup("mysql", normalized); ok {
-		return writeServerResponse(w, seqID, normalized, resp)
+	if !isSensitiveMySQLLookup(normalized) {
+		if resp, ok := cmdresp.LookupAndRecord("mysql", normalized, guid); ok {
+			return writeServerResponse(w, seqID, normalized, resp)
+		}
 	}
 
 	// Check for exact match in known queries
@@ -157,6 +163,12 @@ func handleComQuery(w io.Writer, seqID uint8, query string) (uint8, error) {
 		err := writeOKPacket(w, seqID, 0, 0)
 		return seqID + 1, err
 	}
+}
+
+func isSensitiveMySQLLookup(query string) bool {
+	return strings.Contains(query, "identified by") ||
+		strings.Contains(query, "set password") ||
+		strings.Contains(query, "password(")
 }
 
 // writeServerResponse frames an admin-authored mysql response into the binary wire result.

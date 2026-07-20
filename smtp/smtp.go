@@ -168,16 +168,15 @@ func handleConnection(conn net.Conn) {
 
 		cmd, args := parseCommand(line)
 
-		// Server-authored response override (admin-editable command_responses, scoped to
-		// command_type="smtp"), keyed by the CRLF-trimmed command line. Written verbatim
-		// (admins author the full "NNN ...\r\n" reply). On a miss/error we fall through to
-		// the hardcoded switch, so behavior never regresses if the server is unreachable.
-		// Note: a verbatim override replies but does not advance the session FSM, so it is
-		// best used for stateless verbs (VRFY/EXPN/NOOP/HELP/unknown), not MAIL/RCPT/DATA.
-		if resp, ok := cmdresp.Lookup("smtp", strings.TrimRight(line, "\r\n")); ok {
-			writer.WriteString(resp) //nolint:errcheck
-			writer.Flush()
-			continue
+		// Response overrides are limited to stateless commands. Authentication exchanges
+		// and message-envelope commands stay in the FSM, preventing credentials and message
+		// content from becoming lookup telemetry.
+		if key, lookup := smtpResponseLookupKey(sess.state, cmd, line); lookup {
+			if resp, ok := cmdresp.LookupAndRecord("smtp", key, sess.guid); ok {
+				writer.WriteString(resp) //nolint:errcheck
+				writer.Flush()
+				continue
+			}
 		}
 
 		switch cmd {
@@ -276,6 +275,19 @@ func handleConnection(conn net.Conn) {
 	}
 
 	persistSession(sess)
+}
+
+func smtpResponseLookupKey(state smtpState, command, line string) (string, bool) {
+	if state == stateAuthUser || state == stateAuthPass {
+		return "", false
+	}
+	switch command {
+	case "AUTH", "MAIL", "RCPT", "DATA", "EHLO", "HELO", "RSET", "STARTTLS", "QUIT":
+		return "", false
+	default:
+		key := strings.TrimRight(line, "\r\n")
+		return key, key != "" && len(key) <= cmdresp.MaxServerLookupLen
+	}
 }
 
 func readBody(reader *bufio.Reader) string {

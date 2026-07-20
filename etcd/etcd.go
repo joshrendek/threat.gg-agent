@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ const (
 )
 
 var logger = zerolog.New(os.Stdout).With().Caller().Str("honeypot", "etcd").Logger()
+var saveEtcdRequest = persistence.SaveEtcdRequest
 
 type honeypot struct {
 	logger zerolog.Logger
@@ -47,11 +49,11 @@ func (h *honeypot) Start() {
 	// Server-authored response override (admin-editable command_responses, scoped to
 	// command_type="etcd"), keyed by "METHOD /path". Intercepts before the routes below;
 	// on a miss/error it falls through unchanged.
-	r.Use(cmdresp.MuxMiddleware("etcd"))
 	registerRoutes(r)
+	handler := captureRequests(cmdresp.MuxMiddleware("etcd")(r))
 
 	h.logger.Info().Str("port", port).Msg("starting etcd honeypot")
-	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), r)).Msg("failed to start")
+	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), handler)).Msg("failed to start")
 }
 
 type requestData struct {
@@ -66,11 +68,17 @@ func captureAndSave(r *http.Request) {
 
 	var body string
 	if r.Body != nil && (r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE") {
-		data, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+		originalBody := r.Body
+		data, err := io.ReadAll(io.LimitReader(originalBody, maxBodySize+1))
+		_ = originalBody.Close()
 		if err == nil {
-			body = string(data)
+			captured := data
+			if len(captured) > maxBodySize {
+				captured = captured[:maxBodySize]
+			}
+			body = string(captured)
+			r.Body = io.NopCloser(bytes.NewReader(data))
 		}
-		r.Body.Close()
 	}
 
 	ip := r.RemoteAddr
@@ -103,15 +111,23 @@ func captureAndSave(r *http.Request) {
 				logger.Error().Interface("panic", r).Msg("panic saving etcd request")
 			}
 		}()
-		if err := persistence.SaveEtcdRequest(in); err != nil {
+		if err := saveEtcdRequest(in); err != nil {
 			logger.Error().Err(err).Msg("error saving etcd request")
 		}
 	}(req)
 }
 
+func captureRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captureAndSave(r)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func registerRoutes(r *mux.Router) {
 	r.HandleFunc("/version", handleVersion).Methods("GET")
 	r.HandleFunc("/health", handleHealth).Methods("GET")
+	r.HandleFunc("/v3/kv/range", handleV3Range).Methods("POST")
 	r.HandleFunc("/v2/keys/{path:.*}", handleKeysWrite).Methods("PUT")
 	r.HandleFunc("/v2/keys/{path:.*}", handleKeysDelete).Methods("DELETE")
 	r.HandleFunc("/v2/keys/{path:.*}", handleKeysRead).Methods("GET")

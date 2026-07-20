@@ -3,6 +3,7 @@ package mysql
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/joshrendek/threat.gg-agent/proto"
@@ -57,5 +58,47 @@ func TestHandleComQuery_ServerOverride(t *testing.T) {
 	}
 	if buf.Len() == 0 {
 		t.Fatal("miss: expected the hardcoded handler to write a response")
+	}
+}
+
+func TestHandleComQueryRecordsNormalizedLookupKey(t *testing.T) {
+	originalLookup := cmdresp.GetCommandResponse
+	originalSave := cmdresp.SaveResponseLookup
+	defer func() {
+		cmdresp.GetCommandResponse = originalLookup
+		cmdresp.SaveResponseLookup = originalSave
+	}()
+	saved := make(chan *proto.ResponseLookupRequest, 1)
+	cmdresp.SaveResponseLookup = func(request *proto.ResponseLookupRequest) error { saved <- request; return nil }
+	cmdresp.GetCommandResponse = func(request *proto.CommandRequest) (*proto.CommandResponse, error) {
+		if request.Command != "select @@version" {
+			t.Fatalf("lookup key = %q", request.Command)
+		}
+		return &proto.CommandResponse{Matched: false}, nil
+	}
+
+	var buffer bytes.Buffer
+	if _, err := handleComQueryForSession(&buffer, 1, "  SELECT @@version  ", "mysql-session"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case request := <-saved:
+		if request.CommandType != "mysql" || request.Guid != "mysql-session" || request.LookupKey != "select @@version" {
+			t.Fatalf("saved request = %+v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lookup key was not saved")
+	}
+}
+
+func TestSensitiveMySQLQueriesSkipLookupTelemetry(t *testing.T) {
+	for _, query := range []string{
+		"create user app identified by 'secret'",
+		"set password for app = 'secret'",
+		"select password('secret')",
+	} {
+		if !isSensitiveMySQLLookup(query) {
+			t.Errorf("isSensitiveMySQLLookup(%q) = false", query)
+		}
 	}
 }

@@ -59,3 +59,42 @@ func TestExecuteCommand_ServerOverrideAndFallback(t *testing.T) {
 		t.Fatalf(`exit: got %q, %v; want "", true`, out, exit)
 	}
 }
+
+func TestExecuteCommandBusyBoxAppletProbe(t *testing.T) {
+	orig := getCommandResponse
+	defer func() { getCommandResponse = orig }()
+	getCommandResponse = func(in *pb.CommandRequest) (*pb.CommandResponse, error) {
+		return &pb.CommandResponse{Matched: false}, nil
+	}
+
+	for _, marker := range []string{"HISILICON", "STC", "BOTNET", "rotating-probe-42"} {
+		input := "/bin/busybox " + marker
+		want := marker + ": applet not found\r\n"
+		if got, exit := executeCommand(input); got != want || exit {
+			t.Errorf("executeCommand(%q) = %q, %v; want %q, false", input, got, exit, want)
+		}
+	}
+}
+
+func TestExecuteCommandBusyBoxKnownApplet(t *testing.T) {
+	orig := getCommandResponse
+	defer func() { getCommandResponse = orig }()
+	getCommandResponse = func(in *pb.CommandRequest) (*pb.CommandResponse, error) {
+		return &pb.CommandResponse{Matched: false}, nil
+	}
+
+	if got, exit := executeCommand("/bin/busybox uname -a"); !strings.Contains(got, "armv7l") || exit {
+		t.Fatalf("known applet response = %q, %v", got, exit)
+	}
+}
+
+func TestPrintableAppletNameBoundsUntrustedOutput(t *testing.T) {
+	name := strings.Repeat("a", 200) + "\x00\n"
+	got := printableAppletName(name)
+	if len(got) != 128 {
+		t.Fatalf("printableAppletName length = %d, want 128", len(got))
+	}
+	if strings.ContainsAny(got, "\x00\r\n") {
+		t.Fatalf("printableAppletName contains control characters: %q", got)
+	}
+}

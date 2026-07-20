@@ -15,6 +15,7 @@ import (
 
 	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/rs/zerolog"
+	uuid "github.com/satori/go.uuid"
 )
 
 const (
@@ -31,7 +32,7 @@ func HandleConnection(c net.Conn, logger zerolog.Logger) {
 	defer c.Close()
 
 	sendMsg(c, FtpServerReady)
-	user := AuthUser{}
+	user := AuthUser{guid: uuid.NewV4().String()}
 
 	loginBreaker := 0
 	for {
@@ -49,7 +50,7 @@ func HandleConnection(c net.Conn, logger zerolog.Logger) {
 	}
 
 	go func() {
-		loginDetails <- LoginDetails{Username: user.username, Password: user.password, RemoteAddr: c.RemoteAddr().String()}
+		loginDetails <- LoginDetails{Guid: user.guid, Username: user.username, Password: user.password, RemoteAddr: c.RemoteAddr().String()}
 	}()
 
 	config := ConnectionConfig{}
@@ -81,7 +82,7 @@ func handleCommand(input string, ch *ConnectionConfig, user *AuthUser, c net.Con
 	// prefixed and carry their own trailing CRLF, and sendMsg writes verbatim, so an
 	// authored response is returned as-is. On a miss/error we fall through to the hardcoded
 	// replies below, so behavior never regresses if the server is unreachable.
-	if resp, ok := cmdresp.Lookup("ftp", input); ok {
+	if resp, ok := cmdresp.LookupAndRecord("ftp", input, user.guid); ok {
 		return resp, nil
 	}
 

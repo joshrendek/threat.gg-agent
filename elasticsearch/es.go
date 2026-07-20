@@ -33,7 +33,8 @@ const resp = `{
 }`
 
 var (
-	logger = zerolog.New(os.Stdout).With().Caller().Str("elasticsearch", "").Logger()
+	logger             = zerolog.New(os.Stdout).With().Caller().Str("elasticsearch", "").Logger()
+	saveElasticRequest = persistence.SaveElasticRequest
 )
 
 type ES struct {
@@ -52,6 +53,7 @@ func (e *ES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Headers:   persistence.HttpToMap(map[string][]string(r.Header)),
 		FormData:  persistence.HttpToMap(map[string][]string(r.Form)),
 		Method:    r.Method,
+		Path:      r.URL.Path,
 		Guid:      guid.String(),
 		Hostname:  r.Host,
 		UserAgent: r.UserAgent(),
@@ -69,7 +71,7 @@ func (e *ES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	stats.Increment("elastic_search.requests")
 
 	go func(in *proto.ElasticsearchRequest) {
-		if err := persistence.SaveElasticRequest(in); err != nil {
+		if err := saveElasticRequest(in); err != nil {
 			logger.Error().Err(err).Msg("error saving http request")
 		}
 	}(httpReq)

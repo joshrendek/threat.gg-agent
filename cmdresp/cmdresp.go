@@ -7,6 +7,7 @@
 package cmdresp
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -19,9 +20,20 @@ import (
 // response lookup; anything longer skips the lookup and falls back to local handlers.
 const MaxServerLookupLen = 4096
 
+// HTTPResponsePrefix marks an opt-in structured HTTP response stored in the existing
+// response text column. Plain rows remain body-only for backward compatibility.
+const HTTPResponsePrefix = "@http\n"
+
+type authoredHTTPResponse struct {
+	Status  int               `json:"status,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Body    string            `json:"body"`
+}
+
 // GetCommandResponse is an injectable seam over the gRPC call so the matched/miss/error
 // paths are unit-testable without a live server.
 var GetCommandResponse = persistence.GetCommandResponse
+var SaveResponseLookup = persistence.SaveResponseLookup
 
 // Lookup returns the admin-authored response for (commandType, command) when a Matched row
 // exists, and ("", false) on a miss, an error, or an oversized command — so the caller
@@ -38,6 +50,19 @@ func Lookup(commandType, command string) (string, bool) {
 	return resp.Response, true
 }
 
+// LookupAndRecord persists the exact bounded key used for response matching, then performs
+// the normal lookup. A missing session GUID preserves lookup behavior but skips telemetry.
+func LookupAndRecord(commandType, command, guid string) (string, bool) {
+	if len(command) > MaxServerLookupLen {
+		return "", false
+	}
+	if guid != "" {
+		request := &proto.ResponseLookupRequest{Guid: guid, CommandType: commandType, LookupKey: command}
+		go func() { _ = SaveResponseLookup(request) }()
+	}
+	return Lookup(commandType, command)
+}
+
 // HTTPOverride writes an admin-authored response as the HTTP body when a row is authored
 // for (commandType, "METHOD /path"), returning true when it handled the request. The
 // caller's already-set Content-Type/headers are preserved; on a miss it writes nothing and
@@ -47,8 +72,63 @@ func HTTPOverride(w http.ResponseWriter, r *http.Request, commandType string) bo
 	if !ok {
 		return false
 	}
+	if response, structured := parseHTTPResponse(body); structured {
+		for name, value := range response.Headers {
+			if validHTTPHeader(name, value) {
+				w.Header().Set(name, value)
+			}
+		}
+		status := response.Status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		w.WriteHeader(status)
+		io.WriteString(w, response.Body) //nolint:errcheck
+		return true
+	}
 	io.WriteString(w, body) //nolint:errcheck
 	return true
+}
+
+func parseHTTPResponse(value string) (authoredHTTPResponse, bool) {
+	if !strings.HasPrefix(value, HTTPResponsePrefix) {
+		return authoredHTTPResponse{}, false
+	}
+	var response authoredHTTPResponse
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(value, HTTPResponsePrefix)), &response); err != nil {
+		return authoredHTTPResponse{}, false
+	}
+	if response.Status != 0 && (response.Status < 100 || response.Status > 599) {
+		return authoredHTTPResponse{}, false
+	}
+	return response, true
+}
+
+func validHTTPHeader(name, value string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if !isHTTPTokenByte(name[i]) {
+			return false
+		}
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] == '\t' {
+			continue
+		}
+		if value[i] < 0x20 || value[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func isHTTPTokenByte(b byte) bool {
+	if b >= '0' && b <= '9' || b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' {
+		return true
+	}
+	return strings.ContainsRune("!#$%&'*+-.^_`|~", rune(b))
 }
 
 // MuxMiddleware returns net/http middleware (compatible with gorilla/mux Router.Use) that

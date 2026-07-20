@@ -270,3 +270,14 @@ func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	return honeypotClient.GetCommandResponse(ctx, in)
 }
+
+func SaveResponseLookup(in *proto.ResponseLookupRequest) error {
+	if honeypotClient == nil {
+		return errors.New("honeypot client not connected")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveResponseLookup(ctx, in)
+	return err
+}
