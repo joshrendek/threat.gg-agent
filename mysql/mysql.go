@@ -141,7 +141,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 				Str("session", sess.guid).
 				Str("query", truncate(cmdData, 200)).
 				Msg("query received")
-			_, cmdErr = handleComQuery(conn, seqID+1, cmdData)
+			_, cmdErr = handleComQueryForSession(conn, seqID+1, cmdData, sess.guid)
 
 		case comPing:
 			cmdErr = handleComPing(conn, seqID+1)
@@ -191,15 +191,6 @@ func (h *honeypot) persistSession(sess *session) {
 		return
 	}
 
-	for _, q := range sess.queries {
-		qReq := &proto.QueryRequest{
-			Guid:  sess.guid,
-			Query: q,
-		}
-		if err := persistence.SaveQuery(qReq); err != nil {
-			h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist query")
-		}
-	}
 }
 
 func truncate(s string, maxLen int) string {

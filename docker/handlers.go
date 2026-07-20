@@ -15,7 +15,6 @@ func jsonResponse(w http.ResponseWriter, statusCode int, body string) {
 }
 
 func handlePing(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Api-Version", apiVersion)
 	w.Header().Set("Server", "Docker/"+serverVersion+" (linux)")
@@ -24,7 +23,6 @@ func handlePing(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVersion(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	jsonResponse(w, http.StatusOK, `{
   "Platform": {"Name": "Docker Engine - Community"},
   "Components": [
@@ -43,7 +41,6 @@ func handleVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleInfo(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	jsonResponse(w, http.StatusOK, `{
   "ID": "7TRN:IPZB:QYBB:WPUM:DHAP:YCY3:J5LA:Q2YN:MWOM:TDSW:JNGH:DYRK",
   "Containers": 3,
@@ -81,7 +78,6 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleContainerList(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	jsonResponse(w, http.StatusOK, `[
   {"Id": "b4a2c1d3e5f6","Names": ["/web-app"],"Image": "nginx:latest","State": "running","Status": "Up 3 days","Ports": [{"PrivatePort": 80, "PublicPort": 80, "Type": "tcp"}]},
   {"Id": "c5d3e2f1a4b6","Names": ["/redis-cache"],"Image": "redis:7-alpine","State": "running","Status": "Up 3 days","Ports": [{"PrivatePort": 6379, "Type": "tcp"}]}
@@ -89,18 +85,15 @@ func handleContainerList(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleContainerCreate(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	jsonResponse(w, http.StatusCreated, `{"Id": "`+fakeContainerID+`", "Warnings": []}`)
 }
 
 func handleContainerStart(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	w.Header().Set("Server", "Docker/"+serverVersion+" (linux)")
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleContainerInspect(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	jsonResponse(w, http.StatusOK, `{
   "Id": "`+fakeContainerID+`",
   "Created": "2024-01-15T10:30:00.000000000Z",
@@ -112,19 +105,16 @@ func handleContainerInspect(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleExecCreate(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	jsonResponse(w, http.StatusCreated, `{"Id": "`+fakeExecID+`"}`)
 }
 
 func handleExecStart(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	w.Header().Set("Content-Type", "application/vnd.docker.raw-stream")
 	w.Header().Set("Server", "Docker/"+serverVersion+" (linux)")
 	w.WriteHeader(http.StatusOK)
 }
 
 func handleImageList(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	jsonResponse(w, http.StatusOK, `[
   {"Id": "sha256:a1b2c3d4e5f6", "RepoTags": ["nginx:latest"], "Size": 187000000, "Created": 1705312200},
   {"Id": "sha256:b2c3d4e5f6a1", "RepoTags": ["redis:7-alpine"], "Size": 32000000, "Created": 1705225800},
@@ -133,7 +123,6 @@ func handleImageList(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleImageCreate(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Server", "Docker/"+serverVersion+" (linux)")
 	w.WriteHeader(http.StatusOK)
@@ -144,6 +133,5 @@ func handleImageCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCatchAll(w http.ResponseWriter, r *http.Request) {
-	captureAndSave(r)
 	jsonResponse(w, http.StatusNotFound, `{"message": "page not found"}`)
 }

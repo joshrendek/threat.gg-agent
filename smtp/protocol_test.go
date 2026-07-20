@@ -34,6 +34,28 @@ func TestParseCommand(t *testing.T) {
 	}
 }
 
+func TestSMTPResponseLookupKeyRedactsAuthenticationAndStatefulCommands(t *testing.T) {
+	for _, test := range []struct {
+		state smtpState
+		cmd   string
+		line  string
+		ok    bool
+		key   string
+	}{
+		{state: stateGreeted, cmd: "VRFY", line: "VRFY root\r\n", ok: true, key: "VRFY root"},
+		{state: stateGreeted, cmd: "AUTH", line: "AUTH PLAIN dXNlcgBwYXNz\r\n"},
+		{state: stateAuthUser, cmd: "DXNLCG==", line: "dXNlcg==\r\n"},
+		{state: stateAuthPass, cmd: "CGFZCW==", line: "cGFzcw==\r\n"},
+		{state: stateGreeted, cmd: "MAIL", line: "MAIL FROM:<sender@example.com>\r\n"},
+		{state: stateRcptTo, cmd: "DATA", line: "DATA\r\n"},
+	} {
+		key, ok := smtpResponseLookupKey(test.state, test.cmd, test.line)
+		if ok != test.ok || key != test.key {
+			t.Errorf("smtpResponseLookupKey(%v, %q) = %q, %v; want %q, %v", test.state, test.cmd, key, ok, test.key, test.ok)
+		}
+	}
+}
+
 func TestParseAddress(t *testing.T) {
 	tests := []struct {
 		input string

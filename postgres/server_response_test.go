@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -90,6 +91,115 @@ func TestWriteFramedResponse(t *testing.T) {
 	}
 	if fw.completed != "BEGIN" {
 		t.Fatalf("tag framing completed %q, want BEGIN", fw.completed)
+	}
+}
+
+func TestStructuredResponseFramesTypedMultipleAndZeroRows(t *testing.T) {
+	value := postgresResponsePrefix + `{"columns":[{"name":"datname","type":"text"},{"name":"allowconn","type":"bool"}],"rows":[["postgres",true],["template0",false]],"tag":"SELECT 2"}`
+	response, ok := parseStructuredResponse(value)
+	if !ok {
+		t.Fatal("valid structured response was rejected")
+	}
+	writer := &fakeWriter{}
+	if err := writeStructuredResponse(response, writer); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.rows) != 2 || writer.rows[0][0] != "postgres" || writer.rows[0][1] != true {
+		t.Fatalf("rows = %#v", writer.rows)
+	}
+	if writer.completed != "SELECT 2" {
+		t.Fatalf("tag = %q", writer.completed)
+	}
+
+	zeroRows := postgresResponsePrefix + `{"columns":[{"name":"exists","type":"int4"}],"rows":[],"tag":"SELECT 0"}`
+	response, ok = parseStructuredResponse(zeroRows)
+	if !ok {
+		t.Fatal("valid zero-row response was rejected")
+	}
+	writer = &fakeWriter{}
+	if err := writeStructuredResponse(response, writer); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.rows) != 0 || writer.completed != "SELECT 0" {
+		t.Fatalf("zero-row framing = rows %#v, tag %q", writer.rows, writer.completed)
+	}
+}
+
+func TestStructuredResponseRejectsMalformedShapes(t *testing.T) {
+	for _, value := range []string{
+		postgresResponsePrefix + `{`,
+		postgresResponsePrefix + `{"columns":[{"name":"x","type":"inet"}],"rows":[],"tag":"SELECT 0"}`,
+		postgresResponsePrefix + `{"columns":[{"name":"x","type":"text"}],"rows":[["a","b"]],"tag":"SELECT 1"}`,
+		postgresResponsePrefix + `{"columns":[{"name":"x","type":"int8"}],"rows":[["not-a-number"]],"tag":"SELECT 1"}`,
+		postgresResponsePrefix + `{"columns":[{"name":"x","type":"text"}],"rows":[],"tag":"SELECT 0\r\nNOTICE"}`,
+	} {
+		if _, ok := parseStructuredResponse(value); ok {
+			t.Errorf("malformed response accepted: %q", value)
+		}
+	}
+}
+
+func TestStructuredResponseNormalizesTypedNumbers(t *testing.T) {
+	response, ok := parseStructuredResponse(postgresResponsePrefix + `{"columns":[{"name":"size","type":"int8"},{"name":"ratio","type":"float8"}],"rows":[[33554432,1.5]],"tag":"SELECT 1"}`)
+	if !ok {
+		t.Fatal("typed numeric response was rejected")
+	}
+	if _, ok := response.Rows[0][0].(int64); !ok {
+		t.Fatalf("int8 value type = %T", response.Rows[0][0])
+	}
+	if _, ok := response.Rows[0][1].(float64); !ok {
+		t.Fatalf("float8 value type = %T", response.Rows[0][1])
+	}
+}
+
+func TestStatefulPostgresPgenvProductionSequence(t *testing.T) {
+	sessionID := "production-sequence"
+	deletePostgresSession(sessionID)
+	t.Cleanup(func() { deletePostgresSession(sessionID) })
+
+	if response, ok := statefulPostgresResponse(sessionID, "create temp table if not exists _pgenv(o text)"); !ok || response.Tag != "CREATE TABLE" {
+		t.Fatalf("create response = %+v, %v", response, ok)
+	}
+
+	steps := []struct {
+		query string
+		want  string
+	}{
+		{"copy _pgenv from program 'test -f /.dockerenv && echo docker || echo no'", "docker"},
+		{"copy _pgenv from program 'test -S /var/run/docker.sock && echo yes || echo no'", "no"},
+		{"copy _pgenv from program 'id'", "uid=999(postgres) gid=999(postgres) groups=999(postgres)"},
+		{"copy _pgenv from program 'head -1 /proc/meminfo'", "MemTotal:        2048000 kB"},
+	}
+	for _, step := range steps {
+		copyResponse, ok := statefulPostgresResponse(sessionID, step.query)
+		if !ok || copyResponse.Tag != "COPY 1" {
+			t.Fatalf("copy response for %q = %+v, %v", step.query, copyResponse, ok)
+		}
+		selectResponse, ok := statefulPostgresResponse(sessionID, "select o from _pgenv limit 1")
+		if !ok || len(selectResponse.Rows) != 1 || selectResponse.Rows[0][0] != step.want || selectResponse.Tag != "SELECT 1" {
+			t.Fatalf("select after %q = %+v, %v", step.query, selectResponse, ok)
+		}
+	}
+
+	statefulPostgresResponse(sessionID, "truncate _pgenv")
+	response, ok := statefulPostgresResponse(sessionID, "select o from _pgenv limit 1")
+	if !ok || len(response.Rows) != 0 || response.Tag != "SELECT 0" {
+		t.Fatalf("select after truncate = %+v, %v", response, ok)
+	}
+}
+
+func TestPostgresSessionStateIsBounded(t *testing.T) {
+	postgresSessions.Lock()
+	postgresSessions.items = make(map[string]postgresSessionState)
+	postgresSessions.Unlock()
+	for i := 0; i <= maxPostgresSessions; i++ {
+		touchPostgresSession(fmt.Sprintf("session-%d", i), "x", true)
+	}
+	postgresSessions.Lock()
+	count := len(postgresSessions.items)
+	postgresSessions.Unlock()
+	if count > maxPostgresSessions {
+		t.Fatalf("session count = %d, max = %d", count, maxPostgresSessions)
 	}
 }
 

@@ -87,11 +87,19 @@ func (h *honeypot) Start() {
 }
 
 type session struct {
-	guid     string
-	username string
-	password string
-	remoteIP string
-	commands []string
+	guid             string
+	username         string
+	password         string
+	remoteIP         string
+	commands         []string
+	role             string
+	masterHost       string
+	masterPort       string
+	replicationUp    bool
+	replicaSyncDone  bool
+	lastSaveUnix     int64
+	lastBgsaveStatus string
+	moduleLoaded     bool
 }
 
 func (h *honeypot) handleConnection(conn net.Conn) {
@@ -103,8 +111,11 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	}
 
 	sess := &session{
-		guid:     uuid.NewV4().String(),
-		remoteIP: remoteAddr,
+		guid:             uuid.NewV4().String(),
+		remoteIP:         remoteAddr,
+		role:             "master",
+		lastSaveUnix:     time.Now().Add(-15 * time.Minute).Unix(),
+		lastBgsaveStatus: "ok",
 	}
 
 	h.logger.Info().Str("session", sess.guid).Str("remote", remoteAddr).Msg("new connection")
@@ -128,11 +139,22 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		cmd := strings.ToUpper(args[0])
 		fullCmd := strings.Join(args, " ")
 		sess.commands = append(sess.commands, fullCmd)
+		updateSessionState(args, sess)
 
 		h.logger.Debug().
 			Str("session", sess.guid).
 			Str("command", cmd).
 			Msg("command received")
+
+		// Commands whose response depends on earlier commands in this connection must be
+		// handled before the global server-authored lookup. A static row cannot represent
+		// replication/BGSAVE transitions without contradicting the session history.
+		if handled, stateErr := statefulResponse(args, conn, sess); handled {
+			if stateErr != nil {
+				break
+			}
+			continue
+		}
 
 		// Server-authored response override (admin-editable command_responses, scoped to
 		// command_type="redis"). On a Matched row we write it verbatim and skip the

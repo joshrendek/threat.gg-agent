@@ -62,10 +62,14 @@ func executeCommand(input string) (string, bool) {
 		}
 	}
 
-	// Handle /bin/busybox prefix
+	// BusyBox invokes known applets and identifies unknown probe markers with the
+	// applet-specific error bots expect when testing command execution.
 	if cmd == "/bin/busybox" && len(args) > 0 {
-		cmd = args[0]
-		args = args[1:]
+		applet := args[0]
+		if handler, ok := commandHandlers[applet]; ok {
+			return handler(args[1:]), false
+		}
+		return fmt.Sprintf("%s: applet not found\r\n", printableAppletName(applet)), false
 	}
 
 	handler, ok := commandHandlers[cmd]
@@ -73,6 +77,20 @@ func executeCommand(input string) (string, bool) {
 		return fmt.Sprintf("-sh: %s: not found\r\n", cmd), false
 	}
 	return handler(args), false
+}
+
+func printableAppletName(applet string) string {
+	const maxAppletNameLen = 128
+
+	var out strings.Builder
+	for i := 0; i < len(applet) && out.Len() < maxAppletNameLen; i++ {
+		if applet[i] >= 0x21 && applet[i] <= 0x7e {
+			out.WriteByte(applet[i])
+		} else {
+			out.WriteByte('?')
+		}
+	}
+	return out.String()
 }
 
 func handleUname(args []string) string {
