@@ -24,6 +24,11 @@ var (
 	conn           *grpc.ClientConn
 	connMetadata   = metadata.New(map[string]string{"authorization": os.Getenv("API_KEY")})
 	honeypotClient proto.HoneypotClient
+
+	// saveTimeout bounds the newer honeypots' persistence calls (mongo/memcached) so a
+	// stalled gRPC server can't let fire-and-forget calls block forever and accumulate.
+	// A package var so tests can shrink it.
+	saveTimeout = 5 * time.Second
 )
 
 func Setup() error {
@@ -254,6 +259,50 @@ func SaveJenkinsRequest(in *proto.JenkinsRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveJenkinsRequest(ctx, in)
+	return err
+}
+
+func SaveMongoConnect(in *proto.MongoConnectRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMongoConnect(ctx, in)
+	return err
+}
+
+func SaveMongoCommand(in *proto.MongoCommandRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMongoCommand(ctx, in)
+	return err
+}
+
+func SaveMemcachedConnect(in *proto.MemcachedConnectRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMemcachedConnect(ctx, in)
+	return err
+}
+
+func SaveMemcachedCommand(in *proto.MemcachedCommandRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMemcachedCommand(ctx, in)
 	return err
 }
 

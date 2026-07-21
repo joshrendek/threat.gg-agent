@@ -12,6 +12,8 @@ import (
 	"github.com/joshrendek/threat.gg-agent/kafka"
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
+	memcachedhp "github.com/joshrendek/threat.gg-agent/memcached"
+	mongohp "github.com/joshrendek/threat.gg-agent/mongo"
 	"github.com/joshrendek/threat.gg-agent/mqtt"
 	mysqlhp "github.com/joshrendek/threat.gg-agent/mysql"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
@@ -20,10 +22,10 @@ import (
 	rdphp "github.com/joshrendek/threat.gg-agent/rdp"
 	redishp "github.com/joshrendek/threat.gg-agent/redis"
 	smbhp "github.com/joshrendek/threat.gg-agent/smb"
+	smtphp "github.com/joshrendek/threat.gg-agent/smtp"
 	"github.com/joshrendek/threat.gg-agent/sshd"
 	telnethp "github.com/joshrendek/threat.gg-agent/telnet"
 	"github.com/joshrendek/threat.gg-agent/updater"
-	smtphp "github.com/joshrendek/threat.gg-agent/smtp"
 	vnchp "github.com/joshrendek/threat.gg-agent/vnc"
 	"github.com/rs/zerolog/log"
 	"net/http"
@@ -111,6 +113,8 @@ func main() {
 	honeypots.Register(vnchp.New())
 	honeypots.Register(smtphp.New())
 	honeypots.Register(jenkins.New())
+	honeypots.Register(mongohp.New())
+	honeypots.Register(memcachedhp.New())
 	honeypots.StartHoneypots()
 
 	<-wait
