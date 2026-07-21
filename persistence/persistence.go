@@ -257,6 +257,46 @@ func SaveJenkinsRequest(in *proto.JenkinsRequest) error {
 	return err
 }
 
+func SaveMongoConnect(in *proto.MongoConnectRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMongoConnect(ctx, in)
+	return err
+}
+
+func SaveMongoCommand(in *proto.MongoCommandRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMongoCommand(ctx, in)
+	return err
+}
+
+func SaveMemcachedConnect(in *proto.MemcachedConnectRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMemcachedConnect(ctx, in)
+	return err
+}
+
+func SaveMemcachedCommand(in *proto.MemcachedCommandRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMemcachedCommand(ctx, in)
+	return err
+}
+
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	// Guard against an uninitialized client (e.g. before Connect, or in unit tests) so
 	// callers get a clean error and fall back to their local behavior instead of panicking.
