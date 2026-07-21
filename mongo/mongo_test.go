@@ -1,7 +1,10 @@
 package mongo
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -35,6 +38,12 @@ func (r *recorder) connectSnapshot() []*proto.MongoConnectRequest {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]*proto.MongoConnectRequest(nil), r.connects...)
+}
+
+func (r *recorder) commandSnapshot() []*proto.MongoCommandRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]*proto.MongoCommandRequest(nil), r.commands...)
 }
 
 // testRec is the single persistence sink, installed once so background goroutines never
@@ -172,6 +181,52 @@ func TestMongoOpQueryIsMaster(t *testing.T) {
 	}
 }
 
+// TestMongoNonStringDbIgnored checks the $db type guard: a $db field sent as a non-string
+// must not be read as a namespace (it is simply ignored), and the command still succeeds.
+func TestMongoNonStringDbIgnored(t *testing.T) {
+	addr := startTestServer(t)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+
+	var b bsonBuilder
+	b.addInt32("ping", 1)
+	b.addInt32("$db", 123) // hostile: $db is not a string
+	if _, err := conn.Write(buildClientOpMsg(42, b.build())); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	h, payload := readReply(t, conn)
+	if h.opCode != opMsg {
+		t.Fatalf("reply opCode = %d, want OP_MSG", h.opCode)
+	}
+	body, err := parseOpMsg(payload)
+	if err != nil {
+		t.Fatalf("parseOpMsg: %v", err)
+	}
+	doc, err := decodeDocument(body)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if v, ok := doc.lookup("ok"); !ok || v.d != 1.0 {
+		t.Fatalf("ok = %v, want 1.0", v.d)
+	}
+	conn.Close()
+
+	// The recorded command must be the bare command name, with no namespace appended.
+	waitFor(t, func() bool {
+		for _, c := range testRec.commandSnapshot() {
+			if c.Command == "ping" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
 func TestMongoCapturesPlainCredentials(t *testing.T) {
 	addr := startTestServer(t)
 	conn, err := net.Dial("tcp", addr)
@@ -201,6 +256,66 @@ func TestMongoCapturesPlainCredentials(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// TestMongoHandlerRecoversFromPanic is the regression for the recover backstop: a panic
+// raised on a downstream path (here, persistence) must be caught by the handler's
+// deferred recover rather than escaping the goroutine and crashing the whole agent
+// process (an unrecovered goroutine panic terminates every honeypot on the node).
+func TestMongoHandlerRecoversFromPanic(t *testing.T) {
+	called := make(chan struct{}, 1)
+	orig := saveMongoConnect
+	saveMongoConnect = func(*proto.MongoConnectRequest) error {
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+		panic("boom from persistence")
+	}
+	t.Cleanup(func() { saveMongoConnect = orig })
+
+	addr := startTestServer(t)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+
+	var b bsonBuilder
+	b.addInt32("hello", 1)
+	if _, err := conn.Write(buildClientOpMsg(1, b.build())); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	readReply(t, conn) // a valid reply is still served before the connection closes
+	conn.Close()
+
+	select {
+	case <-called:
+		// The panicking seam ran inside persistSession; without the handler's recover
+		// this goroutine panic would have crashed the test binary.
+	case <-time.After(2 * time.Second):
+		t.Fatal("persistence seam was never invoked")
+	}
+	time.Sleep(50 * time.Millisecond) // let the deferred recover run
+}
+
+// TestMongoRejectsOversizedMessage is the regression for the up-front full-message
+// allocation: a hostile 4-byte length prefix declaring a huge message must be rejected
+// before any body read or `make([]byte, total)`, and the accepted cap must stay small so
+// stalled connections can't each pin a large buffer.
+func TestMongoRejectsOversizedMessage(t *testing.T) {
+	if maxMessageLen > 2*1024*1024 {
+		t.Fatalf("maxMessageLen = %d, want <= 2MiB to bound the up-front allocation", maxMessageLen)
+	}
+
+	header := make([]byte, 4)
+	binary.LittleEndian.PutUint32(header, uint32(maxMessageLen+1))
+	// Only the length prefix is provided: if the cap were checked before the body read,
+	// no body read is attempted and we get errWire — not a read error from a giant buffer.
+	r := bufio.NewReader(bytes.NewReader(header))
+	if _, _, err := readMessage(r); !errors.Is(err, errWire) {
+		t.Fatalf("readMessage(oversized) err = %v, want errWire", err)
+	}
 }
 
 func waitFor(t *testing.T, cond func() bool) {

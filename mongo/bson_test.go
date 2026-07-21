@@ -104,3 +104,31 @@ func TestDecodeRejectsTruncated(t *testing.T) {
 		t.Fatal("decode short buffer: err = nil, want error")
 	}
 }
+
+// TestDecodeRejectsDeepNesting is the regression for the unbounded-recursion crash: a BSON
+// document nested past the depth cap (reachable unauthenticated via OP_MSG/OP_QUERY) must
+// return an error, not recurse until the goroutine stack overflows (which recover() cannot
+// catch and which would kill every honeypot on the node). The depth used here is safely
+// small; the guard, not the stack, must reject it.
+func TestDecodeRejectsDeepNesting(t *testing.T) {
+	inner := (&bsonBuilder{}).build() // {}
+	for i := 0; i < maxBSONDepth+5; i++ {
+		var b bsonBuilder
+		b.addDoc("a", inner)
+		inner = b.build()
+	}
+	if _, err := decodeDocument(inner); err == nil {
+		t.Fatal("decode over-deep document: err = nil, want error")
+	}
+
+	// A document nested within the cap must still decode cleanly.
+	shallow := (&bsonBuilder{}).build()
+	for i := 0; i < 10; i++ {
+		var b bsonBuilder
+		b.addDoc("a", shallow)
+		shallow = b.build()
+	}
+	if _, err := decodeDocument(shallow); err != nil {
+		t.Fatalf("decode within-cap document: %v", err)
+	}
+}

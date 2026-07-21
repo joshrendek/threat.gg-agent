@@ -14,9 +14,12 @@ const (
 
 const (
 	headerLen = 16
-	// maxMessageLen bounds a single wire message so a malicious length prefix cannot
-	// drive an unbounded allocation. Matches the advertised maxMessageSizeBytes.
-	maxMessageLen = 48 * 1000 * 1000
+	// maxMessageLen bounds a single accepted wire message so a hostile 4-byte length
+	// prefix cannot drive a large up-front allocation pinned across a stalled connection.
+	// A honeypot never needs to accept large messages (real handshakes are well under a
+	// KB), so this is intentionally far below the advertised maxMessageSizeBytes — the
+	// value we *claim* to support (commands.go) and the value we *accept* are independent.
+	maxMessageLen = 1 << 20 // 1 MiB
 )
 
 var errWire = errors.New("malformed mongo wire message")

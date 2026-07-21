@@ -93,6 +93,14 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	}
 
 	sess := &session{guid: uuid.NewV4().String(), remoteIP: host}
+	// Backstop: a slice-bounds bug in future wire/BSON parsing must not take down every
+	// honeypot on the node. Registered before persistSession so it also covers a panic
+	// during persistence. (This does NOT cover stack overflow — the BSON depth cap does.)
+	defer func() {
+		if r := recover(); r != nil {
+			h.logger.Error().Interface("panic", r).Str("session", sess.guid).Msg("recovered panic in mongo handler")
+		}
+	}()
 	defer h.persistSession(sess)
 
 	h.logger.Info().Str("session", sess.guid).Str("remote", host).Msg("new connection")
@@ -154,7 +162,7 @@ func (h *honeypot) dispatch(header msgHeader, payload []byte, sess *session) ([]
 		}
 		cmdName := doc.firstKey()
 		ns := ""
-		if db, ok := doc.lookup("$db"); ok {
+		if db, ok := doc.lookup("$db"); ok && db.Type == bsonTypeString {
 			ns = db.str
 		}
 		h.observe(sess, cmdName, ns, doc)

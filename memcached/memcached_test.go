@@ -2,6 +2,8 @@ package memcached
 
 import (
 	"bufio"
+	"bytes"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -164,6 +166,34 @@ func TestMemcachedPersistsConnect(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// countingReader records how many bytes were pulled from the underlying stream.
+type countingReader struct {
+	r io.Reader
+	n int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
+}
+
+// TestReadLineRejectsOverlongLine is the regression for unbounded line buffering: a long
+// newline-free flood must be rejected at the buffer bound, not accumulated. bufio's size
+// alone does NOT bound ReadString, so this asserts on bytes actually consumed.
+func TestReadLineRejectsOverlongLine(t *testing.T) {
+	flood := bytes.Repeat([]byte{'A'}, maxLineLen*8)
+	cr := &countingReader{r: bytes.NewReader(flood)}
+	reader := bufio.NewReaderSize(cr, maxLineLen)
+
+	if _, err := readLine(reader); err == nil {
+		t.Fatal("readLine(overlong flood): err = nil, want an overlong-line error")
+	}
+	if cr.n > maxLineLen {
+		t.Fatalf("readLine consumed %d bytes, want <= %d (it must not buffer the whole flood)", cr.n, maxLineLen)
+	}
 }
 
 func waitFor(t *testing.T, cond func() bool) {

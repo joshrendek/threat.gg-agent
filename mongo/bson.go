@@ -151,9 +151,22 @@ func (d bsonDocument) firstKey() string {
 
 var errBSON = errors.New("malformed bson")
 
+// maxBSONDepth bounds document nesting. Matches MongoDB's own limit and, crucially, stops
+// a maliciously deep document (reachable unauthenticated over the wire) from recursing
+// until the goroutine stack overflows — an uncatchable fatal error that would take down
+// every honeypot on the node.
+const maxBSONDepth = 100
+
 // decodeDocument parses a complete BSON document. It validates the declared length and
 // every field's bounds so attacker-supplied data can't drive an over-read or panic.
 func decodeDocument(data []byte) (bsonDocument, error) {
+	return decodeDocumentDepth(data, 0)
+}
+
+func decodeDocumentDepth(data []byte, depth int) (bsonDocument, error) {
+	if depth > maxBSONDepth {
+		return nil, errBSON
+	}
 	if len(data) < 5 {
 		return nil, errBSON
 	}
@@ -177,7 +190,7 @@ func decodeDocument(data []byte) (bsonDocument, error) {
 		}
 		pos += n
 
-		val, consumed, err := decodeValue(etype, body[pos:])
+		val, consumed, err := decodeValue(etype, body[pos:], depth)
 		if err != nil {
 			return nil, err
 		}
@@ -196,7 +209,7 @@ func readCString(b []byte) (string, int, error) {
 	return "", 0, errBSON
 }
 
-func decodeValue(etype byte, b []byte) (bsonValue, int, error) {
+func decodeValue(etype byte, b []byte, depth int) (bsonValue, int, error) {
 	switch etype {
 	case bsonTypeDouble:
 		if len(b) < 8 {
@@ -221,7 +234,7 @@ func decodeValue(etype byte, b []byte) (bsonValue, int, error) {
 		if dlen < 5 || dlen > len(b) {
 			return bsonValue{}, 0, errBSON
 		}
-		sub, err := decodeDocument(b[:dlen])
+		sub, err := decodeDocumentDepth(b[:dlen], depth+1)
 		if err != nil {
 			return bsonValue{}, 0, err
 		}

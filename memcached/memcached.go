@@ -2,6 +2,7 @@ package memcached
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -83,6 +84,13 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	}
 
 	guid := uuid.NewV4().String()
+	// Backstop: a future slice-bounds bug in command/data-block handling must not take
+	// down every honeypot on the node.
+	defer func() {
+		if r := recover(); r != nil {
+			h.logger.Error().Interface("panic", r).Str("session", guid).Msg("recovered panic in memcached handler")
+		}
+	}()
 	h.logger.Info().Str("session", guid).Str("remote", host).Msg("new connection")
 
 	// A bare TCP connection to :11211 is itself a signal (memcached amplification
@@ -150,16 +158,23 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	h.logger.Info().Str("session", guid).Msg("session ended")
 }
 
-// readLine reads one CRLF/LF-terminated command line, rejecting an overlong line.
+// errLineTooLong signals a command line with no newline within the bounded buffer.
+var errLineTooLong = errors.New("memcached: command line exceeds buffer")
+
+// readLine reads one newline-terminated command line. It uses ReadSlice, which is bounded
+// by the bufio buffer (sized to maxLineLen), so a newline-free flood is rejected at the
+// buffer bound rather than accumulated in memory (ReadString would buffer the whole
+// stream first). The returned slice is copied into a string before the next read, so the
+// caller may retain it safely.
 func readLine(reader *bufio.Reader) (string, error) {
-	line, err := reader.ReadString('\n')
+	line, err := reader.ReadSlice('\n')
 	if err != nil {
+		if err == bufio.ErrBufferFull {
+			return "", errLineTooLong
+		}
 		return "", err
 	}
-	if len(line) > maxLineLen {
-		return "", io.ErrShortBuffer
-	}
-	return line, nil
+	return string(line), nil
 }
 
 // drainDataBlock consumes the n-byte payload plus its trailing CRLF that follows a
