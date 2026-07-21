@@ -10,6 +10,20 @@ import (
 	"github.com/joshrendek/threat.gg-agent/proto"
 )
 
+func TestResolvePortDefault(t *testing.T) {
+	if port := resolvePort(); port != defaultPort {
+		t.Fatalf("expected default port %q, got %q", defaultPort, port)
+	}
+}
+
+func TestResolvePortOverride(t *testing.T) {
+	t.Setenv("ELASTICSEARCH_HONEYPOT_PORT", "19200")
+
+	if port := resolvePort(); port != "19200" {
+		t.Fatalf("expected overridden port %q, got %q", "19200", port)
+	}
+}
+
 func TestServeHTTPPersistsMethodAndPathBeforeOverride(t *testing.T) {
 	originalSave := saveElasticRequest
 	originalLookup := cmdresp.GetCommandResponse

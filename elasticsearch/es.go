@@ -18,6 +18,8 @@ import (
 	"github.com/satori/go.uuid"
 )
 
+const defaultPort = "9200"
+
 const resp = `{
   "name": "Y6xYwin",
   "cluster_name": "elasticsearch",
@@ -95,6 +97,15 @@ func (h *honeypot) Name() string {
 	return "elasticsearch"
 }
 
+func resolvePort() string {
+	port := os.Getenv("ELASTICSEARCH_HONEYPOT_PORT")
+	if port == "" {
+		port = defaultPort
+	}
+	return port
+}
+
 func (h *honeypot) Start() {
-	h.logger.Fatal().Err(http.ListenAndServe(":9200", &ES{logger: h.logger})).Msg("failed to start")
+	port := resolvePort()
+	h.logger.Fatal().Err(http.ListenAndServe(":"+port, &ES{logger: h.logger})).Msg("failed to start")
 }
