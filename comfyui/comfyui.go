@@ -56,7 +56,7 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 		},
 		"devices": []map[string]any{{
 			"name": "cuda:0 NVIDIA GeForce RTX 4090", "type": "cuda",
-			"vram_total": 25757220864, "vram_free": 24000000000,
+			"vram_total": int64(25757220864), "vram_free": int64(24000000000),
 		}},
 	})
 }

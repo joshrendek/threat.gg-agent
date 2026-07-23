@@ -84,13 +84,13 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 		"models": []map[string]any{
 			{
 				"name": "llama3.2:latest", "model": "llama3.2:latest",
-				"modified_at": "2026-06-01T12:00:00Z", "size": 2019393189,
+				"modified_at": "2026-06-01T12:00:00Z", "size": int64(2019393189),
 				"digest":  "a80c4f17acd55265feb1f6c8f10a0b2b6b6c7f8a9b0c1d2e3f4a5b6c7d8e9f0a1",
 				"details": map[string]any{"family": "llama", "parameter_size": "3.2B", "quantization_level": "Q4_K_M"},
 			},
 			{
 				"name": "mistral:latest", "model": "mistral:latest",
-				"modified_at": "2026-05-15T09:30:00Z", "size": 4113301824,
+				"modified_at": "2026-05-15T09:30:00Z", "size": int64(4113301824),
 				"digest":  "61e88e884507ba5e06c49b40e6226884b2a16e872382c2b44a42f2d119d804a5",
 				"details": map[string]any{"family": "llama", "parameter_size": "7B", "quantization_level": "Q4_0"},
 			},
