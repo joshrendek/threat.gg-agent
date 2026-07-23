@@ -181,6 +181,42 @@ func SaveEtcdRequest(in *proto.EtcdRequest) error {
 	return err
 }
 
+func SaveVllmRequest(in *proto.LlmRequest) error {
+	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	_, err := honeypotClient.SaveVllm(ctx, in)
+	return err
+}
+
+func SaveOllamaRequest(in *proto.LlmRequest) error {
+	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	_, err := honeypotClient.SaveOllama(ctx, in)
+	return err
+}
+
+func SaveRayRequest(in *proto.LlmRequest) error {
+	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	_, err := honeypotClient.SaveRay(ctx, in)
+	return err
+}
+
+func SaveLocalaiRequest(in *proto.LlmRequest) error {
+	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	_, err := honeypotClient.SaveLocalai(ctx, in)
+	return err
+}
+
+func SaveLlamacppRequest(in *proto.LlmRequest) error {
+	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	_, err := honeypotClient.SaveLlamacpp(ctx, in)
+	return err
+}
+
+func SaveComfyuiRequest(in *proto.LlmRequest) error {
+	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	_, err := honeypotClient.SaveComfyui(ctx, in)
+	return err
+}
+
 func SaveSmbConnect(in *proto.SmbRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
