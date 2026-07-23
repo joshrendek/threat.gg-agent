@@ -45,6 +45,12 @@ service Honeypot {
   rpc SaveJenkinsRequest(JenkinsRequest) returns (SaveReply) {}
   rpc SaveSmtpLogin(SmtpLoginRequest) returns (SaveReply) {}
   rpc SaveSmtpEmail(SmtpEmailRequest) returns (SaveReply) {}
+  rpc SaveVllm(LlmRequest) returns (SaveReply) {}
+  rpc SaveOllama(LlmRequest) returns (SaveReply) {}
+  rpc SaveRay(LlmRequest) returns (SaveReply) {}
+  rpc SaveLocalai(LlmRequest) returns (SaveReply) {}
+  rpc SaveLlamacpp(LlmRequest) returns (SaveReply) {}
+  rpc SaveComfyui(LlmRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -53,7 +59,7 @@ message SaveReply {
 
 message CommandRequest {
   string Command = 1;
-  string CommandType = 2; // honeypot protocol for the response lookup; empty means ssh for backward compatibility
+  string CommandType = 2; // honeypot protocol for the response lookup, e.g. "ssh"|"telnet"|"redis"|"postgres"; empty ⇒ "ssh" (back-compat)
 }
 
 message PostgresRequest {
@@ -77,7 +83,7 @@ message QueryRequest {
 
 message CommandResponse {
   string Response = 1;
-  bool Matched = 2; // true when an authored row exists, including an intentionally empty response
+  bool Matched = 2; // true = an authored row was found (even if Response is empty)
 }
 
 message FtpRequest {
@@ -98,6 +104,17 @@ message ElasticsearchRequest {
   string guid = 8;
   string hostname = 9;
   string user_agent = 10;
+}
+
+message LlmRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  map<string,string> headers = 3;
+  string path = 4;
+  string method = 5;
+  string body = 6;
+  string model = 7;
+  string user_agent = 8;
 }
 
 message HttpRequest {
