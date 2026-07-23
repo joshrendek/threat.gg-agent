@@ -18,6 +18,8 @@ import (
   "time"
 )
 
+const defaultPort = "6443"
+
 var _ honeypots.Honeypot = &honeypot{}
 
 type honeypot struct {
@@ -33,7 +35,16 @@ func (h *honeypot) Name() string {
 	return "kubernetes"
 }
 
+func resolvePort() string {
+	port := os.Getenv("KUBERNETES_HONEYPOT_PORT")
+	if port == "" {
+		port = defaultPort
+	}
+	return port
+}
+
 func (h *honeypot) Start() {
+	port := resolvePort()
 	fmt.Println("----------- START K8s")
 	router := mux.NewRouter()
 	router.Use(h.LoggingMiddleware)
@@ -93,13 +104,13 @@ func (h *honeypot) Start() {
 
 	// Create a custom server to use TLS
 	server := &http.Server{
-		Addr:      ":6443",
+		Addr:      ":" + port,
 		Handler:   router,
 		TLSConfig: tlsConfig,
 	}
 
 	// Start the server
-	fmt.Println("Starting mock Kubernetes API server on :6443")
+	fmt.Println("Starting mock Kubernetes API server on :" + port)
 	h.logger.Fatal().Err(server.ListenAndServeTLS("", "")).Msg("failed to start k8s")
 }
 

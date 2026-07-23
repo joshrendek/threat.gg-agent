@@ -15,6 +15,8 @@ import (
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
 	"github.com/joshrendek/threat.gg-agent/llamacpp"
 	"github.com/joshrendek/threat.gg-agent/localai"
+	memcachedhp "github.com/joshrendek/threat.gg-agent/memcached"
+	mongohp "github.com/joshrendek/threat.gg-agent/mongo"
 	"github.com/joshrendek/threat.gg-agent/mqtt"
 	mysqlhp "github.com/joshrendek/threat.gg-agent/mysql"
 	"github.com/joshrendek/threat.gg-agent/ollama"
@@ -117,6 +119,8 @@ func main() {
 	honeypots.Register(vnchp.New())
 	honeypots.Register(smtphp.New())
 	honeypots.Register(jenkins.New())
+	honeypots.Register(mongohp.New())
+	honeypots.Register(memcachedhp.New())
 	honeypots.Register(vllm.New())
 	honeypots.Register(ollama.New())
 	honeypots.Register(rayhp.New())
