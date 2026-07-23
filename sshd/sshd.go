@@ -2,6 +2,7 @@ package sshd
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -36,6 +37,10 @@ import (
 const DEFAULT_SHELL = "bash"
 
 const maxExecCommandLen = 64 * 1024
+
+// maxScpUploadBytes caps how large an SCP-pushed file we'll buffer in memory and ship
+// to the server's file pipeline; matches the server's MaxDownloadBytes guard (64 MiB).
+const maxScpUploadBytes = 64 << 20
 
 func parseExecCommand(payload []byte) (string, error) {
 	if len(payload) < 4 {
@@ -351,10 +356,26 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							}
 							writer := bufio.NewWriter(tmpFile)
 							bytesRead := 0
+							// Only buffer the upload in memory when it's within the size guard, so a
+							// bogus/huge size claim can't make us hold a giant buffer (we still have
+							// to read+discard the bytes off the wire either way to stay in protocol).
+							captureUpload := tmpFileBytes > 0 && tmpFileBytes <= maxScpUploadBytes
+							var fileBuf bytes.Buffer
+							if captureUpload {
+								fileBuf.Grow(tmpFileBytes)
+							}
 							for i := 0; i <= tmpFileBytes; i++ {
 								t, _ := b.ReadByte()
 								bytesRead++
 								writer.WriteByte(t)
+								// SCP sends exactly tmpFileBytes content bytes followed by a single
+								// trailing status/null byte, and this loop's `<=` reads tmpFileBytes+1
+								// bytes total to consume both. Only i < tmpFileBytes is real file
+								// content — the final iteration (i == tmpFileBytes) is the trailing
+								// byte, so it must not be shipped as part of the file.
+								if captureUpload && i < tmpFileBytes {
+									fileBuf.WriteByte(t)
+								}
 							}
 							fmt.Println("->>>>>>>>>>>>>>> Wrote to: ", tmpFile.Name())
 
@@ -366,6 +387,18 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 								Int("size-parsed", tmpFileBytes).
 								Int("actual-size", bytesRead).
 								Msg("received file")
+
+							if captureUpload && fileBuf.Len() > 0 {
+								fileData := fileBuf.Bytes()
+								guid := perms.Extensions["guid"]
+								go func(data []byte, filename, guid string) {
+									if err := persistence.SaveFile(data, filename, guid, "scp"); err != nil {
+										h.logger.Error().Err(err).Str("filename", filename).Msg("error shipping scp file upload to server")
+									}
+								}(fileData, tmpFileName, guid)
+							} else if tmpFileBytes > maxScpUploadBytes {
+								h.logger.Warn().Int("size", tmpFileBytes).Str("filename", tmpFileName).Msg("scp upload exceeds size guard, not shipping to server")
+							}
 							//spew.Dump("file contents: ", fileTransfer)
 						}
 						//spew.Dump(b.String())

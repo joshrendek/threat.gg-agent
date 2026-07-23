@@ -162,6 +162,7 @@ const (
 	Honeypot_SaveJenkinsRequest_FullMethodName   = "/honeypot.Honeypot/SaveJenkinsRequest"
 	Honeypot_SaveSmtpLogin_FullMethodName        = "/honeypot.Honeypot/SaveSmtpLogin"
 	Honeypot_SaveSmtpEmail_FullMethodName        = "/honeypot.Honeypot/SaveSmtpEmail"
+	Honeypot_SaveFile_FullMethodName             = "/honeypot.Honeypot/SaveFile"
 )
 
 // HoneypotClient is the client API for Honeypot service.
@@ -203,6 +204,7 @@ type HoneypotClient interface {
 	SaveJenkinsRequest(ctx context.Context, in *JenkinsRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveSmtpLogin(ctx context.Context, in *SmtpLoginRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveSmtpEmail(ctx context.Context, in *SmtpEmailRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveFile(ctx context.Context, in *FileUploadRequest, opts ...grpc.CallOption) (*SaveReply, error)
 }
 
 type honeypotClient struct {
@@ -563,6 +565,16 @@ func (c *honeypotClient) SaveSmtpEmail(ctx context.Context, in *SmtpEmailRequest
 	return out, nil
 }
 
+func (c *honeypotClient) SaveFile(ctx context.Context, in *FileUploadRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoneypotServer is the server API for Honeypot service.
 // All implementations must embed UnimplementedHoneypotServer
 // for forward compatibility.
@@ -602,6 +614,7 @@ type HoneypotServer interface {
 	SaveJenkinsRequest(context.Context, *JenkinsRequest) (*SaveReply, error)
 	SaveSmtpLogin(context.Context, *SmtpLoginRequest) (*SaveReply, error)
 	SaveSmtpEmail(context.Context, *SmtpEmailRequest) (*SaveReply, error)
+	SaveFile(context.Context, *FileUploadRequest) (*SaveReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
 
@@ -716,6 +729,9 @@ func (UnimplementedHoneypotServer) SaveSmtpLogin(context.Context, *SmtpLoginRequ
 }
 func (UnimplementedHoneypotServer) SaveSmtpEmail(context.Context, *SmtpEmailRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveSmtpEmail not implemented")
+}
+func (UnimplementedHoneypotServer) SaveFile(context.Context, *FileUploadRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveFile not implemented")
 }
 func (UnimplementedHoneypotServer) mustEmbedUnimplementedHoneypotServer() {}
 func (UnimplementedHoneypotServer) testEmbeddedByValue()                  {}
@@ -1368,6 +1384,24 @@ func _Honeypot_SaveSmtpEmail_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FileUploadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveFile(ctx, req.(*FileUploadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Honeypot_ServiceDesc is the grpc.ServiceDesc for Honeypot service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1514,6 +1548,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveSmtpEmail",
 			Handler:    _Honeypot_SaveSmtpEmail_Handler,
+		},
+		{
+			MethodName: "SaveFile",
+			Handler:    _Honeypot_SaveFile_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

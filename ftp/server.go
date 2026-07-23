@@ -14,9 +14,14 @@ import (
 	"time"
 
 	"github.com/joshrendek/threat.gg-agent/cmdresp"
+	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/rs/zerolog"
 	uuid "github.com/satori/go.uuid"
 )
+
+// maxFtpUploadBytes caps how large an FTP STOR upload we'll read back and ship to the
+// server's file pipeline; matches the server's MaxDownloadBytes guard (64 MiB).
+const maxFtpUploadBytes = 64 << 20
 
 const (
 	storageDir = "uploads"
@@ -125,8 +130,7 @@ func handleCommand(input string, ch *ConnectionConfig, user *AuthUser, c net.Con
 	case cmd == "STOR":
 		ch.Filename = stripDirectory(args)
 		readPortData(ch, user.username, c)
-		// Don't upload for now
-		//go uploadData(user, getFileName(user.username, ch.Filename))
+		go shipFtpUpload(user.guid, user.username, ch.Filename, logger)
 		return TxfrCompleteOk, nil
 	case cmd == "FEAT":
 		return FeatResponse, nil
@@ -179,6 +183,29 @@ func uploadData(user *AuthUser, filePath string) {
 
 func getFileName(username, filename string) string {
 	return path.Join(storageDir, username, filename)
+}
+
+// shipFtpUpload reads back the file readPortData already wrote to disk and ships it to
+// the server's file pipeline via SaveFile. Intended to be called with `go`, so a slow or
+// unreachable server can never block the attacker's FTP session; failures are logged,
+// never panicked.
+func shipFtpUpload(guid, username, filename string, logger zerolog.Logger) {
+	outputName := getFileName(username, filename)
+	data, err := os.ReadFile(outputName)
+	if err != nil {
+		logger.Error().Err(err).Str("filename", filename).Msg("error reading back ftp upload for shipping")
+		return
+	}
+	if len(data) == 0 {
+		return
+	}
+	if len(data) > maxFtpUploadBytes {
+		logger.Warn().Int("size", len(data)).Str("filename", filename).Msg("ftp upload exceeds size guard, not shipping to server")
+		return
+	}
+	if err := persistence.SaveFile(data, filename, guid, "ftp"); err != nil {
+		logger.Error().Err(err).Str("filename", filename).Msg("error shipping ftp upload to server")
+	}
 }
 
 func readPortData(ch *ConnectionConfig, username string, out net.Conn) {

@@ -262,6 +262,15 @@ func SaveJenkinsRequest(in *proto.JenkinsRequest) error {
 	return err
 }
 
+func SaveFile(data []byte, filename, guid, sourceType string) error {
+	ctx := context.Background()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveFile(ctx, &proto.FileUploadRequest{
+		Data: data, Filename: filename, Guid: guid, SourceType: sourceType,
+	})
+	return err
+}
+
 func SaveMongoConnect(in *proto.MongoConnectRequest) error {
 	if honeypotClient == nil {
 		return nil
