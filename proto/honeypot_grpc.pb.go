@@ -162,6 +162,12 @@ const (
 	Honeypot_SaveJenkinsRequest_FullMethodName   = "/honeypot.Honeypot/SaveJenkinsRequest"
 	Honeypot_SaveSmtpLogin_FullMethodName        = "/honeypot.Honeypot/SaveSmtpLogin"
 	Honeypot_SaveSmtpEmail_FullMethodName        = "/honeypot.Honeypot/SaveSmtpEmail"
+	Honeypot_SaveVllm_FullMethodName             = "/honeypot.Honeypot/SaveVllm"
+	Honeypot_SaveOllama_FullMethodName           = "/honeypot.Honeypot/SaveOllama"
+	Honeypot_SaveRay_FullMethodName              = "/honeypot.Honeypot/SaveRay"
+	Honeypot_SaveLocalai_FullMethodName          = "/honeypot.Honeypot/SaveLocalai"
+	Honeypot_SaveLlamacpp_FullMethodName         = "/honeypot.Honeypot/SaveLlamacpp"
+	Honeypot_SaveComfyui_FullMethodName          = "/honeypot.Honeypot/SaveComfyui"
 	Honeypot_SaveFile_FullMethodName             = "/honeypot.Honeypot/SaveFile"
 )
 
@@ -204,6 +210,12 @@ type HoneypotClient interface {
 	SaveJenkinsRequest(ctx context.Context, in *JenkinsRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveSmtpLogin(ctx context.Context, in *SmtpLoginRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveSmtpEmail(ctx context.Context, in *SmtpEmailRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveVllm(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveOllama(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveRay(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveLocalai(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveLlamacpp(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveComfyui(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveFile(ctx context.Context, in *FileUploadRequest, opts ...grpc.CallOption) (*SaveReply, error)
 }
 
@@ -565,6 +577,66 @@ func (c *honeypotClient) SaveSmtpEmail(ctx context.Context, in *SmtpEmailRequest
 	return out, nil
 }
 
+func (c *honeypotClient) SaveVllm(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveVllm_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveOllama(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveOllama_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveRay(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveRay_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveLocalai(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveLocalai_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveLlamacpp(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveLlamacpp_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveComfyui(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveComfyui_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *honeypotClient) SaveFile(ctx context.Context, in *FileUploadRequest, opts ...grpc.CallOption) (*SaveReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SaveReply)
@@ -614,6 +686,12 @@ type HoneypotServer interface {
 	SaveJenkinsRequest(context.Context, *JenkinsRequest) (*SaveReply, error)
 	SaveSmtpLogin(context.Context, *SmtpLoginRequest) (*SaveReply, error)
 	SaveSmtpEmail(context.Context, *SmtpEmailRequest) (*SaveReply, error)
+	SaveVllm(context.Context, *LlmRequest) (*SaveReply, error)
+	SaveOllama(context.Context, *LlmRequest) (*SaveReply, error)
+	SaveRay(context.Context, *LlmRequest) (*SaveReply, error)
+	SaveLocalai(context.Context, *LlmRequest) (*SaveReply, error)
+	SaveLlamacpp(context.Context, *LlmRequest) (*SaveReply, error)
+	SaveComfyui(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveFile(context.Context, *FileUploadRequest) (*SaveReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
@@ -729,6 +807,24 @@ func (UnimplementedHoneypotServer) SaveSmtpLogin(context.Context, *SmtpLoginRequ
 }
 func (UnimplementedHoneypotServer) SaveSmtpEmail(context.Context, *SmtpEmailRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveSmtpEmail not implemented")
+}
+func (UnimplementedHoneypotServer) SaveVllm(context.Context, *LlmRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveVllm not implemented")
+}
+func (UnimplementedHoneypotServer) SaveOllama(context.Context, *LlmRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveOllama not implemented")
+}
+func (UnimplementedHoneypotServer) SaveRay(context.Context, *LlmRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveRay not implemented")
+}
+func (UnimplementedHoneypotServer) SaveLocalai(context.Context, *LlmRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveLocalai not implemented")
+}
+func (UnimplementedHoneypotServer) SaveLlamacpp(context.Context, *LlmRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveLlamacpp not implemented")
+}
+func (UnimplementedHoneypotServer) SaveComfyui(context.Context, *LlmRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveComfyui not implemented")
 }
 func (UnimplementedHoneypotServer) SaveFile(context.Context, *FileUploadRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveFile not implemented")
@@ -1384,6 +1480,114 @@ func _Honeypot_SaveSmtpEmail_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveVllm_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LlmRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveVllm(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveVllm_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveVllm(ctx, req.(*LlmRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveOllama_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LlmRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveOllama(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveOllama_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveOllama(ctx, req.(*LlmRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveRay_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LlmRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveRay(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveRay_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveRay(ctx, req.(*LlmRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveLocalai_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LlmRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveLocalai(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveLocalai_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveLocalai(ctx, req.(*LlmRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveLlamacpp_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LlmRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveLlamacpp(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveLlamacpp_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveLlamacpp(ctx, req.(*LlmRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveComfyui_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LlmRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveComfyui(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveComfyui_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveComfyui(ctx, req.(*LlmRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Honeypot_SaveFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FileUploadRequest)
 	if err := dec(in); err != nil {
@@ -1548,6 +1752,30 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveSmtpEmail",
 			Handler:    _Honeypot_SaveSmtpEmail_Handler,
+		},
+		{
+			MethodName: "SaveVllm",
+			Handler:    _Honeypot_SaveVllm_Handler,
+		},
+		{
+			MethodName: "SaveOllama",
+			Handler:    _Honeypot_SaveOllama_Handler,
+		},
+		{
+			MethodName: "SaveRay",
+			Handler:    _Honeypot_SaveRay_Handler,
+		},
+		{
+			MethodName: "SaveLocalai",
+			Handler:    _Honeypot_SaveLocalai_Handler,
+		},
+		{
+			MethodName: "SaveLlamacpp",
+			Handler:    _Honeypot_SaveLlamacpp_Handler,
+		},
+		{
+			MethodName: "SaveComfyui",
+			Handler:    _Honeypot_SaveComfyui_Handler,
 		},
 		{
 			MethodName: "SaveFile",

@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"github.com/jellydator/ttlcache/v3"
+	comfyuihp "github.com/joshrendek/threat.gg-agent/comfyui"
 	dockerhp "github.com/joshrendek/threat.gg-agent/docker"
 	"github.com/joshrendek/threat.gg-agent/elasticsearch"
 	etcdhp "github.com/joshrendek/threat.gg-agent/etcd"
@@ -12,13 +13,17 @@ import (
 	"github.com/joshrendek/threat.gg-agent/kafka"
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
+	"github.com/joshrendek/threat.gg-agent/llamacpp"
+	"github.com/joshrendek/threat.gg-agent/localai"
 	memcachedhp "github.com/joshrendek/threat.gg-agent/memcached"
 	mongohp "github.com/joshrendek/threat.gg-agent/mongo"
 	"github.com/joshrendek/threat.gg-agent/mqtt"
 	mysqlhp "github.com/joshrendek/threat.gg-agent/mysql"
+	"github.com/joshrendek/threat.gg-agent/ollama"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/postgres"
+	rayhp "github.com/joshrendek/threat.gg-agent/ray"
 	rdphp "github.com/joshrendek/threat.gg-agent/rdp"
 	redishp "github.com/joshrendek/threat.gg-agent/redis"
 	smbhp "github.com/joshrendek/threat.gg-agent/smb"
@@ -26,6 +31,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/sshd"
 	telnethp "github.com/joshrendek/threat.gg-agent/telnet"
 	"github.com/joshrendek/threat.gg-agent/updater"
+	"github.com/joshrendek/threat.gg-agent/vllm"
 	vnchp "github.com/joshrendek/threat.gg-agent/vnc"
 	"github.com/rs/zerolog/log"
 	"net/http"
@@ -115,6 +121,12 @@ func main() {
 	honeypots.Register(jenkins.New())
 	honeypots.Register(mongohp.New())
 	honeypots.Register(memcachedhp.New())
+	honeypots.Register(vllm.New())
+	honeypots.Register(ollama.New())
+	honeypots.Register(rayhp.New())
+	honeypots.Register(localai.New())
+	honeypots.Register(llamacpp.New())
+	honeypots.Register(comfyuihp.New())
 	honeypots.StartHoneypots()
 
 	<-wait
