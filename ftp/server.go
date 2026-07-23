@@ -191,16 +191,27 @@ func getFileName(username, filename string) string {
 // never panicked.
 func shipFtpUpload(guid, username, filename string, logger zerolog.Logger) {
 	outputName := getFileName(username, filename)
+
+	// Stat before read: readPortData streams the attacker-controlled upload to disk with
+	// no byte cap, so we must bound memory BEFORE loading it, not after. Loading the whole
+	// file into RAM first (the old order) lets a multi-GB STOR OOM the node even though the
+	// size guard below exists.
+	info, err := os.Stat(outputName)
+	if err != nil {
+		logger.Error().Err(err).Str("filename", filename).Msg("error stat'ing ftp upload for shipping")
+		return
+	}
+	if info.Size() == 0 {
+		return
+	}
+	if info.Size() > maxFtpUploadBytes {
+		logger.Warn().Int64("size", info.Size()).Str("filename", filename).Msg("ftp upload exceeds size guard, not shipping to server")
+		return
+	}
+
 	data, err := os.ReadFile(outputName)
 	if err != nil {
 		logger.Error().Err(err).Str("filename", filename).Msg("error reading back ftp upload for shipping")
-		return
-	}
-	if len(data) == 0 {
-		return
-	}
-	if len(data) > maxFtpUploadBytes {
-		logger.Warn().Int("size", len(data)).Str("filename", filename).Msg("ftp upload exceeds size guard, not shipping to server")
 		return
 	}
 	if err := persistence.SaveFile(data, filename, guid, "ftp"); err != nil {

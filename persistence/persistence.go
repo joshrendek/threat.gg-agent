@@ -263,7 +263,11 @@ func SaveJenkinsRequest(in *proto.JenkinsRequest) error {
 }
 
 func SaveFile(data []byte, filename, guid, sourceType string) error {
-	ctx := context.Background()
+	// Bound the call with saveTimeout so a hung/unreachable server can't pin an in-flight
+	// goroutine (and the up-to-64MiB buffer it's holding) indefinitely; an upload flood
+	// during an outage would otherwise accumulate memory without limit.
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveFile(ctx, &proto.FileUploadRequest{
 		Data: data, Filename: filename, Guid: guid, SourceType: sourceType,

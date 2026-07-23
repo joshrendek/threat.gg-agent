@@ -364,8 +364,15 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							if captureUpload {
 								fileBuf.Grow(tmpFileBytes)
 							}
+							shortRead := false
 							for i := 0; i <= tmpFileBytes; i++ {
-								t, _ := b.ReadByte()
+								t, err := b.ReadByte()
+								if err != nil {
+									h.logger.Warn().Err(err).Str("filename", tmpFileName).
+										Msg("scp: short read, not shipping partial capture")
+									shortRead = true
+									break
+								}
 								bytesRead++
 								writer.WriteByte(t)
 								// SCP sends exactly tmpFileBytes content bytes followed by a single
@@ -388,7 +395,14 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 								Int("actual-size", bytesRead).
 								Msg("received file")
 
-							if captureUpload && fileBuf.Len() > 0 {
+							// A mid-transfer disconnect/read error must never ship a zero-padded
+							// capture — the trailing bytes we didn't actually read would be silent
+							// zeros, so the shipped file's sha256 wouldn't match anything the
+							// attacker sent. Only ship when the full tmpFileBytes content was read
+							// cleanly.
+							if shortRead {
+								// already logged above; nothing to ship.
+							} else if captureUpload && fileBuf.Len() > 0 {
 								fileData := fileBuf.Bytes()
 								guid := perms.Extensions["guid"]
 								go func(data []byte, filename, guid string) {
