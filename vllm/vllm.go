@@ -20,6 +20,8 @@ const (
 	serverHeader = "uvicorn"
 )
 
+var modelsCreated = time.Now().Unix()
+
 var _ honeypots.Honeypot = &honeypot{}
 var saveVllmRequest = persistence.SaveVllmRequest
 
@@ -38,9 +40,15 @@ func (h *honeypot) Start() {
 	if port == "" {
 		port = defaultPort
 	}
-	handler := llmcore.Capture(saveVllmRequest)(cmdresp.MuxMiddleware("vllm")(newRouter()))
 	h.logger.Info().Str("port", port).Msg("starting vllm honeypot")
-	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), handler)).Msg("failed to start")
+	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), buildHandler())).Msg("failed to start")
+}
+
+// buildHandler composes the full middleware chain. identityHeaders wraps the cmdresp
+// override so the Server header is stamped even when an admin-authored response
+// short-circuits the router (matches the jenkins honeypot's override-safe ordering).
+func buildHandler() http.Handler {
+	return llmcore.Capture(saveVllmRequest)(identityHeaders(cmdresp.MuxMiddleware("vllm")(newRouter())))
 }
 
 // identityHeaders stamps the vLLM server identity on every response.
@@ -63,11 +71,11 @@ func newRouter() http.Handler {
 	r.HandleFunc("/health", handleHealth).Methods("GET")
 	r.HandleFunc("/version", handleVersion).Methods("GET")
 	r.PathPrefix("/").HandlerFunc(handleCatchAll)
-	return identityHeaders(r)
+	return r
 }
 
 func handleModels(w http.ResponseWriter, r *http.Request) {
-	created := time.Now().Unix()
+	created := modelsCreated
 	llmcore.WriteJSON(w, http.StatusOK, map[string]any{
 		"object": "list",
 		"data": []map[string]any{{
