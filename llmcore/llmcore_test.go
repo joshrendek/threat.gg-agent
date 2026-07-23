@@ -1,6 +1,7 @@
 package llmcore
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -83,5 +84,39 @@ func TestParseModel(t *testing.T) {
 	}
 	if m := ParseModel([]byte(`not json`)); m != "" {
 		t.Fatalf("ParseModel(bad) = %q, want empty", m)
+	}
+}
+
+type errAfterDataReader struct {
+	data []byte
+	done bool
+}
+
+func (e *errAfterDataReader) Read(p []byte) (int, error) {
+	if e.done {
+		return 0, errors.New("boom")
+	}
+	e.done = true
+	n := copy(p, e.data)
+	return n, errors.New("boom") // returns data + error together
+}
+
+func TestCaptureRestoresBodyEvenOnReadError(t *testing.T) {
+	saved := make(chan *proto.LlmRequest, 1)
+	save := func(in *proto.LlmRequest) error { saved <- in; return nil }
+	got := ""
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/completions", &errAfterDataReader{data: []byte(`{"model":"m"}`)})
+	Capture(save)(next).ServeHTTP(httptest.NewRecorder(), req)
+	rec := <-saved
+	if rec.Body != `{"model":"m"}` {
+		t.Fatalf("captured body = %q, want restored partial", rec.Body)
+	}
+	if got != `{"model":"m"}` {
+		t.Fatalf("downstream body = %q, want restored partial", got)
 	}
 }

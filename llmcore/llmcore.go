@@ -53,16 +53,15 @@ func captureAndSave(r *http.Request, save func(*proto.LlmRequest) error) {
 
 	var body string
 	if r.Body != nil {
-		data, err := io.ReadAll(io.LimitReader(r.Body, MaxBodySize+1))
+		data, _ := io.ReadAll(io.LimitReader(r.Body, MaxBodySize+1))
 		_ = r.Body.Close()
-		if err == nil {
-			captured := data
-			if len(captured) > MaxBodySize {
-				captured = captured[:MaxBodySize]
-			}
-			body = string(captured)
-			r.Body = io.NopCloser(bytes.NewReader(data))
+		captured := data
+		if len(captured) > MaxBodySize {
+			captured = captured[:MaxBodySize]
 		}
+		body = string(captured)
+		// Restore the body (even after a partial/errored read) so downstream can re-read it.
+		r.Body = io.NopCloser(bytes.NewReader(data))
 	}
 
 	ip := r.RemoteAddr
