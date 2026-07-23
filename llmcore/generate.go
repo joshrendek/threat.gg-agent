@@ -6,6 +6,9 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	uuid "github.com/satori/go.uuid"
@@ -30,6 +33,82 @@ var replyPool = []string{
 }
 
 func pickReply() string { return replyPool[rand.Intn(len(replyPool))] }
+
+var (
+	// echoRe matches the liveness/echo probes scanners use to confirm an endpoint really runs
+	// a model before abusing it: "say pong", "reply with OK", "repeat after me: X", etc.
+	echoRe = regexp.MustCompile(`(?i)^\s*(?:say|repeat(?:\s+after\s+me)?|reply(?:\s+with)?|respond(?:\s+with)?|output|print|echo)\b[:,\s]+(.+)$`)
+	// arithRe matches trivial arithmetic liveness checks: "what is 2+2", "10 * 3".
+	arithRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s*([-+*/xX])\s*(\d{1,6})\s*=?\s*\??\s*$`)
+)
+
+// smartReply returns a response tuned to pass the liveness/validation probes that scanners run
+// to confirm an exposed LLM endpoint is a real, instruction-following model before they start
+// abusing it. Matching those probes (echo, arithmetic, greeting) makes the honeypot look real,
+// so the attacker escalates to their actual prompts — which we capture. Anything else falls
+// back to the generic pool, which reads as a safety-tuned deflection.
+func smartReply(prompt string) string {
+	p := strings.TrimSpace(prompt)
+	if p == "" {
+		return pickReply()
+	}
+	if m := echoRe.FindStringSubmatch(p); m != nil {
+		if s := cleanEcho(m[1]); s != "" {
+			return s
+		}
+	}
+	if m := arithRe.FindStringSubmatch(p); m != nil {
+		if s, ok := computeArith(m[1], m[2], m[3]); ok {
+			return s
+		}
+	}
+	switch strings.ToLower(strings.Trim(p, " .!?")) {
+	case "hi", "hello", "hey", "yo", "greetings":
+		return "Hello! How can I help you today?"
+	}
+	return pickReply()
+}
+
+// cleanEcho strips wrapping quotes and trailing punctuation from an echo payload and caps its
+// length so a huge "say <...>" can't produce an unbounded reply.
+func cleanEcho(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "\"'`")
+	s = strings.TrimRight(s, " .!?\n\r\t")
+	s = strings.Trim(s, "\"'`")
+	s = strings.TrimSpace(s)
+	if len(s) > 2000 {
+		s = s[:2000]
+	}
+	return s
+}
+
+// computeArith evaluates a trivial two-operand integer expression, returning ("", false) on
+// bad operands or division by zero (so the caller falls back to a generic reply).
+func computeArith(a, op, b string) (string, bool) {
+	x, err1 := strconv.Atoi(a)
+	y, err2 := strconv.Atoi(b)
+	if err1 != nil || err2 != nil {
+		return "", false
+	}
+	var r int
+	switch op {
+	case "+":
+		r = x + y
+	case "-":
+		r = x - y
+	case "*", "x", "X":
+		r = x * y
+	case "/":
+		if y == 0 {
+			return "", false
+		}
+		r = x / y
+	default:
+		return "", false
+	}
+	return strconv.Itoa(r), true
+}
 
 // estTokens is a cheap, plausible token estimate (~4 chars/token, floor 1).
 func estTokens(s string) int {
@@ -87,7 +166,7 @@ func modelOr(body []byte, def string) string {
 func ChatCompletion(w http.ResponseWriter, r *http.Request, defaultModel string) {
 	body := readBody(r)
 	model := modelOr(body, defaultModel)
-	reply := pickReply()
+	reply := smartReply(promptText(body))
 	id := "chatcmpl-" + uuid.NewV4().String()
 	created := time.Now().Unix()
 
@@ -136,7 +215,7 @@ func ChatCompletion(w http.ResponseWriter, r *http.Request, defaultModel string)
 func Completion(w http.ResponseWriter, r *http.Request, defaultModel string) {
 	body := readBody(r)
 	model := modelOr(body, defaultModel)
-	reply := pickReply()
+	reply := smartReply(promptText(body))
 	pt := estTokens(promptText(body))
 	ct := estTokens(reply)
 	WriteJSON(w, http.StatusOK, map[string]any{
@@ -155,7 +234,7 @@ func Completion(w http.ResponseWriter, r *http.Request, defaultModel string) {
 func OllamaGenerate(w http.ResponseWriter, r *http.Request, defaultModel string) {
 	body := readBody(r)
 	model := modelOr(body, defaultModel)
-	reply := pickReply()
+	reply := smartReply(promptText(body))
 	created := time.Now().UTC().Format(time.RFC3339Nano)
 
 	if !wantsStream(body, true) {
@@ -183,7 +262,7 @@ func OllamaGenerate(w http.ResponseWriter, r *http.Request, defaultModel string)
 func OllamaChat(w http.ResponseWriter, r *http.Request, defaultModel string) {
 	body := readBody(r)
 	model := modelOr(body, defaultModel)
-	reply := pickReply()
+	reply := smartReply(promptText(body))
 	created := time.Now().UTC().Format(time.RFC3339Nano)
 	final := func(content string) map[string]any {
 		m := map[string]any{
