@@ -78,6 +78,7 @@ func HTTPOverride(w http.ResponseWriter, r *http.Request, commandType string) bo
 				w.Header().Set(name, value)
 			}
 		}
+		defaultJSONContentType(w, response.Body)
 		status := response.Status
 		if status == 0 {
 			status = http.StatusOK
@@ -86,8 +87,23 @@ func HTTPOverride(w http.ResponseWriter, r *http.Request, commandType string) bo
 		io.WriteString(w, response.Body) //nolint:errcheck
 		return true
 	}
+	defaultJSONContentType(w, body)
 	io.WriteString(w, body) //nolint:errcheck
 	return true
+}
+
+// defaultJSONContentType sets Content-Type to application/json for a JSON-looking authored
+// body when neither the caller nor the authored row already set one. Without it, a JSON body
+// is written with no Content-Type and Go's sniffer labels it text/plain — a fidelity tell for
+// API honeypots (vLLM/Ollama/Elasticsearch/etc.) whose real servers always send
+// application/json. Non-JSON or empty bodies are left for the caller / Go's default handling.
+func defaultJSONContentType(w http.ResponseWriter, body string) {
+	if w.Header().Get("Content-Type") != "" {
+		return
+	}
+	if t := strings.TrimLeft(body, " \t\r\n"); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+		w.Header().Set("Content-Type", "application/json")
+	}
 }
 
 func parseHTTPResponse(value string) (authoredHTTPResponse, bool) {
