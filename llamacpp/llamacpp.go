@@ -11,8 +11,8 @@ import (
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/llmcore"
 	"github.com/joshrendek/threat.gg-agent/persistence"
-	uuid "github.com/satori/go.uuid"
 	"github.com/rs/zerolog"
+	uuid "github.com/satori/go.uuid"
 )
 
 const (
@@ -77,17 +77,17 @@ func handleModels(w http.ResponseWriter, r *http.Request) {
 // handleCompletion is llama.cpp's native (non-OpenAI) /completion endpoint.
 func handleCompletion(w http.ResponseWriter, r *http.Request) {
 	llmcore.WriteJSON(w, http.StatusOK, map[string]any{
-		"content":            " Hello! How can I help you today?",
-		"id_slot":            0,
-		"stop":               true,
-		"model":              defaultModel,
-		"tokens_predicted":   9,
-		"tokens_evaluated":   6,
+		"content":             " Hello! How can I help you today?",
+		"id_slot":             0,
+		"stop":                true,
+		"model":               defaultModel,
+		"tokens_predicted":    9,
+		"tokens_evaluated":    6,
 		"generation_settings": map[string]any{"model": defaultModel, "n_ctx": 4096},
-		"prompt":             "",
-		"stopped_eos":        true,
-		"stopped_word":       false,
-		"stopped_limit":      false,
-		"id":                 uuid.NewV4().String(),
+		"prompt":              "",
+		"stopped_eos":         true,
+		"stopped_word":        false,
+		"stopped_limit":       false,
+		"id":                  uuid.NewV4().String(),
 	})
 }

@@ -188,11 +188,11 @@ func OllamaChat(w http.ResponseWriter, r *http.Request, defaultModel string) {
 	final := func(content string) map[string]any {
 		m := map[string]any{
 			"model": model, "created_at": created,
-			"message":              map[string]any{"role": "assistant", "content": content},
-			"done":                 true,
-			"total_duration":       1234567890,
-			"eval_count":           estTokens(reply),
-			"prompt_eval_count":    estTokens(promptText(body)),
+			"message":           map[string]any{"role": "assistant", "content": content},
+			"done":              true,
+			"total_duration":    1234567890,
+			"eval_count":        estTokens(reply),
+			"prompt_eval_count": estTokens(promptText(body)),
 		}
 		return m
 	}
@@ -222,12 +222,12 @@ func OllamaChat(w http.ResponseWriter, r *http.Request, defaultModel string) {
 func ollamaFinal(model, created, response string) map[string]any {
 	return map[string]any{
 		"model": model, "created_at": created, "response": response, "done": true,
-		"done_reason":          "stop",
-		"total_duration":       1234567890,
-		"load_duration":        123456,
-		"prompt_eval_count":    12,
-		"eval_count":           24,
-		"eval_duration":        987654,
+		"done_reason":       "stop",
+		"total_duration":    1234567890,
+		"load_duration":     123456,
+		"prompt_eval_count": 12,
+		"eval_count":        24,
+		"eval_duration":     987654,
 	}
 }
 
