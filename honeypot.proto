@@ -51,6 +51,7 @@ service Honeypot {
   rpc SaveLocalai(LlmRequest) returns (SaveReply) {}
   rpc SaveLlamacpp(LlmRequest) returns (SaveReply) {}
   rpc SaveComfyui(LlmRequest) returns (SaveReply) {}
+  rpc SaveFile(FileUploadRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -351,6 +352,13 @@ message SmtpEmailRequest {
   repeated string rcpt_to = 3;
   string body = 4;
   string subject = 5;
+}
+
+message FileUploadRequest {
+  bytes data = 1;
+  string filename = 2;
+  string guid = 3;
+  string source_type = 4; // "scp" | "ftp"
 }
 
 message ConnectRequest {
