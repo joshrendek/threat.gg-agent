@@ -52,6 +52,7 @@ service Honeypot {
   rpc SaveLlamacpp(LlmRequest) returns (SaveReply) {}
   rpc SaveComfyui(LlmRequest) returns (SaveReply) {}
   rpc SaveFile(FileUploadRequest) returns (SaveReply) {}
+  rpc SaveMcp(McpRequest) returns (SaveReply) {}
 }
 
 message SaveReply {
@@ -115,6 +116,17 @@ message LlmRequest {
   string method = 5;
   string body = 6;
   string model = 7;
+  string user_agent = 8;
+}
+
+message McpRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  map<string,string> headers = 3;
+  string transport = 4;
+  string rpc_method = 5;
+  string tool = 6;
+  string body = 7;
   string user_agent = 8;
 }
 
