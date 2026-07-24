@@ -15,6 +15,7 @@ import (
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
 	"github.com/joshrendek/threat.gg-agent/llamacpp"
 	"github.com/joshrendek/threat.gg-agent/localai"
+	"github.com/joshrendek/threat.gg-agent/mcp"
 	memcachedhp "github.com/joshrendek/threat.gg-agent/memcached"
 	mongohp "github.com/joshrendek/threat.gg-agent/mongo"
 	"github.com/joshrendek/threat.gg-agent/mqtt"
@@ -127,6 +128,7 @@ func main() {
 	honeypots.Register(localai.New())
 	honeypots.Register(llamacpp.New())
 	honeypots.Register(comfyuihp.New())
+	honeypots.Register(mcp.New())
 	honeypots.StartHoneypots()
 
 	<-wait

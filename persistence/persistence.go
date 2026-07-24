@@ -222,6 +222,12 @@ func SaveComfyuiRequest(in *proto.LlmRequest) error {
 	return err
 }
 
+func SaveMcpRequest(in *proto.McpRequest) error {
+	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	_, err := honeypotClient.SaveMcp(ctx, in)
+	return err
+}
+
 func SaveSmbConnect(in *proto.SmbRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
