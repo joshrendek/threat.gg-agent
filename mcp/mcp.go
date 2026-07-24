@@ -28,6 +28,7 @@ const (
 
 var _ honeypots.Honeypot = &honeypot{}
 var saveMcpRequest = persistence.SaveMcpRequest
+var logger = zerolog.New(os.Stdout).With().Caller().Str("honeypot", "mcp").Logger()
 
 type honeypot struct {
 	logger zerolog.Logger
@@ -52,7 +53,10 @@ func newRouter() http.Handler {
 	r := mux.NewRouter()
 	r.HandleFunc("/mcp", handleRPC("streamable")).Methods(http.MethodPost)
 	r.HandleFunc("/mcp", handleSSE("streamable")).Methods(http.MethodGet)
-	r.HandleFunc("/mcp", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }).Methods(http.MethodDelete)
+	r.HandleFunc("/mcp", func(w http.ResponseWriter, req *http.Request) {
+		capture(req, "streamable", "disconnect", "", nil)
+		w.WriteHeader(http.StatusOK)
+	}).Methods(http.MethodDelete)
 	r.HandleFunc("/messages", handleRPC("sse")).Methods(http.MethodPost)
 	r.HandleFunc("/sse", handleSSE("sse")).Methods(http.MethodGet)
 	r.PathPrefix("/").HandlerFunc(handleCatchAll)
@@ -122,7 +126,13 @@ func capture(r *http.Request, transport, method, tool string, body []byte) {
 	// effect when the request was handled (deterministic under the injectable test seam).
 	save := saveMcpRequest
 	go func(req *proto.McpRequest) {
-		defer func() { _ = recover() }()
-		_ = save(req)
+		defer func() {
+			if rec := recover(); rec != nil {
+				logger.Error().Interface("panic", rec).Msg("panic saving mcp request")
+			}
+		}()
+		if err := save(req); err != nil {
+			logger.Error().Err(err).Msg("error saving mcp request")
+		}
 	}(in)
 }

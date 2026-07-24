@@ -141,3 +141,34 @@ func TestCatchAllNotCaptured(t *testing.T) {
 	case <-time.After(120 * time.Millisecond):
 	}
 }
+
+func TestDeleteMcpCaptured(t *testing.T) {
+	got := make(chan *proto.McpRequest, 1)
+	orig := saveMcpRequest
+	saveMcpRequest = func(in *proto.McpRequest) error { got <- in; return nil }
+	defer func() { saveMcpRequest = orig }()
+	rec := httptest.NewRecorder()
+	newRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/mcp", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE /mcp status = %d, want 200", rec.Code)
+	}
+	select {
+	case in := <-got:
+		if in.RpcMethod != "disconnect" || in.Transport != "streamable" {
+			t.Fatalf("DELETE capture method/transport = %q/%q", in.RpcMethod, in.Transport)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("DELETE /mcp was not captured")
+	}
+}
+
+func TestEmptyMethodInvalidRequest(t *testing.T) {
+	out := result(t, post(t, "/mcp", `{"jsonrpc":"2.0","id":9}`))
+	e, _ := out["error"].(map[string]any)
+	if e == nil || e["code"].(float64) != -32600 {
+		t.Fatalf("empty method should be -32600 Invalid Request, got %v", out)
+	}
+	if out["id"].(float64) != 9 {
+		t.Fatalf("id should be echoed on invalid request, got %v", out["id"])
+	}
+}

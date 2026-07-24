@@ -42,8 +42,12 @@ func writeError(w http.ResponseWriter, id json.RawMessage, code int, msg string)
 // plausible MCP response so the honeypot looks like a real server.
 func dispatch(w http.ResponseWriter, body []byte) {
 	var req rpcRequest
-	if err := json.Unmarshal(body, &req); err != nil || req.Method == "" {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, nil, -32700, "Parse error")
+		return
+	}
+	if req.Method == "" {
+		writeError(w, req.ID, -32600, "Invalid Request")
 		return
 	}
 	switch req.Method {
