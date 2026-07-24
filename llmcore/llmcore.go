@@ -49,6 +49,13 @@ func Capture(save func(*proto.LlmRequest) error) func(http.Handler) http.Handler
 }
 
 func captureAndSave(r *http.Request, save func(*proto.LlmRequest) error) {
+	// Only persist requests that touch a real LLM API surface. Generic internet scanning
+	// (favicon, nmap, proxy CONNECT, Next.js exploits, LFI probes) still gets a response from
+	// the honeypot's handlers, but is not stored — it otherwise drowns the real LLM signal.
+	if !isSignalPath(r.URL.Path) {
+		return
+	}
+
 	guid := uuid.NewV4()
 
 	var body string
