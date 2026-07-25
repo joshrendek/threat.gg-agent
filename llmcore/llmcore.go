@@ -100,11 +100,32 @@ func captureAndSave(r *http.Request, save func(*proto.LlmRequest) error) {
 	}(in)
 }
 
+// writeCompactJSON marshals v with no trailing newline. json.Encoder.Encode appends one,
+// which inflates Content-Length by a byte relative to every real server we emulate (Gin,
+// FastAPI and Fiber all write the marshalled bytes directly) — a free fingerprint.
+//
+// Callers should pass structs with the field order of the product being emulated rather than
+// map[string]any: encoding/json sorts map keys alphabetically, so a map-built body has a key
+// order no real implementation produces.
+func writeCompactJSON(w http.ResponseWriter, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	_, _ = w.Write(b)
+}
+
 // WriteJSON marshals v and writes it with the given status and application/json.
 func WriteJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	WriteJSONCT(w, status, CTJSON, v)
+}
+
+// WriteJSONCT is WriteJSON with an explicit content type, so callers can pick the charset
+// suffix their framework would emit (see the CT* constants).
+func WriteJSONCT(w http.ResponseWriter, status int, contentType string, v any) {
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	writeCompactJSON(w, v)
 }
 
 // WriteError writes an OpenAI-style error envelope: {"error":{"message","type","code"}}.

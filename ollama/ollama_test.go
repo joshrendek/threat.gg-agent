@@ -54,7 +54,15 @@ func TestGenerateNonStreamAndOpenAIAlias(t *testing.T) {
 	}
 }
 
-func TestServerHeaderSurvivesCmdrespOverride(t *testing.T) {
+// TestCORSSurvivesCmdrespOverride pins the middleware ordering: an admin-authored cmdresp
+// override short-circuits the router, and the identity middleware must still have run.
+//
+// This test previously asserted the opposite of what it does now — it required a
+// "Server: Ollama" header. That header was the single worst fingerprint on the honeypot: real
+// Ollama is built on Gin and sends no Server header at all, so emitting one was a positive
+// honeypot signature rather than a missing detail. The ordering guarantee is still worth
+// pinning, so the assertion now rides on the CORS header, which real Ollama does send.
+func TestCORSSurvivesCmdrespOverride(t *testing.T) {
 	orig := cmdresp.GetCommandResponse
 	cmdresp.GetCommandResponse = func(*proto.CommandRequest) (*proto.CommandResponse, error) {
 		return &proto.CommandResponse{Response: `{"overridden":true}`, Matched: true}, nil
@@ -65,7 +73,10 @@ func TestServerHeaderSurvivesCmdrespOverride(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "overridden") {
 		t.Fatalf("expected override body, got %s", rec.Body.String())
 	}
-	if got := rec.Header().Get("Server"); !strings.Contains(got, "Ollama") {
-		t.Fatalf("Server header lost on cmdresp override: %q", got)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("CORS header lost on cmdresp override: %q", got)
+	}
+	if got := rec.Header().Get("Server"); got != "" {
+		t.Fatalf("Server header must never be set (real Ollama sends none), got %q", got)
 	}
 }
