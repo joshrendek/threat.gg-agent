@@ -41,6 +41,9 @@ func (h *honeypot) Start() {
 	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), handler)).Msg("failed to start")
 }
 
+// profile: llama.cpp's server is cpp-httplib, which appends "; charset=utf-8" to JSON.
+var profile = llmcore.Profile{DefaultModel: defaultModel, ContentType: llmcore.CTJSONCharset}
+
 func newRouter() http.Handler {
 	r := mux.NewRouter()
 	r.HandleFunc("/props", handleProps).Methods("GET")
@@ -49,7 +52,7 @@ func newRouter() http.Handler {
 	}).Methods("GET")
 	r.HandleFunc("/v1/models", handleModels).Methods("GET")
 	r.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, req *http.Request) {
-		llmcore.ChatCompletion(w, req, defaultModel)
+		llmcore.ChatCompletion(w, req, profile)
 	}).Methods("POST")
 	r.HandleFunc("/completion", handleCompletion).Methods("POST")
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

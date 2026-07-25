@@ -50,7 +50,7 @@ func TestChatCompletionAnswersLivenessProbe(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"llama3.2","messages":[{"role":"user","content":"say pong"}]}`))
 	rec := httptest.NewRecorder()
-	ChatCompletion(rec, req, "gpt-3.5-turbo")
+	ChatCompletion(rec, req, Profile{DefaultModel: "gpt-3.5-turbo"})
 	var resp struct {
 		Choices []struct {
 			Message struct {
@@ -70,7 +70,7 @@ func TestOllamaGenerateAnswersArithmetic(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/generate",
 		strings.NewReader(`{"model":"llama3.2","prompt":"what is 2+2","stream":false}`))
 	rec := httptest.NewRecorder()
-	OllamaGenerate(rec, req, "llama3.2")
+	OllamaGenerate(rec, req, Profile{DefaultModel: "llama3.2"})
 	var resp struct {
 		Response string `json:"response"`
 	}

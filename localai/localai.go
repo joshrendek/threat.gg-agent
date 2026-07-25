@@ -40,15 +40,18 @@ func (h *honeypot) Start() {
 	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), handler)).Msg("failed to start")
 }
 
+// profile: LocalAI is a Go/Fiber service, so bare application/json and no system_fingerprint.
+var profile = llmcore.Profile{DefaultModel: defaultModel, ContentType: llmcore.CTJSON}
+
 func newRouter() http.Handler {
 	r := mux.NewRouter()
 	r.HandleFunc("/v1/models", handleModels).Methods("GET")
 	r.HandleFunc("/models", handleModels).Methods("GET")
 	r.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, req *http.Request) {
-		llmcore.ChatCompletion(w, req, defaultModel)
+		llmcore.ChatCompletion(w, req, profile)
 	}).Methods("POST")
 	r.HandleFunc("/v1/completions", func(w http.ResponseWriter, req *http.Request) {
-		llmcore.Completion(w, req, defaultModel)
+		llmcore.Completion(w, req, profile)
 	}).Methods("POST")
 	r.HandleFunc("/readyz", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusOK) }).Methods("GET")
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

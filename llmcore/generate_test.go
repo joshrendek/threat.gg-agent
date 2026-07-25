@@ -12,7 +12,7 @@ func TestChatCompletionNonStreamEchoesModelAndShape(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"mixtral","messages":[{"role":"user","content":"hi there"}]}`))
 	rec := httptest.NewRecorder()
-	ChatCompletion(rec, req, "gpt-3.5-turbo")
+	ChatCompletion(rec, req, Profile{DefaultModel: "gpt-3.5-turbo"})
 
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Fatalf("content-type = %q", ct)
@@ -60,7 +60,7 @@ func TestChatCompletionStreamEmitsSSEChunksAndDone(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"llama3","stream":true,"messages":[{"role":"user","content":"hello"}]}`))
 	rec := httptest.NewRecorder()
-	ChatCompletion(rec, req, "gpt-3.5-turbo")
+	ChatCompletion(rec, req, Profile{DefaultModel: "gpt-3.5-turbo"})
 
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
 		t.Fatalf("content-type = %q, want text/event-stream", ct)
@@ -81,7 +81,7 @@ func TestOllamaGenerateNonStream(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/generate",
 		strings.NewReader(`{"model":"llama3.2","prompt":"why is the sky blue","stream":false}`))
 	rec := httptest.NewRecorder()
-	OllamaGenerate(rec, req, "llama3.2")
+	OllamaGenerate(rec, req, Profile{DefaultModel: "llama3.2"})
 	var resp struct {
 		Model    string `json:"model"`
 		Response string `json:"response"`
@@ -99,7 +99,7 @@ func TestOllamaGenerateStreamNDJSONEndsDone(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/generate",
 		strings.NewReader(`{"model":"llama3.2","prompt":"hi"}`)) // stream defaults true
 	rec := httptest.NewRecorder()
-	OllamaGenerate(rec, req, "llama3.2")
+	OllamaGenerate(rec, req, Profile{DefaultModel: "llama3.2"})
 	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
 	if len(lines) < 2 {
 		t.Fatalf("want multiple NDJSON lines, got %d", len(lines))
