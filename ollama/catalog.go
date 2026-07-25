@@ -3,6 +3,8 @@ package ollama
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -119,25 +121,56 @@ var seedModels = []CatalogModel{
 	},
 }
 
-// catalog is the instance's model list. It is mutable because /api/pull adds to it: an attacker
-// who pulls a model and then finds it in /api/tags will go on to use it, which is exactly the
-// traffic worth capturing.
+// catalog holds an immutable base model list plus per-source-IP overlays.
+//
+// The mutating endpoints (/api/pull, /api/delete, /api/copy) are unauthenticated, because a real
+// exposed Ollama has no auth and adding some would be a fingerprint. That makes a single shared,
+// mutable catalog untenable: any anonymous caller could DELETE the six advertised models and,
+// because serving is gated on catalog membership, disarm the honeypot for everyone until the
+// agent restarted. (Verified in production before this was fixed.)
+//
+// Scoping mutations per source IP is also strictly more faithful than a shared catalog. Each
+// attacker sees a coherent box that reacts to their own pulls and deletes, and no longer sees
+// models some unrelated attacker pulled a minute earlier — which no real server would show them.
 type catalog struct {
-	mu     sync.RWMutex
-	models []CatalogModel
+	mu   sync.Mutex
+	base []CatalogModel // immutable after construction
+	// views is keyed by source IP. Bounded in size and age; see the limits below.
+	views map[string]*view
 }
+
+// view is one requester's divergence from the base catalog.
+type view struct {
+	added   []CatalogModel  // models this IP pulled or copied
+	removed map[string]bool // base models this IP deleted
+	seen    time.Time
+}
+
+const (
+	// maxViews caps how many distinct source IPs hold overlay state, evicting least-recently-seen
+	// first. Without it, an attacker could grow the map indefinitely by rotating source addresses.
+	maxViews = 256
+	// maxAddedPerView caps models one IP can add, so repeated /api/pull cannot grow memory without
+	// bound. A real box would run out of disk long before this matters.
+	maxAddedPerView = 8
+	// viewTTL is how long an overlay survives without traffic from that IP.
+	viewTTL = time.Hour
+)
 
 var models = newCatalog()
 
 func newCatalog() *catalog {
-	c := &catalog{models: make([]CatalogModel, len(seedModels))}
-	copy(c.models, seedModels)
+	c := &catalog{
+		base:  make([]CatalogModel, len(seedModels)),
+		views: map[string]*view{},
+	}
+	copy(c.base, seedModels)
 	// Stagger the timestamps so the catalog looks accumulated over time rather than seeded at
 	// once. Computed at startup and stable thereafter: a scanner polling twice must see the
 	// same values.
 	base := time.Now().UTC().Add(-27 * 24 * time.Hour)
-	for i := range c.models {
-		c.models[i].ModifiedAt = base.
+	for i := range c.base {
+		c.base[i].ModifiedAt = base.
 			Add(time.Duration(i) * 53 * time.Hour).
 			Add(time.Duration(i*7919) * time.Millisecond).
 			Format(time.RFC3339Nano)
@@ -158,19 +191,72 @@ func normalize(name string) string {
 	return n
 }
 
-func (c *catalog) list() []CatalogModel {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	out := make([]CatalogModel, len(c.models))
-	copy(out, c.models)
+// clientIP extracts the source address used to key overlays. Deliberately ignores
+// X-Forwarded-For: the honeypot is addressed directly, so an attacker-supplied header would let
+// one caller pollute or impersonate another caller's view.
+func clientIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// viewFor returns the caller's overlay, creating it on demand. Callers must hold c.mu.
+func (c *catalog) viewFor(ip string, create bool) *view {
+	now := time.Now()
+	for k, v := range c.views {
+		if now.Sub(v.seen) > viewTTL {
+			delete(c.views, k)
+		}
+	}
+	v, ok := c.views[ip]
+	if !ok {
+		if !create {
+			return nil
+		}
+		if len(c.views) >= maxViews {
+			var oldestKey string
+			var oldest time.Time
+			for k, vv := range c.views {
+				if oldestKey == "" || vv.seen.Before(oldest) {
+					oldestKey, oldest = k, vv.seen
+				}
+			}
+			delete(c.views, oldestKey)
+		}
+		v = &view{removed: map[string]bool{}}
+		c.views[ip] = v
+	}
+	v.seen = now
+	return v
+}
+
+// list returns the catalog as this requester sees it: the base list minus anything they deleted,
+// plus anything they added.
+func (c *catalog) list(r *http.Request) []CatalogModel {
+	ip := clientIP(r)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v := c.viewFor(ip, false)
+	out := make([]CatalogModel, 0, len(c.base)+maxAddedPerView)
+	for _, m := range c.base {
+		if v != nil && v.removed[m.Name] {
+			continue
+		}
+		out = append(out, m)
+	}
+	if v != nil {
+		out = append(out, v.added...)
+	}
 	return out
 }
 
-func (c *catalog) get(name string) (CatalogModel, bool) {
+func (c *catalog) get(r *http.Request, name string) (CatalogModel, bool) {
 	n := normalize(name)
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for _, m := range c.models {
+	for _, m := range c.list(r) {
 		if m.Name == n {
 			return m, true
 		}
@@ -178,36 +264,47 @@ func (c *catalog) get(name string) (CatalogModel, bool) {
 	return CatalogModel{}, false
 }
 
-func (c *catalog) has(name string) bool {
-	_, ok := c.get(name)
+func (c *catalog) has(r *http.Request, name string) bool {
+	_, ok := c.get(r, name)
 	return ok
 }
 
-// add records a model as locally present. Called by /api/pull once the fake download
-// "completes"; a no-op if the model is already listed.
-func (c *catalog) add(m CatalogModel) {
+// add records a model as present for this requester only. Called by /api/pull and /api/copy once
+// the fake operation "completes". A no-op if already visible or if this IP is at its cap.
+func (c *catalog) add(r *http.Request, m CatalogModel) {
+	if c.has(r, m.Name) {
+		return
+	}
+	ip := clientIP(r)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, existing := range c.models {
-		if existing.Name == m.Name {
-			return
-		}
+	v := c.viewFor(ip, true)
+	if len(v.added) >= maxAddedPerView {
+		return
 	}
-	c.models = append(c.models, m)
+	v.added = append(v.added, m)
 }
 
-// remove drops a model, backing /api/delete.
-func (c *catalog) remove(name string) bool {
+// remove drops a model from this requester's view, backing /api/delete. Base models are never
+// mutated — the deletion is recorded in the caller's overlay, so they observe the faithful
+// behaviour (gone from /api/tags, inference 404s) while every other caller is unaffected.
+func (c *catalog) remove(r *http.Request, name string) bool {
 	n := normalize(name)
+	if !c.has(r, n) {
+		return false
+	}
+	ip := clientIP(r)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for i, m := range c.models {
+	v := c.viewFor(ip, true)
+	for i, m := range v.added {
 		if m.Name == n {
-			c.models = append(c.models[:i], c.models[i+1:]...)
+			v.added = append(v.added[:i], v.added[i+1:]...)
 			return true
 		}
 	}
-	return false
+	v.removed[n] = true
+	return true
 }
 
 // synthesize builds a plausible catalog entry for a model an attacker pulled. Parameter size and

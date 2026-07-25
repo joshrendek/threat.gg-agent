@@ -303,7 +303,7 @@ func ChatCompletion(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteOpenAIError(w, p, http.StatusBadRequest, msg, "invalid_request_error")
 		return
 	}
-	model, known := p.resolveModel(body)
+	model, known := p.resolveModel(r, body)
 	if !known {
 		WriteModelNotFoundV1(w, p, model)
 		return
@@ -364,7 +364,7 @@ func Completion(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteOpenAIError(w, p, http.StatusBadRequest, msg, "invalid_request_error")
 		return
 	}
-	model, known := p.resolveModel(body)
+	model, known := p.resolveModel(r, body)
 	if !known {
 		WriteModelNotFoundV1(w, p, model)
 		return
@@ -472,7 +472,7 @@ func OllamaGenerate(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteOllamaError(w, p, http.StatusBadRequest, msg)
 		return
 	}
-	model, known := p.resolveModel(body)
+	model, known := p.resolveModel(r, body)
 	if !known {
 		WriteModelNotFoundAPI(w, p, model)
 		return
@@ -517,7 +517,7 @@ func OllamaChat(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteOllamaError(w, p, http.StatusBadRequest, msg)
 		return
 	}
-	model, known := p.resolveModel(body)
+	model, known := p.resolveModel(r, body)
 	if !known {
 		WriteModelNotFoundAPI(w, p, model)
 		return

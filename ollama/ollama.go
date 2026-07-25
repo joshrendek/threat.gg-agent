@@ -44,7 +44,7 @@ var profile = llmcore.Profile{
 	ContentType:       llmcore.CTJSONCharset,
 	SystemFingerprint: "fp_ollama",
 	ShortIDs:          true,
-	KnownModel:        func(m string) bool { return models.has(m) },
+	KnownModel:        func(r *http.Request, m string) bool { return models.has(r, m) },
 }
 
 type honeypot struct{ logger zerolog.Logger }
@@ -217,7 +217,7 @@ type tagsResponse struct {
 }
 
 func handleTags(w http.ResponseWriter, r *http.Request) {
-	llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, tagsResponse{Models: models.list()})
+	llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, tagsResponse{Models: models.list(r)})
 }
 
 type versionResponse struct {
@@ -248,7 +248,7 @@ type psResponse struct {
 func handlePs(w http.ResponseWriter, r *http.Request) {
 	out := []psModel{}
 	for name, expires := range llmcore.ResidentModels() {
-		m, ok := models.get(name)
+		m, ok := models.get(r, name)
 		if !ok {
 			continue
 		}
@@ -269,7 +269,7 @@ type v1ModelsResponse struct {
 }
 
 func handleV1Models(w http.ResponseWriter, r *http.Request) {
-	list := models.list()
+	list := models.list(r)
 	data := make([]llmcore.Model, 0, len(list))
 	for _, m := range list {
 		created, err := time.Parse(time.RFC3339Nano, m.ModifiedAt)
