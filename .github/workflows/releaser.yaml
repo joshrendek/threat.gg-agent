@@ -24,14 +24,41 @@ jobs:
       - name: Build
         run: |
           make build
+      # Publish ONLY from master. The fleet's auto-updater (updater/updater.go) polls
+      # /releases/latest every 15 minutes and installs whatever it finds, so any release
+      # this workflow creates reaches every production honeypot. Before this guard the job
+      # also ran on `pull_request`, which meant unmerged branch code shipped to the fleet:
+      # releases 20260725.30178510632 and .30179101579 were both built from a PR branch and
+      # were running in production, and 20260725.30135742551 came from fix/pseudo-digest.
+      # A PR build is still worth running above (it catches compile and cross-compile
+      # breakage) — it just must not publish.
       - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed via env, never interpolated into the script body: commit subjects are
+          # attacker-influencable text and ${{ }} interpolation inside run: would splice them
+          # straight into the shell.
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
         run: |
-          gh release create `date -u +%Y%m%d`.${GITHUB_RUN_ID} \
-            --repo="$GIT_REPOSITORY" \
-            --title="Release `date -u +%Y%m%d`.${GITHUB_RUN_ID}" \
-            --notes="`git log --pretty=format:'- %s' $GITHUB_SHA...HEAD`" \
+          set -euo pipefail
+          TAG="$(date -u +%Y%m%d).${GITHUB_RUN_ID}"
+
+          # Range notes when the previous SHA is a real ancestor; fall back to the tip commit
+          # on a first push or a force-push, where the range would be invalid or enormous.
+          if git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+            NOTES="$(git log --no-merges --pretty=format:'- %s' "${PUSH_BEFORE}..${PUSH_AFTER}")"
+          else
+            NOTES="$(git log -1 --pretty=format:'- %s' "${PUSH_AFTER}")"
+          fi
+          [ -n "${NOTES}" ] || NOTES="- ${TAG}"
+
+          gh release create "${TAG}" \
+            --repo="${GITHUB_REPOSITORY}" \
+            --title="Release ${TAG}" \
+            --notes="${NOTES}" \
+            --latest \
             ./dist/*
 
 #    steps:
