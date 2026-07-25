@@ -1,7 +1,8 @@
 package ollama
 
 import (
-	"fmt"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"sync"
 	"time"
@@ -250,17 +251,13 @@ func synthesize(name string) CatalogModel {
 }
 
 // pseudoDigest derives a stable 64-hex-character digest from a model name, so the same pulled
-// model always reports the same digest across /api/tags and /api/show.
+// model always reports the same digest across /api/tags, /api/show and the pull progress stream.
+//
+// This must be a real hash. An earlier version concatenated four FNV-1a hashes of the same name
+// with a trailing counter, which produced visibly correlated 8-byte blocks —
+// 9b7b80336b17…9b7b81336b17…9b7b82336b17 — where a genuine sha256 is uniformly random. That
+// pattern was legible in the /api/pull stream and was a fingerprint in its own right.
 func pseudoDigest(name string) string {
-	// FNV-1a, expanded to 32 bytes by re-hashing with a counter.
-	var out strings.Builder
-	for i := 0; i < 4; i++ {
-		h := uint64(1469598103934665603)
-		for _, b := range []byte(fmt.Sprintf("%s/%d", name, i)) {
-			h ^= uint64(b)
-			h *= 1099511628211
-		}
-		fmt.Fprintf(&out, "%016x", h)
-	}
-	return out.String()
+	sum := sha256.Sum256([]byte(name))
+	return hex.EncodeToString(sum[:])
 }
