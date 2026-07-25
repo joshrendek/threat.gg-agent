@@ -83,7 +83,7 @@ func Responses(w http.ResponseWriter, r *http.Request, p Profile) {
 	now := time.Now().Unix()
 	in := promptTokensFor(prompt)
 
-	WriteJSONCT(w, http.StatusOK, CTJSON, responsesPayload{
+	WriteJSONCT(w, http.StatusOK, p.openAICT(), responsesPayload{
 		ID:        fmt.Sprintf("resp_%d", rand.Intn(100000)),
 		Object:    "response",
 		CreatedAt: now, CompletedAt: now,
@@ -107,8 +107,8 @@ func Responses(w http.ResponseWriter, r *http.Request, p Profile) {
 	})
 }
 
-// PromptOf returns the prompt/input text from a request body, for surfaces that need it outside
-// the generators (vLLM's /tokenize, for instance).
+// PromptOf returns the prompt/input/content text from a request body, for surfaces that need it
+// outside the generators (vLLM's and llama.cpp's /tokenize, for instance).
 func PromptOf(r *http.Request) string { return promptText(readBody(r)) }
 
 // PseudoTokens produces a plausible token-id sequence for text. Used by /tokenize, where the
@@ -123,14 +123,18 @@ func PseudoTokens(text string) []int {
 	return out
 }
 
-// WriteEmbeddingsUnsupported reproduces the 501 a real Ollama returns when the requested model
-// has no embedding support — which is true of every model in the advertised catalog. Fabricating
-// a plausible embedding vector would be more work and less accurate than the real refusal.
-func WriteEmbeddingsUnsupported(w http.ResponseWriter, p Profile, openAIShape bool) {
+// WriteEmbeddingsUnsupported reproduces the refusal a real Ollama returns when the requested
+// model has no embedding support — which is true of every model in the advertised catalog.
+// Fabricating a plausible embedding vector would be more work and less accurate than the real
+// refusal. The message is identical everywhere (Ollama embeds llama.cpp and surfaces its error
+// verbatim); the status code is not — measured against a real Ollama 0.30.11 (threat_gg-5fb):
+// POST /api/embed -> 501, POST /api/embeddings -> 500, POST /v1/embeddings -> 501. Callers pass
+// the status that matches their route rather than this function picking one for all of them.
+func WriteEmbeddingsUnsupported(w http.ResponseWriter, p Profile, status int, openAIShape bool) {
 	const msg = "This server does not support embeddings. Start it with `--embeddings`"
 	if openAIShape {
-		WriteOpenAIError(w, p, http.StatusNotImplemented, msg, "api_error")
+		WriteOpenAIError(w, p, status, msg, "api_error")
 		return
 	}
-	WriteOllamaError(w, p, http.StatusNotImplemented, msg)
+	WriteOllamaError(w, p, status, msg)
 }

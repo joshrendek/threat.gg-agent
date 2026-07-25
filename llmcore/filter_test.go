@@ -16,8 +16,9 @@ func TestIsSignalPath(t *testing.T) {
 		"/v1/responses", // new OpenAI Responses API — caught by the /v1/ rule
 		"/api/tags", "/api/generate", "/api/chat", "/api/version", "/api/ps",
 		"/api/show", "/api/pull", "/api/embeddings", "/api/jobs/", "/api/jobs/raysubmit_x",
-		"/api/cluster_status", "/models", "/props", "/health", "/readyz", "/metrics",
-		"/completion", "/tokenize", "/system_stats", "/object_info", "/queue", "/prompt",
+		"/api/cluster_status", "/models", "/props", "/health", "/healthz", "/readyz", "/metrics",
+		"/completion", "/tokenize", "/detokenize", "/slots", "/system_stats", "/object_info",
+		"/queue", "/prompt", "/history", "/history/abc-123-uuid",
 		"/nodes", "/v1/models/", // trailing slash tolerated
 	}
 	for _, p := range signal {

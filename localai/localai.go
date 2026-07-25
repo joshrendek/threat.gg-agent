@@ -54,6 +54,13 @@ func newRouter() http.Handler {
 		llmcore.Completion(w, req, profile)
 	}).Methods("POST")
 	r.HandleFunc("/readyz", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusOK) }).Methods("GET")
+	// threat_gg-3kd: verified 404 on the live fleet. Real LocalAI exposes both probes side by
+	// side (core/http/routes/health.go): /healthz is liveness, deliberately independent of
+	// /readyz's startup-readiness check, and both answer a bare 200 with no body — a literal
+	// c.NoContent(http.StatusOK) on the real server, which is exactly what /readyz already does
+	// here.
+	r.HandleFunc("/healthz", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusOK) }).Methods("GET")
+	r.HandleFunc("/v1/embeddings", handleEmbeddings).Methods("POST")
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		llmcore.WriteError(w, http.StatusNotFound, "Not Found", "invalid_request_error", "")
 	})
