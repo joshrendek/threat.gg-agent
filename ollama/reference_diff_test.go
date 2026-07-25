@@ -56,6 +56,12 @@ func TestAgainstReferenceServer(t *testing.T) {
 		{name: "generate malformed", method: "POST", path: "/api/generate", body: `not-json`},
 		{name: "delete unknown", method: "DELETE", path: "/api/delete", body: `{"name":"nope:latest"}`, unknownModel: true},
 		{name: "blob bad digest", method: "HEAD", path: "/api/blobs/sha256:0000"},
+		// threat_gg-5fb: the embeddings refusal status differs by route (501/500/501) even
+		// though every model in both catalogs lacks embedding support. qwen2.5-coder:7b is
+		// pulled on the reference box, so this exercises the real refusal, not a 404.
+		{name: "embed", method: "POST", path: "/api/embed", body: `{"model":"qwen2.5-coder:7b","input":"hi"}`},
+		{name: "embeddings legacy", method: "POST", path: "/api/embeddings", body: `{"model":"qwen2.5-coder:7b","prompt":"hi"}`},
+		{name: "v1 embeddings", method: "POST", path: "/v1/embeddings", body: `{"model":"qwen2.5-coder:7b","input":"hi"}`},
 	}
 
 	fetch := func(base string, c struct {

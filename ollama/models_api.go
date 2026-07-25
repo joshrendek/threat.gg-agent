@@ -354,9 +354,13 @@ func handleBlob(w http.ResponseWriter, r *http.Request) {
 
 // -- embeddings
 
-// handleEmbedAPI and handleEmbedV1 report the 501 a real server returns for a model without
-// embedding support, which is true of every model in the advertised catalog. Inventing a
-// plausible float vector would be both more work and less accurate than the genuine refusal.
+// handleEmbedAPI, handleEmbedLegacyAPI and handleEmbedV1 report the refusal a real server
+// returns for a model without embedding support, which is true of every model in the advertised
+// catalog. Inventing a plausible float vector would be both more work and less accurate than the
+// genuine refusal. The status code is route-specific, not a single constant: measured against a
+// real Ollama 0.30.11 (threat_gg-5fb), /api/embed and /v1/embeddings answer 501 but the legacy
+// /api/embeddings answers 500 for the identical refusal body — Ollama embeds llama.cpp, and only
+// the legacy route's error path surfaces it as an unhandled 500 rather than a deliberate 501.
 func handleEmbedAPI(w http.ResponseWriter, r *http.Request) {
 	var req modelRequest
 	_ = readJSON(r, &req)
@@ -365,7 +369,20 @@ func handleEmbedAPI(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("model %q not found, try pulling it first", req.model()))
 		return
 	}
-	llmcore.WriteEmbeddingsUnsupported(w, profile, false)
+	llmcore.WriteEmbeddingsUnsupported(w, profile, http.StatusNotImplemented, false)
+}
+
+// handleEmbedLegacyAPI serves the deprecated /api/embeddings route, which returns 500 rather
+// than 501 for the same refusal (see handleEmbedAPI's comment).
+func handleEmbedLegacyAPI(w http.ResponseWriter, r *http.Request) {
+	var req modelRequest
+	_ = readJSON(r, &req)
+	if req.model() != "" && !models.has(r, req.model()) {
+		llmcore.WriteOllamaError(w, profile, http.StatusNotFound,
+			fmt.Sprintf("model %q not found, try pulling it first", req.model()))
+		return
+	}
+	llmcore.WriteEmbeddingsUnsupported(w, profile, http.StatusInternalServerError, false)
 }
 
 func handleEmbedV1(w http.ResponseWriter, r *http.Request) {
@@ -376,7 +393,7 @@ func handleEmbedV1(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("model %q not found, try pulling it first", req.model()), "not_found_error")
 		return
 	}
-	llmcore.WriteEmbeddingsUnsupported(w, profile, true)
+	llmcore.WriteEmbeddingsUnsupported(w, profile, http.StatusNotImplemented, true)
 }
 
 // -- /v1/responses

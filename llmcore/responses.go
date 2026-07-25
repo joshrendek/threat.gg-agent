@@ -123,14 +123,18 @@ func PseudoTokens(text string) []int {
 	return out
 }
 
-// WriteEmbeddingsUnsupported reproduces the 501 a real Ollama returns when the requested model
-// has no embedding support — which is true of every model in the advertised catalog. Fabricating
-// a plausible embedding vector would be more work and less accurate than the real refusal.
-func WriteEmbeddingsUnsupported(w http.ResponseWriter, p Profile, openAIShape bool) {
+// WriteEmbeddingsUnsupported reproduces the refusal a real Ollama returns when the requested
+// model has no embedding support — which is true of every model in the advertised catalog.
+// Fabricating a plausible embedding vector would be more work and less accurate than the real
+// refusal. The message is identical everywhere (Ollama embeds llama.cpp and surfaces its error
+// verbatim); the status code is not — measured against a real Ollama 0.30.11 (threat_gg-5fb):
+// POST /api/embed -> 501, POST /api/embeddings -> 500, POST /v1/embeddings -> 501. Callers pass
+// the status that matches their route rather than this function picking one for all of them.
+func WriteEmbeddingsUnsupported(w http.ResponseWriter, p Profile, status int, openAIShape bool) {
 	const msg = "This server does not support embeddings. Start it with `--embeddings`"
 	if openAIShape {
-		WriteOpenAIError(w, p, http.StatusNotImplemented, msg, "api_error")
+		WriteOpenAIError(w, p, status, msg, "api_error")
 		return
 	}
-	WriteOllamaError(w, p, http.StatusNotImplemented, msg)
+	WriteOllamaError(w, p, status, msg)
 }

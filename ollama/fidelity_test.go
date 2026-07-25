@@ -277,15 +277,25 @@ func TestResponsesAPI(t *testing.T) {
 	}
 }
 
-// Real: 501, because no model in the catalog has embedding support.
-func TestEmbeddingsReturn501(t *testing.T) {
-	for _, path := range []string{"/api/embed", "/api/embeddings", "/v1/embeddings"} {
-		rec := do(t, "POST", path, `{"model":"mistral:latest","input":"hi"}`)
-		if rec.Code != http.StatusNotImplemented {
-			t.Errorf("%s: status %d, want 501", path, rec.Code)
+// Real: no model in the catalog has embedding support, so all three routes refuse — but not with
+// the same status. Measured against a real Ollama 0.30.11 (threat_gg-5fb), 3 runs x 2 models
+// (qwen2.5-coder:7b, gemma3:12b): /api/embed and /v1/embeddings answer 501, the legacy
+// /api/embeddings answers 500, for byte-identical refusal bodies.
+func TestEmbeddingsRefusalStatusPerRoute(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"/api/embed", http.StatusNotImplemented},
+		{"/api/embeddings", http.StatusInternalServerError},
+		{"/v1/embeddings", http.StatusNotImplemented},
+	} {
+		rec := do(t, "POST", tc.path, `{"model":"mistral:latest","input":"hi"}`)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status %d, want %d", tc.path, rec.Code, tc.want)
 		}
 		if !strings.Contains(rec.Body.String(), "does not support embeddings") {
-			t.Errorf("%s: body %q", path, rec.Body.String())
+			t.Errorf("%s: body %q", tc.path, rec.Body.String())
 		}
 	}
 }

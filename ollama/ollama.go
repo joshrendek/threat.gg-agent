@@ -164,7 +164,8 @@ func newRouter() http.Handler {
 	r.HandleFunc("/api/copy", handleCopy).Methods(http.MethodPost)
 	r.HandleFunc("/api/delete", handleDelete).Methods(http.MethodDelete)
 	r.HandleFunc("/api/embed", handleEmbedAPI).Methods(http.MethodPost)
-	r.HandleFunc("/api/embeddings", handleEmbedAPI).Methods(http.MethodPost)
+	// Legacy route: 500, not 501, for the identical refusal (see handleEmbedLegacyAPI).
+	r.HandleFunc("/api/embeddings", handleEmbedLegacyAPI).Methods(http.MethodPost)
 	r.HandleFunc("/api/blobs/{digest}", handleBlob).Methods(http.MethodHead, http.MethodPost)
 
 	// OpenAI-compatible layer. These answer with bare application/json (no charset) because
