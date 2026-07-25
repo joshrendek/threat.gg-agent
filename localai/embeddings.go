@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"math/rand"
@@ -43,6 +44,30 @@ import (
 // embeddingDims is a plausible embedding width: OpenAI's text-embedding-ada-002, the dimension
 // most embedding-consuming client code is written against.
 const embeddingDims = 1536
+
+// PR #33 review (two independent reviewers): the request body is capped at 1MB
+// (llmcore.MaxBodySize), but nothing capped how many items "input" could contain. Each item's
+// output cost (fakeEmbedding's embeddingDims-length vector, then its JSON serialization) is
+// fixed regardless of how short that item's own string was, so a 1MB array of one-character
+// strings — hundreds of thousands of items — turns into gigabytes of allocation and CPU from a
+// single request to a public, unauthenticated honeypot.
+//
+// maxEmbeddingItems is picked to look like a real batch, not to be the largest tolerable number:
+// embedding clients (LangChain, llama-index, the OpenAI SDKs) default to batching in the tens,
+// not thousands, so a legitimate caller never notices this cap. maxEmbeddingOutputFloats is the
+// same budget re-expressed as total floats and checked independently, before any vector is
+// allocated — currently a restatement of maxEmbeddingItems given a fixed embeddingDims, but it
+// stays correct on its own if a future change ever makes per-item width vary.
+//
+// Checked, per the review's request: vLLM's and Ollama's embeddings paths only ever write a
+// fixed refusal (llmcore.WriteEmbeddingsUnsupported / vllm's handleEmbeddings) without parsing
+// "input" or allocating per item at all, so they cannot amplify this way. llama.cpp implements no
+// embeddings endpoint. LocalAI is the only product here that actually fabricates a vector per
+// input item.
+const (
+	maxEmbeddingItems        = 64
+	maxEmbeddingOutputFloats = maxEmbeddingItems * embeddingDims
+)
 
 type embeddingsRequest struct {
 	Model          string          `json:"model"`
@@ -119,6 +144,19 @@ func handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	inputs := embeddingInputs(req.Input)
 	if len(inputs) == 0 {
 		inputs = []string{""}
+	}
+
+	// Reject an oversized batch outright rather than silently truncating it — truncating would
+	// itself be a tell (the returned item count would not match what the caller sent). Real
+	// LocalAI has no known explicit batch-size check of its own (it would just try to process
+	// whatever it was given), so this message is invented rather than sourced; it reuses the same
+	// Echo-style {"message":...} 400 shape this endpoint already uses for a missing model, since
+	// that is this product's one verified error convention rather than a second, inconsistent one.
+	if len(inputs) > maxEmbeddingItems || len(inputs)*embeddingDims > maxEmbeddingOutputFloats {
+		llmcore.WriteJSONCT(w, http.StatusBadRequest, llmcore.CTJSON, echoErrorBody{
+			Message: fmt.Sprintf("batch size %d exceeds the maximum of %d inputs per request", len(inputs), maxEmbeddingItems),
+		})
+		return
 	}
 
 	data := make([]embeddingItem, len(inputs))

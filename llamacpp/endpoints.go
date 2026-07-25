@@ -2,6 +2,7 @@ package llamacpp
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/joshrendek/threat.gg-agent/llmcore"
 )
@@ -44,15 +45,14 @@ func handleTokenize(w http.ResponseWriter, r *http.Request) {
 	var req tokenizeRequest
 	readJSONBody(r, &req)
 
-	tokens := llmcore.PseudoTokens(req.Content)
+	ids, chunks := deterministicTokens(req.Content, clientIP(r))
 	if !req.WithPieces {
-		llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, tokenizeResponse{Tokens: tokens})
+		llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, tokenizeResponse{Tokens: ids})
 		return
 	}
 
-	chunks := splitIntoChunks(req.Content, len(tokens))
-	pieces := make([]tokenPiece, len(tokens))
-	for i, id := range tokens {
+	pieces := make([]tokenPiece, len(ids))
+	for i, id := range ids {
 		pieces[i] = tokenPiece{ID: id, Piece: chunks[i]}
 	}
 	llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, tokenizeResponse{Tokens: pieces})
@@ -97,15 +97,24 @@ type detokenizeResponse struct {
 	Content string `json:"content"`
 }
 
-// handleDetokenize always answers with the empty string. Real llama.cpp round-trips the token
-// ids through its own vocabulary; the ids our /tokenize hands out are fabricated (see
-// llmcore.PseudoTokens) and correspond to no real vocabulary, so there is nothing correct to
-// reverse them into. Matches vLLM's handleDetokenize stub for the same reason: an honest "we
-// don't know" reads better than a fabricated string that would not survive a careful check.
+// handleDetokenize reconstructs text from ids previously issued to this same source IP by
+// /tokenize (see tokencache.go): /tokenize's ids are a deterministic hash of their own piece
+// text, remembered in a bounded per-IP cache at issue time, so a tokenize-then-detokenize probe
+// — the realistic use of this endpoint — gets its original text back, byte for byte. An id this
+// cache never saw for this IP (never issued, evicted, or from a different source) contributes
+// nothing rather than fabricated text, which degrades gracefully instead of lying.
 func handleDetokenize(w http.ResponseWriter, r *http.Request) {
 	var req detokenizeRequest
 	readJSONBody(r, &req)
-	llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, detokenizeResponse{Content: ""})
+
+	ip := clientIP(r)
+	var content strings.Builder
+	for _, id := range req.Tokens {
+		if piece, ok := tokenMemory.lookup(ip, id); ok {
+			content.WriteString(piece)
+		}
+	}
+	llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, detokenizeResponse{Content: content.String()})
 }
 
 // -- GET /slots

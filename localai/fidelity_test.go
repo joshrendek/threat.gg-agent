@@ -132,4 +132,61 @@ func TestEmbeddingsMissingModelIsBadRequest(t *testing.T) {
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"message":"Bad Request"}` {
 		t.Errorf("body %q, want %q", got, `{"message":"Bad Request"}`)
 	}
+	// Echo's JSON content type is bare, even though LocalAI has migrated off Fiber onto Echo —
+	// see embeddings.go's source comment.
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("content-type %q, want bare application/json", got)
+	}
+}
+
+// PR #33 review (ERROR 1): a batch bigger than maxEmbeddingItems must be rejected before any
+// vector is allocated for it, not silently truncated to the cap.
+func TestEmbeddingsOversizedBatchIsRejected(t *testing.T) {
+	inputs := make([]string, maxEmbeddingItems+1)
+	for i := range inputs {
+		inputs[i] = "x"
+	}
+	body, err := json.Marshal(map[string]any{"model": "m", "input": inputs})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	rec := do(t, "POST", "/v1/embeddings", string(body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", rec.Code)
+	}
+	var resp struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v; body=%s", err, rec.Body.String())
+	}
+	if resp.Message == "" {
+		t.Error("oversized-batch response has no message")
+	}
+}
+
+// A batch at exactly the cap must still succeed — the limit rejects what is over budget, not
+// what is at it.
+func TestEmbeddingsBatchAtCapSucceeds(t *testing.T) {
+	inputs := make([]string, maxEmbeddingItems)
+	for i := range inputs {
+		inputs[i] = "x"
+	}
+	body, err := json.Marshal(map[string]any{"model": "m", "input": inputs})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	rec := do(t, "POST", "/v1/embeddings", string(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data []struct{} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v; body=%s", err, rec.Body.String())
+	}
+	if len(resp.Data) != maxEmbeddingItems {
+		t.Errorf("got %d items, want %d", len(resp.Data), maxEmbeddingItems)
+	}
 }

@@ -174,7 +174,7 @@ func promptText(body []byte) string {
 	var m struct {
 		Prompt   string `json:"prompt"`
 		Input    string `json:"input"`
-		Content  string `json:"content"` // llama.cpp's /tokenize and /completion use "content".
+		Content  string `json:"content"` // llama.cpp's /tokenize request uses "content" (/completion's request field is "prompt"; "content" there names the response field instead).
 		Messages []struct {
 			Content string `json:"content"`
 		} `json:"messages"`

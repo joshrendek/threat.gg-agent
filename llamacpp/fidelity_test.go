@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -162,28 +161,79 @@ func TestTokenize(t *testing.T) {
 	if rebuilt.String() != "hello world" {
 		t.Errorf("pieces do not reconstruct the input: got %q, want %q", rebuilt.String(), "hello world")
 	}
+
+	// Tokenization is deterministic (tokencache.go): the same content from the same source must
+	// produce the same ids whether or not with_pieces was set, since with_pieces the real server
+	// only adds a "piece" alongside each id, it does not change which ids are issued.
+	if len(resp.Tokens) != len(piecesResp.Tokens) {
+		t.Fatalf("plain vs with_pieces token count differs: %d vs %d", len(resp.Tokens), len(piecesResp.Tokens))
+	}
+	for i, id := range resp.Tokens {
+		if piecesResp.Tokens[i].ID != id {
+			t.Errorf("token %d: plain id %d, with_pieces id %d — should match", i, id, piecesResp.Tokens[i].ID)
+		}
+	}
 }
 
-// POST /detokenize: {"content": "..."} — verified against post_detokenize. We hold no real
-// vocabulary to reverse fabricated /tokenize ids through, so the honest answer is empty.
-func TestDetokenize(t *testing.T) {
-	rec := do(t, "POST", "/detokenize", `{"tokens":[1000,2000,3000]}`)
+// POST /detokenize must round-trip a real /tokenize call's own ids back into the original text
+// (PR #33 review, ERROR 2): tokenization is deterministic and each issued id is remembered
+// against its piece (tokencache.go), so tokenize-then-detokenize — the realistic probe pattern —
+// reconstructs the input exactly rather than answering "".
+func TestDetokenizeRoundTripsTokenizeOutput(t *testing.T) {
+	const original = "the quick brown fox jumps over the lazy dog"
+
+	tokenizeRec := do(t, "POST", "/tokenize", `{"content":"`+original+`"}`)
+	var tokenizeResp struct {
+		Tokens []int `json:"tokens"`
+	}
+	if err := json.Unmarshal(tokenizeRec.Body.Bytes(), &tokenizeResp); err != nil {
+		t.Fatalf("unmarshal /tokenize: %v; body=%s", err, tokenizeRec.Body.String())
+	}
+	if len(tokenizeResp.Tokens) == 0 {
+		t.Fatal("no tokens returned")
+	}
+
+	ids, err := json.Marshal(tokenizeResp.Tokens)
+	if err != nil {
+		t.Fatalf("marshal token ids: %v", err)
+	}
+	detokenizeRec := do(t, "POST", "/detokenize", `{"tokens":`+string(ids)+`}`)
+	if detokenizeRec.Code != http.StatusOK {
+		t.Fatalf("status %d", detokenizeRec.Code)
+	}
+	var detokenizeResp struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(detokenizeRec.Body.Bytes(), &detokenizeResp); err != nil {
+		t.Fatalf("unmarshal /detokenize: %v; body=%s", err, detokenizeRec.Body.String())
+	}
+	if detokenizeResp.Content != original {
+		t.Errorf("round trip failed: got %q, want %q", detokenizeResp.Content, original)
+	}
+}
+
+// An id this honeypot never issued (to anyone) has no piece to recover — the honest answer is an
+// empty contribution, not fabricated text.
+func TestDetokenizeUnknownIDsContributeNothing(t *testing.T) {
+	rec := do(t, "POST", "/detokenize", `{"tokens":[999999999]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
 	var resp struct {
-		Content *string `json:"content"`
+		Content string `json:"content"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v; body=%s", err, rec.Body.String())
 	}
-	if resp.Content == nil {
-		t.Fatal(`"content" key missing from /detokenize response`)
+	if resp.Content != "" {
+		t.Errorf("content = %q, want empty for an id never issued", resp.Content)
 	}
 }
 
 // GET /slots: an array of slot objects, matching total_slots:1 from /props — verified against
-// get_slots / server_slot::to_json in server-context.cpp.
+// get_slots / server_slot::to_json in server-context.cpp. id and speculative are asserted
+// explicitly even though both happen to equal Go's zero value, so a regression that stopped
+// setting them would still be caught.
 func TestSlots(t *testing.T) {
 	rec := do(t, "GET", "/slots", "")
 	if rec.Code != http.StatusOK {
@@ -201,8 +251,14 @@ func TestSlots(t *testing.T) {
 	if len(slots) != 1 {
 		t.Fatalf("got %d slots, want 1 (matches /props total_slots)", len(slots))
 	}
+	if slots[0].ID != 0 {
+		t.Errorf("slot id = %d, want 0", slots[0].ID)
+	}
 	if slots[0].NCtx != slotNCtx {
 		t.Errorf("slot n_ctx = %d, want %d", slots[0].NCtx, slotNCtx)
+	}
+	if slots[0].Speculative {
+		t.Error("this honeypot never advertises speculative decoding")
 	}
 	if slots[0].IsProcessing {
 		t.Error("a fresh slot must not be reported as processing")
@@ -217,12 +273,13 @@ func TestNewEndpointsAreCaptured(t *testing.T) {
 	orig := saveLlamacppRequest
 	t.Cleanup(func() { saveLlamacppRequest = orig })
 
-	var mu sync.Mutex
-	captured := map[string]bool{}
+	// Capture is async (a fire-and-forget goroutine per request — see llmcore.captureAndSave), so
+	// synchronize on a channel rather than polling with sleeps: each save sends its path, and the
+	// test blocks on exactly as many receives as requests were made, with a single bounded timeout
+	// as a backstop against a genuine regression hanging the suite.
+	captured := make(chan string, 3)
 	saveLlamacppRequest = func(req *proto.LlmRequest) error {
-		mu.Lock()
-		captured[req.Path] = true
-		mu.Unlock()
+		captured <- req.Path
 		return nil
 	}
 
@@ -244,22 +301,18 @@ func TestNewEndpointsAreCaptured(t *testing.T) {
 		}
 	}
 
-	// Capture is async (fire-and-forget goroutine); give it a moment to land.
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		mu.Lock()
-		n := len(captured)
-		mu.Unlock()
-		if n == 3 || time.Now().After(deadline) {
-			break
+	want := map[string]bool{"/tokenize": true, "/detokenize": true, "/slots": true}
+	got := map[string]bool{}
+	for i := 0; i < len(want); i++ {
+		select {
+		case path := <-captured:
+			got[path] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for capture; got %v so far, want %v", got, want)
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	for _, path := range []string{"/tokenize", "/detokenize", "/slots"} {
-		if !captured[path] {
+	for path := range want {
+		if !got[path] {
 			t.Errorf("%s was not captured", path)
 		}
 	}
