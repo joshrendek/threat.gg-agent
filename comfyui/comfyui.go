@@ -44,8 +44,25 @@ func newRouter() http.Handler {
 	r.HandleFunc("/queue", handleQueue).Methods("GET")
 	r.HandleFunc("/prompt", handlePrompt).Methods("POST")
 	r.HandleFunc("/prompt", handlePromptGet).Methods("GET")
+	// threat_gg-3kd: verified 404 on the live fleet. Every real client polls /history after
+	// submitting a workflow via /prompt. Response shape verified against the current source
+	// (github.com/comfyanonymous/ComfyUI execution.py, PromptQueue.get_history): this honeypot
+	// never actually executes a submitted workflow, so both the collection and any specific
+	// prompt_id are always the "nothing recorded yet" case, which real ComfyUI also renders as
+	// an empty JSON object — not a guess, the literal return value of that code path.
+	r.HandleFunc("/history", handleHistory).Methods("GET")
+	r.HandleFunc("/history/{prompt_id}", handleHistory).Methods("GET")
 	r.PathPrefix("/").HandlerFunc(handleCatchAll)
 	return r
+}
+
+// handleHistory serves both GET /history and GET /history/{prompt_id}. Real ComfyUI's
+// PromptQueue.get_history returns {} for the no-argument case on a fresh instance (self.history
+// starts empty) and {} for any prompt_id not present in self.history — which, since nothing this
+// honeypot "runs" via /prompt ever actually completes, is every prompt_id it will ever be asked
+// about. Both routes are therefore the same response.
+func handleHistory(w http.ResponseWriter, r *http.Request) {
+	llmcore.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 func handleSystemStats(w http.ResponseWriter, r *http.Request) {

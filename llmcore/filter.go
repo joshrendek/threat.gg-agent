@@ -17,7 +17,7 @@ var apiSignalSegments = map[string]bool{
 // (llama.cpp /props /completion /slots, vLLM /health /metrics, ComfyUI /system_stats /prompt,
 // LocalAI /models /readyz, Ray /nodes, …).
 var exactSignalPaths = map[string]bool{
-	"/models": true, "/props": true, "/health": true, "/readyz": true,
+	"/models": true, "/props": true, "/health": true, "/healthz": true, "/readyz": true,
 	"/metrics": true, "/version": true, "/slots": true, "/completion": true,
 	"/completions": true, "/tokenize": true, "/detokenize": true,
 	"/embedding": true, "/infill": true, "/system_stats": true,
@@ -44,6 +44,13 @@ func isSignalPath(path string) bool {
 			seg = seg[:i]
 		}
 		return apiSignalSegments[seg]
+	}
+	// ComfyUI's /history/{prompt_id} carries a path parameter, so it needs a prefix check
+	// rather than the exact-match table: a hit here means an attacker submitted a workflow via
+	// /prompt and is polling for its result, which is exactly the signal /history itself is kept
+	// for.
+	if strings.HasPrefix(p, "/history/") {
+		return true
 	}
 	return exactSignalPaths[p]
 }
