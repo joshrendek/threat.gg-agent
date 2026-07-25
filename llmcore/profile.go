@@ -37,6 +37,14 @@ type Profile struct {
 	// scoped per source IP. A global catalog would let one anonymous caller delete the
 	// advertised models and disarm the honeypot for everyone.
 	KnownModel func(r *http.Request, model string) bool
+	// OpenAICompatContentType overrides the content type used by the shared OpenAI-compatible
+	// generators (ChatCompletion, Completion) and their error paths. Empty defaults to bare
+	// CTJSON, which is correct for Ollama and vLLM: their /v1/* layer is served by a different
+	// framework than their native routes and never adds a charset (see the CT* comment above).
+	// llama.cpp is the exception — its entire surface, native and OpenAI-compat alike, is one
+	// cpp-httplib process, so /v1/* gets the same "; charset=utf-8" as everything else; its
+	// profile sets this field to CTJSONCharset accordingly.
+	OpenAICompatContentType string
 }
 
 func (p Profile) ct() string {
@@ -44,6 +52,13 @@ func (p Profile) ct() string {
 		return CTJSON
 	}
 	return p.ContentType
+}
+
+func (p Profile) openAICT() string {
+	if p.OpenAICompatContentType == "" {
+		return CTJSON
+	}
+	return p.OpenAICompatContentType
 }
 
 // known reports whether model is servable for this requester.
@@ -80,9 +95,11 @@ type ollamaErrorEnvelope struct {
 
 // WriteOpenAIError writes the OpenAI error envelope used by /v1/* surfaces:
 // {"error":{"message":…,"type":…,"param":null,"code":null}}. Matches Ollama's OpenAI-compat
-// layer byte-for-byte, including the explicit nulls and their position.
+// layer byte-for-byte, including the explicit nulls and their position. The content type is
+// per-profile (see Profile.OpenAICompatContentType) rather than a bare CTJSON constant, since
+// llama.cpp's /v1/* layer carries the same charset as the rest of its surface.
 func WriteOpenAIError(w http.ResponseWriter, p Profile, status int, message, errType string) {
-	w.Header().Set("Content-Type", CTJSON)
+	w.Header().Set("Content-Type", p.openAICT())
 	w.WriteHeader(status)
 	writeCompactJSON(w, openAIErrorEnvelope{Error: openAIErrorBody{Message: message, Type: errType}})
 }

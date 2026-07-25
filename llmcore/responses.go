@@ -83,7 +83,7 @@ func Responses(w http.ResponseWriter, r *http.Request, p Profile) {
 	now := time.Now().Unix()
 	in := promptTokensFor(prompt)
 
-	WriteJSONCT(w, http.StatusOK, CTJSON, responsesPayload{
+	WriteJSONCT(w, http.StatusOK, p.openAICT(), responsesPayload{
 		ID:        fmt.Sprintf("resp_%d", rand.Intn(100000)),
 		Object:    "response",
 		CreatedAt: now, CompletedAt: now,
@@ -107,8 +107,8 @@ func Responses(w http.ResponseWriter, r *http.Request, p Profile) {
 	})
 }
 
-// PromptOf returns the prompt/input text from a request body, for surfaces that need it outside
-// the generators (vLLM's /tokenize, for instance).
+// PromptOf returns the prompt/input/content text from a request body, for surfaces that need it
+// outside the generators (vLLM's and llama.cpp's /tokenize, for instance).
 func PromptOf(r *http.Request) string { return promptText(readBody(r)) }
 
 // PseudoTokens produces a plausible token-id sequence for text. Used by /tokenize, where the

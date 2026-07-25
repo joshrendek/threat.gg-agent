@@ -174,6 +174,7 @@ func promptText(body []byte) string {
 	var m struct {
 		Prompt   string `json:"prompt"`
 		Input    string `json:"input"`
+		Content  string `json:"content"` // llama.cpp's /tokenize and /completion use "content".
 		Messages []struct {
 			Content string `json:"content"`
 		} `json:"messages"`
@@ -184,6 +185,9 @@ func promptText(body []byte) string {
 	}
 	if m.Input != "" {
 		return m.Input
+	}
+	if m.Content != "" {
+		return m.Content
 	}
 	if len(m.Messages) > 0 {
 		return m.Messages[len(m.Messages)-1].Content
@@ -345,7 +349,7 @@ func ChatCompletion(w http.ResponseWriter, r *http.Request, p Profile) {
 	}
 
 	pt := promptTokensFor(promptText(body))
-	WriteJSONCT(w, http.StatusOK, CTJSON, openAIChatResponse{
+	WriteJSONCT(w, http.StatusOK, p.openAICT(), openAIChatResponse{
 		ID: id, Object: "chat.completion", Created: created, Model: model,
 		SystemFingerprint: p.SystemFingerprint,
 		Choices: []openAIChatChoice{{
@@ -371,7 +375,7 @@ func Completion(w http.ResponseWriter, r *http.Request, p Profile) {
 	}
 	reply, chunks, finish := capReply(smartReply(promptText(body)), maxTokensOf(body))
 	pt := promptTokensFor(promptText(body))
-	WriteJSONCT(w, http.StatusOK, CTJSON, openAITextResponse{
+	WriteJSONCT(w, http.StatusOK, p.openAICT(), openAITextResponse{
 		ID: completionID(p, "cmpl"), Object: "text_completion",
 		Created: time.Now().Unix(), Model: model,
 		SystemFingerprint: p.SystemFingerprint,
