@@ -29,10 +29,14 @@ type Profile struct {
 	// ShortIDs makes completion ids look like Ollama's ("chatcmpl-964") rather than the
 	// long opaque ids OpenAI and vLLM emit.
 	ShortIDs bool
-	// KnownModel reports whether a model exists in this instance's catalog. nil accepts any
-	// model; a non-nil predicate makes the surface return a faithful model-not-found error,
-	// which is what a real server does for a name it has not pulled.
-	KnownModel func(string) bool
+	// KnownModel reports whether a model exists in the catalog *as this requester sees it*. nil
+	// accepts any model; a non-nil predicate makes the surface return a faithful
+	// model-not-found error, which is what a real server does for a name it has not pulled.
+	//
+	// It takes the request because catalog mutations (/api/pull, /api/delete, /api/copy) are
+	// scoped per source IP. A global catalog would let one anonymous caller delete the
+	// advertised models and disarm the honeypot for everyone.
+	KnownModel func(r *http.Request, model string) bool
 }
 
 func (p Profile) ct() string {
@@ -42,16 +46,17 @@ func (p Profile) ct() string {
 	return p.ContentType
 }
 
-// known reports whether model is servable under this profile.
-func (p Profile) known(model string) bool {
-	return p.KnownModel == nil || p.KnownModel(model)
+// known reports whether model is servable for this requester.
+func (p Profile) known(r *http.Request, model string) bool {
+	return p.KnownModel == nil || p.KnownModel(r, model)
 }
 
 // resolveModel returns the requested model (or the profile default) plus whether the surface
-// should serve it. Callers write the product-appropriate not-found error when ok is false.
-func (p Profile) resolveModel(body []byte) (model string, ok bool) {
+// should serve it for this requester. Callers write the product-appropriate not-found error
+// when ok is false.
+func (p Profile) resolveModel(r *http.Request, body []byte) (model string, ok bool) {
 	model = modelOr(body, p.DefaultModel)
-	return model, p.known(model)
+	return model, p.known(r, model)
 }
 
 // Error envelopes are structs, not maps: encoding/json sorts map keys alphabetically, which

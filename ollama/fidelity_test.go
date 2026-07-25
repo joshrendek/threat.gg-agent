@@ -151,7 +151,7 @@ func TestAdvertisedModelsStillServe(t *testing.T) {
 		}
 	}
 	// And every advertised model must be servable, or the catalog is lying.
-	for _, m := range models.list() {
+	for _, m := range models.list(httptest.NewRequest("GET", "/", nil)) {
 		rec := do(t, "POST", "/api/generate", `{"model":"`+m.Name+`","prompt":"hi","stream":false}`)
 		if rec.Code != http.StatusOK {
 			t.Errorf("advertised model %s not servable: status %d", m.Name, rec.Code)
@@ -211,7 +211,7 @@ func TestPullStreamsAndRegistersModel(t *testing.T) {
 	t.Cleanup(func() { pullStepDelay = orig })
 
 	const name = "llama3.2:1b"
-	t.Cleanup(func() { models.remove(name) })
+	t.Cleanup(func() { models.remove(httptest.NewRequest("GET", "/", nil), name) })
 
 	rec := do(t, "POST", "/api/pull", `{"name":"`+name+`"}`)
 	if rec.Code != http.StatusOK {
@@ -237,7 +237,7 @@ func TestPullStreamsAndRegistersModel(t *testing.T) {
 			t.Fatalf("line %d is not JSON: %q", i, ln)
 		}
 	}
-	if !models.has(name) {
+	if !models.has(httptest.NewRequest("GET", "/", nil), name) {
 		t.Fatal("pulled model did not appear in the catalog")
 	}
 	// ...and is now servable and listed, which is the point of the divergence.

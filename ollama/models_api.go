@@ -136,7 +136,7 @@ func handleShow(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "model is required")
 		return
 	}
-	m, ok := models.get(req.model())
+	m, ok := models.get(r, req.model())
 	if !ok {
 		llmcore.WriteModelNotFoundAPI(w, profile, normalize(req.model()))
 		return
@@ -247,7 +247,7 @@ func handlePull(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	models.add(target)
+	models.add(r, target)
 }
 
 // -- /api/push, /api/create
@@ -278,7 +278,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 	_ = readJSON(r, &req)
 	w.Header().Set("Content-Type", llmcore.CTNDJSON)
 	w.WriteHeader(http.StatusOK)
-	if req.From != "" && models.has(req.From) {
+	if req.From != "" && models.has(r, req.From) {
 		for _, s := range []string{"using existing layer", "creating new layer", "writing manifest", "success"} {
 			writeLine(w, map[string]string{"status": s})
 		}
@@ -304,7 +304,7 @@ func handleCopy(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, err.Error())
 		return
 	}
-	src, ok := models.get(req.Source)
+	src, ok := models.get(r, req.Source)
 	if !ok {
 		// Note the escaped-quote form here: real Ollama uses %q for copy but '%s' for show.
 		llmcore.WriteOllamaError(w, profile, http.StatusNotFound,
@@ -316,7 +316,7 @@ func handleCopy(w http.ResponseWriter, r *http.Request) {
 		copied.Name = normalize(req.Dest)
 		copied.Model = copied.Name
 		copied.ModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		models.add(copied)
+		models.add(r, copied)
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -327,7 +327,7 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !models.remove(req.model()) {
+	if !models.remove(r, req.model()) {
 		llmcore.WriteModelNotFoundAPI(w, profile, normalize(req.model()))
 		return
 	}
@@ -360,7 +360,7 @@ func handleBlob(w http.ResponseWriter, r *http.Request) {
 func handleEmbedAPI(w http.ResponseWriter, r *http.Request) {
 	var req modelRequest
 	_ = readJSON(r, &req)
-	if req.model() != "" && !models.has(req.model()) {
+	if req.model() != "" && !models.has(r, req.model()) {
 		llmcore.WriteOllamaError(w, profile, http.StatusNotFound,
 			fmt.Sprintf("model %q not found, try pulling it first", req.model()))
 		return
@@ -371,7 +371,7 @@ func handleEmbedAPI(w http.ResponseWriter, r *http.Request) {
 func handleEmbedV1(w http.ResponseWriter, r *http.Request) {
 	var req modelRequest
 	_ = readJSON(r, &req)
-	if req.model() != "" && !models.has(req.model()) {
+	if req.model() != "" && !models.has(r, req.model()) {
 		llmcore.WriteOpenAIError(w, profile, http.StatusNotFound,
 			fmt.Sprintf("model %q not found, try pulling it first", req.model()), "not_found_error")
 		return

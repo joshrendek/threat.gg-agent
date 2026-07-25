@@ -73,7 +73,7 @@ func Responses(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteOpenAIError(w, p, http.StatusBadRequest, msg, "invalid_request_error")
 		return
 	}
-	model, known := p.resolveModel(body)
+	model, known := p.resolveModel(r, body)
 	if !known {
 		WriteModelNotFoundV1(w, p, model)
 		return
