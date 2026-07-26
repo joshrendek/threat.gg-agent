@@ -426,14 +426,20 @@ func showBodyForRequest(r *http.Request, m CatalogModel) []byte {
 		return buildShowPayload(m).body
 	}
 
+	buildLock := v.showLockFor(m.Name)
+	buildLock.Lock()
+	defer buildLock.Unlock()
+
 	v.showMu.Lock()
-	defer v.showMu.Unlock()
 	if cached, ok := v.showPayloads[m.Name]; ok && cached.key == key {
-		return cached.body
+		body := cached.body
+		v.showMu.Unlock()
+		return body
 	}
+	v.showMu.Unlock()
+
 	built := buildShowPayload(m)
-	v.showPayloads[m.Name] = cachedShowPayload{key: built.key, body: built.body}
-	return built.body
+	return models.cacheShowPayloadIfCurrent(clientIP(r), v, m, buildLock, built)
 }
 
 func showFor(m CatalogModel) showResponse {
@@ -499,7 +505,7 @@ func handlePull(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "model is required")
 		return
 	}
-	target := modelForName(name)
+	target := buildModelForName(name)
 	if target.Name == "" || len(target.Name) > maxModelNameBytes {
 		llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "invalid model name")
 		return
@@ -632,7 +638,7 @@ func handleCopy(w http.ResponseWriter, r *http.Request) {
 			llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "invalid model name")
 			return
 		}
-		if !models.add(r, copied) {
+		if !models.replace(r, copied) {
 			llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "model storage limit reached")
 			return
 		}

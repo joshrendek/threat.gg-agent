@@ -144,7 +144,7 @@ func TestShowCacheUsesFullModelIdentity(t *testing.T) {
 
 	// Install a same-name overlay with a different identity. This models a changed registry
 	// manifest and pins the cache boundary independently of /api/pull's known-model restoration.
-	overlay := modelForName("attacker-model:1b")
+	overlay := buildModelForName("attacker-model:1b")
 	overlay.Name = name
 	overlay.Model = name
 	overlay.Digest = strings.Repeat("b", 64)
@@ -184,7 +184,7 @@ func TestAdvertisedShowPayloadCacheExcludesOverlays(t *testing.T) {
 		t.Error("immutable base model did not reuse its serialized /api/show payload")
 	}
 
-	overlay := modelForName("cache-probe:1b")
+	overlay := buildModelForName("cache-probe:1b")
 	if isImmutableSeedModel(overlay) {
 		t.Fatal("pulled overlay was incorrectly recognized as an immutable seed")
 	}
@@ -294,7 +294,7 @@ func TestCopiedModelUsesSourceIdentityAndClearsBaseMarker(t *testing.T) {
 	if rec := doFrom(t, ip, http.MethodDelete, "/api/delete", `{"name":"`+advertisedName+`"}`); rec.Code != http.StatusOK {
 		t.Fatalf("delete advertised destination: status %d", rec.Code)
 	}
-	source := modelForName("foo:1b")
+	source := buildModelForName("foo:1b")
 	source.Name = advertisedName
 	source.Model = advertisedName
 	models.add(req, source)
@@ -344,10 +344,6 @@ func TestOverlayShowCacheInvalidatesAfterDeleteAndReplacement(t *testing.T) {
 	if got := initialShow.ModelInfo["llama.embedding_length"]; got != float64(2048) {
 		t.Fatalf("initial embedding length = %v, want 2048", got)
 	}
-	if rec := doFrom(t, ip, http.MethodDelete, "/api/delete", `{"name":"`+destination+`"}`); rec.Code != http.StatusOK {
-		t.Fatalf("delete initial model: status %d", rec.Code)
-	}
-
 	const source = "cache-source:70b"
 	if rec := doFrom(t, ip, http.MethodPost, "/api/pull", `{"name":"`+source+`"}`); rec.Code != http.StatusOK {
 		t.Fatalf("pull replacement source: status %d", rec.Code)
@@ -373,6 +369,80 @@ func TestOverlayShowCacheInvalidatesAfterDeleteAndReplacement(t *testing.T) {
 	}
 	if got := replacementShow.ModelInfo["llama.block_count"]; got != float64(80) {
 		t.Errorf("replacement block count = %v, want 80", got)
+	}
+}
+
+func TestCopyReplacesVisibleBaseDestination(t *testing.T) {
+	orig := pullStepDelay
+	pullStepDelay = func() time.Duration { return 0 }
+	t.Cleanup(func() { pullStepDelay = orig })
+
+	const ip = "203.0.113.70"
+	const source = "base-replacement:1b"
+	const destination = "llama3.2:latest"
+	if rec := doFrom(t, ip, http.MethodPost, "/api/pull", `{"name":"`+source+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("pull source: status %d", rec.Code)
+	}
+	if rec := doFrom(t, ip, http.MethodPost, "/api/copy",
+		`{"source":"`+source+`","destination":"`+destination+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("replace base destination: status %d: %s", rec.Code, rec.Body.String())
+	}
+
+	count := 0
+	for _, name := range catalogOf(t, ip) {
+		if name == destination {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("catalog contains %d copies of replaced base destination, want 1", count)
+	}
+	rec := doFrom(t, ip, http.MethodPost, "/api/show", `{"model":"`+destination+`"}`)
+	var show showResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &show); err != nil {
+		t.Fatalf("decode replaced base show: %v", err)
+	}
+	if got := show.ModelInfo["llama.embedding_length"]; got != float64(2048) {
+		t.Errorf("replaced base embedding length = %v, want copied 1B source value", got)
+	}
+	if got := show.ModelInfo["llama.block_count"]; got != float64(16) {
+		t.Errorf("replaced base block count = %v, want copied 1B source value", got)
+	}
+}
+
+func TestDeletedModelCannotRepopulateOverlayShowCache(t *testing.T) {
+	const ip = "203.0.113.71"
+	const name = "stale-show:1b"
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+	if !models.add(req, buildModelForName(name)) {
+		t.Fatal("add stale-show fixture")
+	}
+	stale, ok := models.get(req, name)
+	if !ok {
+		t.Fatal("stale-show fixture missing")
+	}
+	v := models.viewForCachedShow(ip)
+	if v == nil {
+		t.Fatal("stale-show view missing")
+	}
+	buildLock := v.showLockFor(name)
+	buildLock.Lock()
+	built := buildShowPayload(stale)
+	if !models.remove(req, name) {
+		buildLock.Unlock()
+		t.Fatal("delete stale-show fixture")
+	}
+	models.cacheShowPayloadIfCurrent(ip, v, stale, buildLock, built)
+	buildLock.Unlock()
+
+	v.showMu.Lock()
+	_, payloadRetained := v.showPayloads[name]
+	_, lockRetained := v.showLocks[name]
+	v.showMu.Unlock()
+	if payloadRetained || lockRetained {
+		t.Errorf("deleted model repopulated view cache: payload=%v lock=%v",
+			payloadRetained, lockRetained)
 	}
 }
 
@@ -418,7 +488,7 @@ func TestConcurrentAddsDoNotCreateDuplicateModels(t *testing.T) {
 	const name = "concurrent:1b"
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = ip + ":54321"
-	model := modelForName(name)
+	model := buildModelForName(name)
 	catalog := newCatalog()
 
 	var wg sync.WaitGroup
@@ -453,7 +523,7 @@ func TestPullReportsStorageLimitInsteadOfSuccess(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = ip + ":54321"
 	for i := 0; i < maxAddedPerView; i++ {
-		if !models.add(req, modelForName(fmt.Sprintf("full-%d:1b", i))) {
+		if !models.add(req, buildModelForName(fmt.Sprintf("full-%d:1b", i))) {
 			t.Fatalf("fill overlay at index %d", i)
 		}
 	}
@@ -496,7 +566,7 @@ func TestCopyRejectsInvalidOrFullDestination(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = ip + ":54321"
 		for i := 0; i < maxAddedPerView; i++ {
-			if !models.add(req, modelForName(fmt.Sprintf("copy-full-%d:1b", i))) {
+			if !models.add(req, buildModelForName(fmt.Sprintf("copy-full-%d:1b", i))) {
 				t.Fatalf("fill overlay at index %d", i)
 			}
 		}

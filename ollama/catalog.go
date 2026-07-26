@@ -150,7 +150,8 @@ type view struct {
 	added        []CatalogModel               // models this IP pulled or copied
 	removed      map[string]bool              // base models this IP deleted
 	showPayloads map[string]cachedShowPayload // bounded with added and evicted with this view
-	showMu       sync.Mutex                   // coalesces payload builds for this requester
+	showLocks    map[string]*sync.Mutex       // coalesces builds per model, not per requester
+	showMu       sync.Mutex                   // protects showPayloads and showLocks
 	seen         time.Time
 }
 
@@ -240,7 +241,11 @@ func (c *catalog) viewFor(ip string, create bool) *view {
 			}
 			delete(c.views, oldestKey)
 		}
-		v = &view{removed: map[string]bool{}, showPayloads: map[string]cachedShowPayload{}}
+		v = &view{
+			removed:      map[string]bool{},
+			showPayloads: map[string]cachedShowPayload{},
+			showLocks:    map[string]*sync.Mutex{},
+		}
 		c.views[ip] = v
 	}
 	v.seen = now
@@ -282,11 +287,20 @@ func (c *catalog) has(r *http.Request, name string) bool {
 	return ok
 }
 
-// add records a model as present for this requester only. It returns true when the model is
+// add records a pulled model as present for this requester only. It returns true when the model is
 // visible afterward, including when it was already present, and false when validation or the
 // per-view cap prevents storage. Visibility is checked under the same lock as the append so
-// concurrent pulls and copies cannot create duplicate catalog entries.
+// concurrent pulls cannot create duplicate catalog entries.
 func (c *catalog) add(r *http.Request, m CatalogModel) bool {
+	return c.store(r, m, false)
+}
+
+// replace records a copied model, replacing an existing destination atomically.
+func (c *catalog) replace(r *http.Request, m CatalogModel) bool {
+	return c.store(r, m, true)
+}
+
+func (c *catalog) store(r *http.Request, m CatalogModel, replace bool) bool {
 	if m.Name == "" || len(m.Name) > maxModelNameBytes {
 		return false
 	}
@@ -296,25 +310,40 @@ func (c *catalog) add(r *http.Request, m CatalogModel) bool {
 	ip := clientIP(r)
 	c.mu.Lock()
 	v := c.viewFor(ip, false)
+	baseVisible := false
 	for _, base := range c.base {
 		if base.Name == m.Name && (v == nil || !v.removed[m.Name]) {
-			c.mu.Unlock()
-			return true
+			baseVisible = true
+			break
 		}
 	}
 	if v != nil {
-		for _, added := range v.added {
+		for i, added := range v.added {
 			if added.Name == m.Name {
+				if replace {
+					v.added[i] = m
+				}
 				c.mu.Unlock()
+				if replace {
+					v.invalidateShowPayload(m.Name)
+				}
 				return true
 			}
 		}
-	} else {
+	}
+	if baseVisible && !replace {
+		c.mu.Unlock()
+		return true
+	}
+	if v == nil {
 		v = c.viewFor(ip, true)
 	}
 	if len(v.added) >= maxAddedPerView {
 		c.mu.Unlock()
 		return false
+	}
+	if baseVisible {
+		v.removed[m.Name] = true
 	}
 	v.added = append(v.added, m)
 	c.mu.Unlock()
@@ -327,7 +356,20 @@ func (c *catalog) add(r *http.Request, m CatalogModel) bool {
 func (v *view) invalidateShowPayload(name string) {
 	v.showMu.Lock()
 	delete(v.showPayloads, name)
+	delete(v.showLocks, name)
 	v.showMu.Unlock()
+}
+
+// showLockFor returns the bounded per-model build lock for this view.
+func (v *view) showLockFor(name string) *sync.Mutex {
+	v.showMu.Lock()
+	defer v.showMu.Unlock()
+	lock := v.showLocks[name]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		v.showLocks[name] = lock
+	}
+	return lock
 }
 
 // viewForCachedShow returns an existing view in O(1) without performing the TTL/LRU maintenance
@@ -338,9 +380,61 @@ func (c *catalog) viewForCachedShow(ip string) *view {
 	return c.views[ip]
 }
 
-// remove drops a model from this requester's view, backing /api/delete. Base models are never
-// mutated — the deletion is recorded in the caller's overlay, so they observe the faithful
-// behaviour (gone from /api/tags, inference 404s) while every other caller is unaffected.
+// cacheShowPayloadIfCurrent retains a completed overlay response only if the same model identity
+// is still visible in the same view. Catalog mutation and the brief cache insertion share c.mu,
+// so a delete cannot slip between validation and insertion.
+func (c *catalog) cacheShowPayloadIfCurrent(
+	ip string, expectedView *view, m CatalogModel, buildLock *sync.Mutex, built showPayload,
+) []byte {
+	c.mu.Lock()
+	v := c.views[ip]
+	nameVisible := false
+	identityCurrent := false
+	if v == expectedView {
+		for _, base := range c.base {
+			if base.Name == m.Name && !v.removed[m.Name] {
+				nameVisible = true
+				identityCurrent = built.key == (showCacheKey{
+					name: base.Name, digest: base.Digest, modifiedAt: base.ModifiedAt,
+				})
+				break
+			}
+		}
+		for _, added := range v.added {
+			if added.Name == m.Name {
+				nameVisible = true
+				identityCurrent = built.key == (showCacheKey{
+					name: added.Name, digest: added.Digest, modifiedAt: added.ModifiedAt,
+				})
+				break
+			}
+		}
+	}
+	if !identityCurrent {
+		c.mu.Unlock()
+		if !nameVisible {
+			expectedView.showMu.Lock()
+			if expectedView.showLocks[m.Name] == buildLock {
+				delete(expectedView.showLocks, m.Name)
+			}
+			expectedView.showMu.Unlock()
+		}
+		return built.body
+	}
+
+	v.showMu.Lock()
+	if cached, ok := v.showPayloads[m.Name]; ok && cached.key == built.key {
+		built.body = cached.body
+	} else {
+		v.showPayloads[m.Name] = cachedShowPayload{key: built.key, body: built.body}
+	}
+	v.showMu.Unlock()
+	c.mu.Unlock()
+	return built.body
+}
+
+// remove drops an added model or shadows a base model for this requester, backing /api/delete.
+// Base models are never mutated, so every other caller remains unaffected.
 func (c *catalog) remove(r *http.Request, name string) bool {
 	n := normalize(name)
 	if n == "" {
@@ -375,11 +469,11 @@ func (c *catalog) remove(r *http.Request, name string) bool {
 	return false
 }
 
-// modelForName restores the exact base-catalog identity for a known model, or builds a plausible
+// buildModelForName restores the exact base-catalog identity for a known model, or builds a plausible
 // catalog entry for an unknown model that an attacker pulled. Unknown-model parameter size and
 // footprint are inferred from the tag (":1b", ":70b", …) so a pulled llama3.2:1b does not claim
 // to be the same size as a 70B.
-func modelForName(name string) CatalogModel {
+func buildModelForName(name string) CatalogModel {
 	n := normalize(name)
 	// Pulling a model that exists in the immutable base catalog restores that exact registry
 	// model after a caller deleted it. Returning a generic same-name model here would make

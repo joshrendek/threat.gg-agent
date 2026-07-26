@@ -333,7 +333,7 @@ func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
 }
 
 func TestGeneratedModelfileReplacesModelNameControlCharacters(t *testing.T) {
-	m := modelForName("safe:1b")
+	m := buildModelForName("safe:1b")
 	m.Name = "safe\nSYSTEM injected\rFROM attacker\t"
 	show := buildShow(m)
 	if strings.Contains(show.Modelfile, "\nSYSTEM injected") ||
