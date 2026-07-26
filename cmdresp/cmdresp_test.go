@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshrendek/threat.gg-agent/llmcore"
 	"github.com/joshrendek/threat.gg-agent/proto"
 )
 
@@ -232,6 +233,32 @@ func TestMuxMiddleware(t *testing.T) {
 	}
 	if rec.Body.String() != "DEFAULT" {
 		t.Fatalf("miss body = %q, want DEFAULT", rec.Body.String())
+	}
+}
+
+func TestMuxMiddlewareMarksCapturedCommandResponseSource(t *testing.T) {
+	stub(t, func(*proto.CommandRequest) (*proto.CommandResponse, error) {
+		return &proto.CommandResponse{Response: `{"overridden":true}`, Matched: true}, nil
+	})
+	saved := make(chan *proto.LlmRequest, 1)
+	handler := llmcore.Capture(func(request *proto.LlmRequest) error {
+		saved <- request
+		return nil
+	})(MuxMiddleware("ollama")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("matched command response fell through")
+	})))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/generate", nil))
+	select {
+	case request := <-saved:
+		if request.ResponseSource != proto.LlmResponseSource_LLM_RESPONSE_SOURCE_COMMAND_RESPONSE {
+			t.Fatalf("response source = %v, want command response", request.ResponseSource)
+		}
+		if request.ResponseStatus != http.StatusOK {
+			t.Fatalf("response status = %d, want 200", request.ResponseStatus)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("captured command response was not saved")
 	}
 }
 

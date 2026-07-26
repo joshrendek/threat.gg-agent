@@ -25,8 +25,8 @@ var (
 	connMetadata   = metadata.New(map[string]string{"authorization": os.Getenv("API_KEY")})
 	honeypotClient proto.HoneypotClient
 
-	// saveTimeout bounds the newer honeypots' persistence calls (mongo/memcached) so a
-	// stalled gRPC server can't let fire-and-forget calls block forever and accumulate.
+	// saveTimeout bounds persistence calls that run asynchronously or retain larger
+	// request buffers, so a stalled gRPC server cannot accumulate blocked work.
 	// A package var so tests can shrink it.
 	saveTimeout = 5 * time.Second
 )
@@ -187,37 +187,49 @@ func SaveEtcdRequest(in *proto.EtcdRequest) error {
 }
 
 func SaveVllmRequest(in *proto.LlmRequest) error {
-	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveVllm(ctx, in)
 	return err
 }
 
 func SaveOllamaRequest(in *proto.LlmRequest) error {
-	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveOllama(ctx, in)
 	return err
 }
 
 func SaveRayRequest(in *proto.LlmRequest) error {
-	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveRay(ctx, in)
 	return err
 }
 
 func SaveLocalaiRequest(in *proto.LlmRequest) error {
-	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveLocalai(ctx, in)
 	return err
 }
 
 func SaveLlamacppRequest(in *proto.LlmRequest) error {
-	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveLlamacpp(ctx, in)
 	return err
 }
 
 func SaveComfyuiRequest(in *proto.LlmRequest) error {
-	ctx := metadata.NewOutgoingContext(context.Background(), connMetadata)
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveComfyui(ctx, in)
 	return err
 }

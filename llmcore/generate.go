@@ -3,6 +3,7 @@ package llmcore
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"math/rand"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Model is one entry in an OpenAI /v1/models listing.
@@ -31,53 +34,164 @@ var replyPool = []string{
 	"Happy to help! Here are a few things to consider before we begin.",
 }
 
-func pickReply() string { return replyPool[rand.Intn(len(replyPool))] }
+// ReplyKind is a bounded description of why a response was selected. The values deliberately
+// match the server-side telemetry enum so response fidelity can be measured without retaining
+// generated text.
+type ReplyKind string
+
+const (
+	ReplyKindOllamaDescription ReplyKind = "ollama_description"
+	ReplyKindModelIntroEN      ReplyKind = "model_intro_en"
+	ReplyKindModelIntroZH      ReplyKind = "model_intro_zh"
+	ReplyKindArithmetic        ReplyKind = "arithmetic"
+	ReplyKindLiteralEcho       ReplyKind = "literal_echo"
+	ReplyKindValidationFact    ReplyKind = "validation_fact"
+	ReplyKindGenericSafe       ReplyKind = "generic_safe"
+)
+
+// ReplyResult carries the safe response and its bounded classification.
+type ReplyResult struct {
+	Text string
+	Kind ReplyKind
+}
+
+func pickReplyFor(prompt, model string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(prompt))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(model))
+	return replyPool[int(h.Sum32())%len(replyPool)]
+}
 
 var (
 	// echoRe matches the liveness/echo probes scanners use to confirm an endpoint really runs
-	// a model before abusing it: "say pong", "reply with OK", "repeat after me: X", etc.
+	// a model before abusing it. Its captured value is separately constrained to a short,
+	// literal token so instruction tails and attacker-controlled prose are never reflected.
 	echoRe = regexp.MustCompile(`(?i)^\s*(?:say|repeat(?:\s+after\s+me)?|reply(?:\s+with)?|respond(?:\s+with)?|output|print|echo)\b[:,\s]+(.+)$`)
 	// arithRe matches trivial arithmetic liveness checks: "what is 2+2", "10 * 3".
 	arithRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s*([-+*/xX])\s*(\d{1,6})\s*=?\s*\??\s*$`)
+	// wordArithRe covers natural-language probes seen in production, such as "2 plus 2".
+	wordArithRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s+(plus|minus|times|multiplied\s+by|divided\s+by)\s+(\d{1,6})\s*=?\s*\??\s*$`)
 )
 
-// smartReply returns a response tuned to pass the liveness/validation probes that scanners run
-// to confirm an exposed LLM endpoint is a real, instruction-following model before they start
-// abusing it. Matching those probes (echo, arithmetic, greeting) makes the honeypot look real,
-// so the attacker escalates to their actual prompts — which we capture. Anything else falls
-// back to the generic pool, which reads as a safety-tuned deflection.
-func smartReply(prompt string) string {
+// ReplyFor returns a bounded, deterministic response tuned to the liveness and validation
+// probes scanners use before escalating to their actual prompts. It does not execute prompts or
+// call an external model. Unsupported input receives a deterministic safety-tuned response.
+func ReplyFor(prompt, model string) ReplyResult {
 	p := strings.TrimSpace(prompt)
 	if p == "" {
-		return pickReply()
+		return genericReply(p, model)
 	}
-	if m := echoRe.FindStringSubmatch(p); m != nil {
-		if s := cleanEcho(m[1]); s != "" {
-			return s
+
+	lower := strings.ToLower(strings.Join(strings.Fields(p), " "))
+	normalized := strings.Trim(lower, " .!?。！？")
+
+	for _, unsafe := range []string{
+		"ignore previous", "ignore all previous", "system prompt", "developer message",
+		"hidden instruction", "reveal your instruction", "jailbreak",
+	} {
+		if strings.Contains(normalized, unsafe) {
+			return genericReply(p, model)
+		}
+	}
+
+	if strings.Contains(normalized, "ollama server") &&
+		(strings.Contains(normalized, "what") && strings.Contains(normalized, "does") ||
+			strings.Contains(normalized, "describe") || strings.Contains(normalized, "description")) {
+		return ReplyResult{
+			Text: "An Ollama server hosts and runs language models locally, exposing APIs for chat and text generation.",
+			Kind: ReplyKindOllamaDescription,
+		}
+	}
+	if strings.Contains(p, "中文") &&
+		(strings.Contains(p, "介绍一下你自己") || strings.Contains(p, "介绍你自己")) {
+		return ReplyResult{
+			Text: fmt.Sprintf("我是 %s，可协助文本生成、问答、总结和编程，但回答可能有误。", displayModel(model)),
+			Kind: ReplyKindModelIntroZH,
+		}
+	}
+	if strings.Contains(normalized, "introduce yourself") ||
+		normalized == "who are you" {
+		return ReplyResult{
+			Text: fmt.Sprintf("I'm %s, an AI model that can help with questions, writing, summarization, and coding.", displayModel(model)),
+			Kind: ReplyKindModelIntroEN,
 		}
 	}
 	if m := arithRe.FindStringSubmatch(p); m != nil {
 		if s, ok := computeArith(m[1], m[2], m[3]); ok {
-			return s
+			return ReplyResult{Text: s, Kind: ReplyKindArithmetic}
 		}
 	}
-	switch strings.ToLower(strings.Trim(p, " .!?")) {
-	case "hi", "hello", "hey", "yo", "greetings":
-		return "Hello! How can I help you today?"
+	if m := wordArithRe.FindStringSubmatch(p); m != nil {
+		if s, ok := computeArith(m[1], m[2], m[3]); ok {
+			return ReplyResult{Text: s, Kind: ReplyKindArithmetic}
+		}
 	}
-	return pickReply()
+
+	switch normalized {
+	case "name a fruit", "give me a fruit":
+		return ReplyResult{Text: "Apple.", Kind: ReplyKindValidationFact}
+	case "count to five", "count from one to five":
+		return ReplyResult{Text: "One, two, three, four, five.", Kind: ReplyKindValidationFact}
+	case "what color is the sky", "what colour is the sky":
+		return ReplyResult{Text: "The sky usually appears blue during the day.", Kind: ReplyKindValidationFact}
+	case "what story should we write":
+		return ReplyResult{
+			Text: "We could write a short mystery about a lost message that changes a small town.",
+			Kind: ReplyKindValidationFact,
+		}
+	case "hi", "hello", "hey", "yo", "greetings":
+		return ReplyResult{Text: "Hello! How can I help you today?", Kind: ReplyKindValidationFact}
+	}
+
+	if m := echoRe.FindStringSubmatch(p); m != nil {
+		if s := cleanLiteralEcho(m[1]); s != "" {
+			return ReplyResult{Text: s, Kind: ReplyKindLiteralEcho}
+		}
+	}
+	return genericReply(p, model)
 }
 
-// cleanEcho strips wrapping quotes and trailing punctuation from an echo payload and caps its
-// length so a huge "say <...>" can't produce an unbounded reply.
-func cleanEcho(s string) string {
+// smartReply is a test convenience for model-neutral response selection. Production
+// generation paths use classifiedReply with the resolved advertised model.
+func smartReply(prompt string) string { return ReplyFor(prompt, "").Text }
+
+func genericReply(prompt, model string) ReplyResult {
+	return ReplyResult{Text: pickReplyFor(prompt, model), Kind: ReplyKindGenericSafe}
+}
+
+func displayModel(model string) string {
+	if strings.TrimSpace(model) == "" {
+		return "this model"
+	}
+	return strings.TrimSpace(model)
+}
+
+// cleanLiteralEcho accepts only a small literal value. This preserves common probes like
+// "Reply with OK" and nonce echoes while rejecting arbitrary instructions and prose.
+func cleanLiteralEcho(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, "\"'`")
 	s = strings.TrimRight(s, " .!?\n\r\t")
 	s = strings.Trim(s, "\"'`")
 	s = strings.TrimSpace(s)
-	if len(s) > 2000 {
-		s = s[:2000]
+	if s == "" || utf8.RuneCountInString(s) > 24 || len(strings.Fields(s)) > 3 {
+		return ""
+	}
+	lower := strings.ToLower(s)
+	for _, blocked := range []string{
+		"system prompt", "instruction", "password", "secret", "api key", "token",
+		"select ", "drop ", "delete ", "insert ", "update ",
+	} {
+		if strings.Contains(lower, blocked) {
+			return ""
+		}
+	}
+	for _, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.IsSpace(r) &&
+			r != '_' && r != '-' && r != '.' {
+			return ""
+		}
 	}
 	return s
 }
@@ -90,15 +204,16 @@ func computeArith(a, op, b string) (string, bool) {
 	if err1 != nil || err2 != nil {
 		return "", false
 	}
+	op = strings.ToLower(strings.Join(strings.Fields(op), " "))
 	var r int
 	switch op {
-	case "+":
+	case "+", "plus":
 		r = x + y
-	case "-":
+	case "-", "minus":
 		r = x - y
-	case "*", "x", "X":
+	case "*", "x", "times", "multiplied by":
 		r = x * y
-	case "/":
+	case "/", "divided by":
 		if y == 0 {
 			return "", false
 		}
@@ -170,27 +285,73 @@ func capReply(reply string, max int) (text string, chunks []string, finish strin
 	return reply, chunks, "stop"
 }
 
+type promptContent string
+
+func (c *promptContent) UnmarshalJSON(body []byte) error {
+	*c = promptContent(strings.Join(promptTextParts(body, 0), "\n"))
+	return nil
+}
+
+const maxPromptContentDepth = 4
+
+func promptTextParts(body []byte, depth int) []string {
+	if depth > maxPromptContentDepth {
+		return nil
+	}
+	var text string
+	if json.Unmarshal(body, &text) == nil {
+		if text == "" {
+			return nil
+		}
+		return []string{text}
+	}
+	var parts []json.RawMessage
+	if json.Unmarshal(body, &parts) == nil {
+		var values []string
+		for _, part := range parts {
+			values = append(values, promptTextParts(part, depth+1)...)
+		}
+		return values
+	}
+
+	var part struct {
+		Text    string          `json:"text"`
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(body, &part) != nil {
+		return nil
+	}
+	var values []string
+	if part.Text != "" {
+		values = append(values, part.Text)
+	}
+	if len(part.Content) > 0 {
+		values = append(values, promptTextParts(part.Content, depth+1)...)
+	}
+	return values
+}
+
 func promptText(body []byte) string {
 	var m struct {
-		Prompt   string `json:"prompt"`
-		Input    string `json:"input"`
-		Content  string `json:"content"` // llama.cpp's /tokenize request uses "content" (/completion's request field is "prompt"; "content" there names the response field instead).
+		Prompt   promptContent `json:"prompt"`
+		Input    promptContent `json:"input"`
+		Content  promptContent `json:"content"` // llama.cpp's /tokenize request uses "content" (/completion's request field is "prompt"; "content" there names the response field instead).
 		Messages []struct {
-			Content string `json:"content"`
+			Content promptContent `json:"content"`
 		} `json:"messages"`
 	}
 	_ = json.Unmarshal(body, &m)
 	if m.Prompt != "" {
-		return m.Prompt
+		return string(m.Prompt)
 	}
 	if m.Input != "" {
-		return m.Input
+		return string(m.Input)
 	}
 	if m.Content != "" {
-		return m.Content
+		return string(m.Content)
 	}
 	if len(m.Messages) > 0 {
-		return m.Messages[len(m.Messages)-1].Content
+		return string(m.Messages[len(m.Messages)-1].Content)
 	}
 	return ""
 }
@@ -312,7 +473,7 @@ func ChatCompletion(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteModelNotFoundV1(w, p, model)
 		return
 	}
-	reply, chunks, finish := capReply(smartReply(promptText(body)), maxTokensOf(body))
+	reply, chunks, finish := capReply(classifiedReply(r, promptText(body), model).Text, maxTokensOf(body))
 	id := completionID(p, "chatcmpl")
 	created := time.Now().Unix()
 
@@ -373,7 +534,7 @@ func Completion(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteModelNotFoundV1(w, p, model)
 		return
 	}
-	reply, chunks, finish := capReply(smartReply(promptText(body)), maxTokensOf(body))
+	reply, chunks, finish := capReply(classifiedReply(r, promptText(body), model).Text, maxTokensOf(body))
 	pt := promptTokensFor(promptText(body))
 	WriteJSONCT(w, http.StatusOK, p.openAICT(), openAITextResponse{
 		ID: completionID(p, "cmpl"), Object: "text_completion",
@@ -482,7 +643,7 @@ func OllamaGenerate(w http.ResponseWriter, r *http.Request, p Profile) {
 		return
 	}
 	prompt := promptText(body)
-	reply, chunks, finish := capReply(smartReply(prompt), maxTokensOf(body))
+	reply, chunks, finish := capReply(classifiedReply(r, prompt, model).Text, maxTokensOf(body))
 	pt := promptTokensFor(prompt)
 	t := newTimings(model, keepAliveOf(body), pt, len(chunks))
 
@@ -527,7 +688,7 @@ func OllamaChat(w http.ResponseWriter, r *http.Request, p Profile) {
 		return
 	}
 	prompt := promptText(body)
-	reply, chunks, finish := capReply(smartReply(prompt), maxTokensOf(body))
+	reply, chunks, finish := capReply(classifiedReply(r, prompt, model).Text, maxTokensOf(body))
 	pt := promptTokensFor(prompt)
 	t := newTimings(model, keepAliveOf(body), pt, len(chunks))
 
