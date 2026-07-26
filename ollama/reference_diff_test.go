@@ -2,12 +2,16 @@ package ollama
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestAgainstReferenceServer diffs this honeypot against a real Ollama, so the fidelity claims
@@ -27,6 +31,7 @@ func TestAgainstReferenceServer(t *testing.T) {
 		t.Skip("set OLLAMA_REFERENCE_URL to a real Ollama to run the reference diff")
 	}
 	ref = strings.TrimRight(ref, "/")
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	srv := httptest.NewServer(buildHandler())
 	defer srv.Close()
@@ -79,7 +84,7 @@ func TestAgainstReferenceServer(t *testing.T) {
 		if c.body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -119,6 +124,102 @@ func TestAgainstReferenceServer(t *testing.T) {
 				if !bytes.Equal(bytes.TrimSpace(realBody), bytes.TrimSpace(ourBody)) {
 					t.Errorf("body mismatch:\n honeypot: %s\n real:     %s", ourBody, realBody)
 				}
+			}
+		})
+	}
+}
+
+// TestShowAgainstReferenceServer compares the fields a profiler uses to identify the underlying
+// GGUF architecture. It runs only for models shared by the reference and honeypot catalogs, so a
+// developer can point it at a smaller real installation without pulling every advertised model.
+func TestShowAgainstReferenceServer(t *testing.T) {
+	ref := os.Getenv("OLLAMA_REFERENCE_URL")
+	if ref == "" {
+		t.Skip("set OLLAMA_REFERENCE_URL to a real Ollama to run the reference diff")
+	}
+	ref = strings.TrimRight(ref, "/")
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	srv := httptest.NewServer(buildHandler())
+	defer srv.Close()
+
+	fetchShow := func(base, model string) (*http.Response, []byte) {
+		t.Helper()
+		resp, err := client.Post(base+"/api/show", "application/json",
+			strings.NewReader(`{"model":"`+model+`"}`))
+		if err != nil {
+			t.Fatalf("%s /api/show %s: %v", base, model, err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			t.Fatalf("read %s /api/show %s: %v", base, model, err)
+		}
+		return resp, body
+	}
+
+	keys := func(body []byte) []string {
+		t.Helper()
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Fatalf("decode top-level response: %v", err)
+		}
+		out := make([]string, 0, len(raw))
+		for key := range raw {
+			out = append(out, key)
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	for _, model := range []string{"qwen2.5-coder:7b", "gemma3:12b"} {
+		t.Run(model, func(t *testing.T) {
+			realHTTP, realBody := fetchShow(ref, model)
+			if realHTTP.StatusCode == http.StatusNotFound {
+				t.Skipf("reference server does not have shared model %s", model)
+			}
+			if realHTTP.StatusCode != http.StatusOK {
+				t.Fatalf("reference status %d: %s", realHTTP.StatusCode, realBody)
+			}
+			ourHTTP, ourBody := fetchShow(srv.URL, model)
+			if ourHTTP.StatusCode != http.StatusOK {
+				t.Fatalf("honeypot status %d: %s", ourHTTP.StatusCode, ourBody)
+			}
+
+			if realKeys, ourKeys := keys(realBody), keys(ourBody); !reflect.DeepEqual(realKeys, ourKeys) {
+				t.Errorf("top-level keys:\n honeypot: %v\n real:     %v", ourKeys, realKeys)
+			}
+
+			var real, ours showResponse
+			if err := json.Unmarshal(realBody, &real); err != nil {
+				t.Fatalf("decode reference response: %v", err)
+			}
+			if err := json.Unmarshal(ourBody, &ours); err != nil {
+				t.Fatalf("decode honeypot response: %v", err)
+			}
+			if !reflect.DeepEqual(ours.Details, real.Details) {
+				t.Errorf("details:\n honeypot: %#v\n real:     %#v", ours.Details, real.Details)
+			}
+			if !reflect.DeepEqual(ours.Capabilities, real.Capabilities) {
+				t.Errorf("capabilities:\n honeypot: %v\n real:     %v", ours.Capabilities, real.Capabilities)
+			}
+			if !reflect.DeepEqual(ours.ModelInfo, real.ModelInfo) {
+				t.Error("model_info differs from real Ollama")
+			}
+			if !reflect.DeepEqual(ours.Tensors, real.Tensors) {
+				t.Errorf("tensor inventory differs: honeypot=%d real=%d", len(ours.Tensors), len(real.Tensors))
+			}
+			if ours.License != real.License {
+				t.Error("license differs from real Ollama")
+			}
+			if ours.Template != real.Template {
+				t.Error("template differs from real Ollama")
+			}
+			if ours.System != real.System {
+				t.Error("system prompt differs from real Ollama")
+			}
+			if ours.Parameters != real.Parameters {
+				t.Error("parameters differ from real Ollama")
 			}
 		})
 	}

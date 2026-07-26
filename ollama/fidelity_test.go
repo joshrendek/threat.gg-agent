@@ -1,9 +1,12 @@
 package ollama
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -203,6 +206,353 @@ func TestShowIsDetailed(t *testing.T) {
 	}
 }
 
+func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
+	tests := []struct {
+		model          string
+		modelInfoCount int
+		tensorCount    int
+		licenseMarker  string
+		templateMarker string
+		system         string
+		fixturePath    string
+		fixtureSHA256  string
+		requiredTensor tensor
+	}{
+		{
+			model: "qwen2.5-coder:7b", modelInfoCount: 33, tensorCount: 339,
+			licenseMarker: "Apache License", templateMarker: "<|fim_prefix|>",
+			system:         "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+			fixturePath:    "testdata/show_qwen2.5-coder_7b_ollama-0.30.11.json",
+			fixtureSHA256:  "c7fd56f0cc81c546c3c69aa80972133037b25d96e98fe52005539f803d242795",
+			requiredTensor: tensor{Name: "blk.0.attn_k.bias", Type: "F32", Shape: []int{512}},
+		},
+		{
+			model: "gemma3:12b", modelInfoCount: 36, tensorCount: 1065,
+			licenseMarker: "Gemma Terms of Use", templateMarker: "<start_of_turn>",
+			fixturePath:    "testdata/show_gemma3_12b_ollama-0.30.11.json",
+			fixtureSHA256:  "34da6ab09d374135565e99c7a7fa556353edb5c85aa2864a04c2736579e14943",
+			requiredTensor: tensor{Name: "mm.mm_input_projection.weight", Type: "F16", Shape: []int{3840, 1152}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.model, func(t *testing.T) {
+			fixture, err := showFixtureFS.ReadFile(tc.fixturePath)
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			if got := fmt.Sprintf("%x", sha256.Sum256(fixture)); got != tc.fixtureSHA256 {
+				t.Fatalf("fixture checksum = %s, want captured Ollama checksum %s", got, tc.fixtureSHA256)
+			}
+
+			rec := do(t, "POST", "/api/show", `{"model":"`+tc.model+`"}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+			}
+			var got showResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			want := groundedShowFixtures[tc.model]
+			m, ok := models.get(httptest.NewRequest("GET", "/", nil), tc.model)
+			if !ok {
+				t.Fatalf("grounded model %q is not advertised", tc.model)
+			}
+			want.ModifiedAt = m.ModifiedAt
+			if !reflect.DeepEqual(got, want) {
+				t.Fatal("/api/show response diverged from its grounded Ollama 0.30.11 fixture")
+			}
+			var fixtureRaw, responseRaw map[string]json.RawMessage
+			if err := json.Unmarshal(fixture, &fixtureRaw); err != nil {
+				t.Fatalf("decode raw fixture: %v", err)
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &responseRaw); err != nil {
+				t.Fatalf("decode raw response keys: %v", err)
+			}
+			fixtureKeys := make(map[string]bool, len(fixtureRaw))
+			responseKeys := make(map[string]bool, len(responseRaw))
+			for key := range fixtureRaw {
+				fixtureKeys[key] = true
+			}
+			for key := range responseRaw {
+				responseKeys[key] = true
+			}
+			if !reflect.DeepEqual(responseKeys, fixtureKeys) {
+				t.Errorf("wire-level top-level keys = %v, want captured fixture keys %v",
+					responseKeys, fixtureKeys)
+			}
+			if len(got.ModelInfo) != tc.modelInfoCount {
+				t.Errorf("model_info keys = %d, want %d", len(got.ModelInfo), tc.modelInfoCount)
+			}
+			if len(got.Tensors) != tc.tensorCount {
+				t.Errorf("tensors = %d, want %d", len(got.Tensors), tc.tensorCount)
+			}
+			foundRequiredTensor := false
+			for _, candidate := range got.Tensors {
+				if candidate.Name == tc.requiredTensor.Name {
+					foundRequiredTensor = true
+					if !reflect.DeepEqual(candidate, tc.requiredTensor) {
+						t.Errorf("tensor %q = %#v, want captured %#v",
+							candidate.Name, candidate, tc.requiredTensor)
+					}
+					break
+				}
+			}
+			if !foundRequiredTensor {
+				t.Errorf("captured tensor %q missing", tc.requiredTensor.Name)
+			}
+			if !strings.Contains(got.License, tc.licenseMarker) {
+				t.Errorf("license does not contain grounded marker %q", tc.licenseMarker)
+			}
+			if !strings.Contains(got.Template, tc.templateMarker) {
+				t.Errorf("template does not contain grounded marker %q", tc.templateMarker)
+			}
+			if got.System != tc.system {
+				t.Errorf("system = %q, want %q", got.System, tc.system)
+			}
+			if strings.Contains(got.Modelfile, "/Users/") {
+				t.Error("capturing host's model-store path leaked into fixture")
+			}
+
+			var raw map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+				t.Fatalf("decode raw response: %v", err)
+			}
+			details := raw["details"].(map[string]any)
+			if len(details) != 6 {
+				t.Errorf("details keys = %d, want exactly six show fields (excluding the two tags-only dimensions)", len(details))
+			}
+			if _, ok := details["context_length"]; ok {
+				t.Error("/api/show details must omit context_length (it appears only in /api/tags)")
+			}
+			if _, ok := details["embedding_length"]; ok {
+				t.Error("/api/show details must omit embedding_length (it appears only in /api/tags)")
+			}
+		})
+	}
+}
+
+func TestGeneratedModelfileReplacesModelNameControlCharacters(t *testing.T) {
+	m := buildModelForName("safe:1b")
+	m.Name = "safe\nSYSTEM injected\rFROM attacker\t"
+	show := buildShow(m)
+	if strings.Contains(show.Modelfile, "\nSYSTEM injected") ||
+		strings.Contains(show.Modelfile, "\nFROM attacker") {
+		t.Errorf("model name injected an active Modelfile directive:\n%s", show.Modelfile)
+	}
+	if !strings.Contains(show.Modelfile, "# FROM safe SYSTEM injected FROM attacker ") {
+		t.Errorf("sanitized model name missing from one comment line:\n%s", show.Modelfile)
+	}
+}
+
+func TestPulledModelNameCannotInjectModelfileDirective(t *testing.T) {
+	orig := pullStepDelay
+	pullStepDelay = func() time.Duration { return 0 }
+	t.Cleanup(func() { pullStepDelay = orig })
+
+	const name = "safe\nSYSTEM injected\rFROM attacker\t:1b"
+	t.Cleanup(func() {
+		do(t, http.MethodDelete, "/api/delete", fmt.Sprintf(`{"name":%q}`, name))
+	})
+	pull := do(t, http.MethodPost, "/api/pull", fmt.Sprintf(`{"name":%q}`, name))
+	if pull.Code != http.StatusOK {
+		t.Fatalf("pull status %d: %s", pull.Code, pull.Body.String())
+	}
+	showRec := do(t, http.MethodPost, "/api/show", fmt.Sprintf(`{"model":%q}`, name))
+	if showRec.Code != http.StatusOK {
+		t.Fatalf("show status %d: %s", showRec.Code, showRec.Body.String())
+	}
+	var show showResponse
+	if err := json.Unmarshal(showRec.Body.Bytes(), &show); err != nil {
+		t.Fatalf("decode show: %v", err)
+	}
+	if strings.Contains(show.Modelfile, "\nSYSTEM injected") ||
+		strings.Contains(show.Modelfile, "\nFROM attacker") {
+		t.Errorf("pulled name injected an active Modelfile directive:\n%s", show.Modelfile)
+	}
+}
+
+func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
+	tests := []struct {
+		model, architecture                 string
+		family, parameterSize, quantization string
+		families                            []string
+		blocks, context, embd, ffn, vocab   int
+		kvWidth, tensorCount                int
+		vision                              bool
+	}{
+		{
+			model: "llama3.2:latest", architecture: "llama",
+			family: "llama", families: []string{"llama"}, parameterSize: "3.2B", quantization: "Q4_K_M",
+			blocks: 28, context: 131072, embd: 3072, ffn: 8192, vocab: 128256,
+			kvWidth: 1024, tensorCount: 255,
+		},
+		{
+			model: "mistral:latest", architecture: "llama",
+			family: "llama", families: []string{"llama"}, parameterSize: "7.2B", quantization: "Q4_0",
+			blocks: 32, context: 32768, embd: 4096, ffn: 14336, vocab: 32768,
+			kvWidth: 1024, tensorCount: 291,
+		},
+		{
+			model: "deepseek-r1:8b", architecture: "llama",
+			family: "llama", families: []string{"llama"}, parameterSize: "8.0B", quantization: "Q4_K_M",
+			blocks: 32, context: 131072, embd: 4096, ffn: 14336, vocab: 128256,
+			kvWidth: 1024, tensorCount: 291,
+		},
+		{
+			model: "llava:latest", architecture: "llama",
+			family: "llama", families: []string{"llama", "clip"}, parameterSize: "7B", quantization: "Q4_0",
+			blocks: 32, context: 4096, embd: 4096, ffn: 11008, vocab: 32000,
+			kvWidth: 4096, tensorCount: 488, vision: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.model, func(t *testing.T) {
+			rec := do(t, "POST", "/api/show", `{"model":"`+tc.model+`"}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+			}
+			var resp showResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode generated /api/show response: %v", err)
+			}
+			wantShowDetails := showDetails{
+				Format: "gguf", Family: tc.family, Families: tc.families,
+				ParameterSize: tc.parameterSize, QuantizationLevel: tc.quantization,
+			}
+			if !reflect.DeepEqual(resp.Details, wantShowDetails) {
+				t.Errorf("/api/show details = %#v, want %#v", resp.Details, wantShowDetails)
+			}
+
+			tagsRec := do(t, "GET", "/api/tags", "")
+			var tags struct {
+				Models []CatalogModel `json:"models"`
+			}
+			if err := json.Unmarshal(tagsRec.Body.Bytes(), &tags); err != nil {
+				t.Fatalf("decode /api/tags: %v", err)
+			}
+			var tagged *CatalogModel
+			for i := range tags.Models {
+				if tags.Models[i].Name == tc.model {
+					tagged = &tags.Models[i]
+					break
+				}
+			}
+			if tagged == nil {
+				t.Fatalf("%s missing from /api/tags", tc.model)
+			}
+			wantTagDetails := Details{
+				Format: "gguf", Family: tc.family, Families: tc.families,
+				ParameterSize: tc.parameterSize, QuantizationLevel: tc.quantization,
+				ContextLength: tc.context, EmbeddingLength: tc.embd,
+			}
+			if !reflect.DeepEqual(tagged.Details, wantTagDetails) {
+				t.Errorf("/api/tags details = %#v, want %#v", tagged.Details, wantTagDetails)
+			}
+
+			assertStringInfo := func(key, want string) {
+				t.Helper()
+				if got := resp.ModelInfo[key]; got != want {
+					t.Errorf("model_info[%q] = %v, want %v", key, got, want)
+				}
+			}
+			assertIntInfo := func(key string, want int) {
+				t.Helper()
+				got, ok := resp.ModelInfo[key].(float64)
+				if !ok || int(got) != want {
+					t.Errorf("model_info[%q] = %v, want %d", key, resp.ModelInfo[key], want)
+				}
+			}
+			assertStringInfo("general.architecture", tc.architecture)
+			assertIntInfo(tc.architecture+".block_count", tc.blocks)
+			assertIntInfo(tc.architecture+".context_length", tc.context)
+			assertIntInfo(tc.architecture+".embedding_length", tc.embd)
+			assertIntInfo(tc.architecture+".feed_forward_length", tc.ffn)
+			assertIntInfo(tc.architecture+".vocab_size", tc.vocab)
+
+			if len(resp.Tensors) != tc.tensorCount {
+				t.Errorf("tensor count = %d, want independently specified %d",
+					len(resp.Tensors), tc.tensorCount)
+			}
+			tensors := make(map[string]tensor, len(resp.Tensors))
+			textBlocks := make(map[string]bool, tc.blocks)
+			hasVisionTensor := false
+			for _, candidate := range resp.Tensors {
+				if _, duplicate := tensors[candidate.Name]; duplicate {
+					t.Errorf("duplicate tensor %q", candidate.Name)
+				}
+				tensors[candidate.Name] = candidate
+				for _, dimension := range candidate.Shape {
+					if dimension <= 0 {
+						t.Errorf("tensor %q has non-positive shape %v", candidate.Name, candidate.Shape)
+					}
+				}
+				if strings.HasPrefix(candidate.Name, "blk.") {
+					parts := strings.Split(candidate.Name, ".")
+					textBlocks[parts[1]] = true
+				}
+				if strings.HasPrefix(candidate.Name, "v.") || strings.HasPrefix(candidate.Name, "mm.") {
+					hasVisionTensor = true
+				}
+			}
+			if len(textBlocks) != tc.blocks {
+				t.Errorf("text blocks = %d, want %d", len(textBlocks), tc.blocks)
+			}
+			wantTensors := []tensor{
+				{Name: "token_embd.weight", Type: "Q4_K", Shape: []int{tc.embd, tc.vocab}},
+				{Name: "blk.0.attn_k.weight", Type: "Q4_K", Shape: []int{tc.embd, tc.kvWidth}},
+				{Name: "blk.0.ffn_down.weight", Type: "Q6_K", Shape: []int{tc.ffn, tc.embd}},
+				{Name: "output_norm.weight", Type: "F32", Shape: []int{tc.embd}},
+				{Name: "output.weight", Type: "Q6_K", Shape: []int{tc.embd, tc.vocab}},
+			}
+			if tc.vision {
+				wantTensors = append(wantTensors,
+					tensor{Name: "v.position_embd.weight", Type: "F16", Shape: []int{1024, 577}},
+					tensor{Name: "v.blk.23.ffn_down.weight", Type: "F16", Shape: []int{4096, 1024}},
+				)
+			}
+			for _, want := range wantTensors {
+				if got, ok := tensors[want.Name]; !ok {
+					t.Errorf("tensor %q missing", want.Name)
+				} else if !reflect.DeepEqual(got, want) {
+					t.Errorf("tensor %q = %#v, want %#v", want.Name, got, want)
+				}
+			}
+			if tc.vision != hasVisionTensor {
+				t.Errorf("vision profile = %t but vision tensors present = %t", tc.vision, hasVisionTensor)
+			}
+			hasVisionCapability := false
+			for _, capability := range resp.Capabilities {
+				hasVisionCapability = hasVisionCapability || capability == "vision"
+			}
+			if tc.vision != hasVisionCapability {
+				t.Errorf("vision profile = %t but vision capability present = %t", tc.vision, hasVisionCapability)
+			}
+			if resp.License != "" || resp.Template != "" || resp.System != "" || resp.Parameters != "" {
+				t.Error("ungrounded license/template/system/parameters must be omitted, not invented")
+			}
+			if strings.Contains(resp.Modelfile, "TEMPLATE") {
+				t.Error("ungrounded generated Modelfile must not claim a template")
+			}
+			var raw map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+				t.Fatalf("decode raw generated response: %v", err)
+			}
+			details := raw["details"].(map[string]any)
+			if len(details) != 6 {
+				t.Errorf("details keys = %d, want exactly six show fields without tags-only dimensions", len(details))
+			}
+			if _, ok := details["context_length"]; ok {
+				t.Error("generated /api/show details must omit context_length")
+			}
+			if _, ok := details["embedding_length"]; ok {
+				t.Error("generated /api/show details must omit embedding_length")
+			}
+		})
+	}
+}
+
 // /api/pull is observed in prod from three distinct IPs pulling llama3.2:1b. It must stream
 // progress and leave the model listed, so the attacker goes on to use it.
 func TestPullStreamsAndRegistersModel(t *testing.T) {
@@ -246,6 +596,81 @@ func TestPullStreamsAndRegistersModel(t *testing.T) {
 	}
 	if !strings.Contains(do(t, "GET", "/api/tags", "").Body.String(), name) {
 		t.Error("pulled model missing from /api/tags")
+	}
+	showRec := do(t, "POST", "/api/show", `{"model":"`+name+`"}`)
+	if showRec.Code != http.StatusOK {
+		t.Fatalf("pulled model /api/show status %d: %s", showRec.Code, showRec.Body.String())
+	}
+	var show showResponse
+	if err := json.Unmarshal(showRec.Body.Bytes(), &show); err != nil {
+		t.Fatalf("decode pulled model /api/show: %v", err)
+	}
+	wantInfo := map[string]any{
+		"general.architecture":                   "llama",
+		"general.basename":                       "llama3.2",
+		"general.file_type":                      float64(15),
+		"general.parameter_count":                float64(1981647492),
+		"general.quantization_version":           float64(2),
+		"general.type":                           "model",
+		"llama.attention.head_count":             float64(16),
+		"llama.attention.head_count_kv":          float64(4),
+		"llama.attention.layer_norm_rms_epsilon": 1e-05,
+		"llama.block_count":                      float64(16),
+		"llama.context_length":                   float64(32768),
+		"llama.embedding_length":                 float64(2048),
+		"llama.feed_forward_length":              float64(8192),
+		"llama.rope.dimension_count":             float64(128),
+		"llama.rope.freq_base":                   float64(10000),
+		"llama.vocab_size":                       float64(32000),
+		"tokenizer.ggml.bos_token_id":            float64(1),
+		"tokenizer.ggml.eos_token_id":            float64(2),
+		"tokenizer.ggml.model":                   "llama",
+		"tokenizer.ggml.pre":                     "default",
+	}
+	if !reflect.DeepEqual(show.ModelInfo, wantInfo) {
+		t.Errorf("pulled-model metadata diverged from the explicit fallback profile:\n got=%#v\nwant=%#v",
+			show.ModelInfo, wantInfo)
+	}
+	wantDetails := showDetails{
+		Format: "gguf", Family: "llama", Families: []string{"llama"},
+		ParameterSize: "1.2B", QuantizationLevel: "Q4_K_M",
+	}
+	if !reflect.DeepEqual(show.Details, wantDetails) {
+		t.Errorf("pulled-model details = %#v, want %#v", show.Details, wantDetails)
+	}
+	if !reflect.DeepEqual(show.Capabilities, []string{"completion", "tools"}) {
+		t.Errorf("pulled-model capabilities = %v, want completion+tools", show.Capabilities)
+	}
+	if len(show.Tensors) != 147 {
+		t.Errorf("pulled-model tensor count = %d, want 147", len(show.Tensors))
+	}
+	tensors := make(map[string]tensor, len(show.Tensors))
+	blocks := make(map[string]bool, 16)
+	for _, candidate := range show.Tensors {
+		tensors[candidate.Name] = candidate
+		if strings.HasPrefix(candidate.Name, "blk.") {
+			blocks[strings.Split(candidate.Name, ".")[1]] = true
+		}
+	}
+	if len(blocks) != 16 {
+		t.Errorf("pulled-model text blocks = %d, want 16", len(blocks))
+	}
+	wantTensors := []tensor{
+		{Name: "token_embd.weight", Type: "Q4_K", Shape: []int{2048, 32000}},
+		{Name: "blk.0.attn_k.weight", Type: "Q4_K", Shape: []int{2048, 512}},
+		{Name: "blk.15.ffn_down.weight", Type: "Q6_K", Shape: []int{8192, 2048}},
+		{Name: "output_norm.weight", Type: "F32", Shape: []int{2048}},
+		{Name: "output.weight", Type: "Q6_K", Shape: []int{2048, 32000}},
+	}
+	for _, want := range wantTensors {
+		if got, ok := tensors[want.Name]; !ok {
+			t.Errorf("pulled-model tensor %q missing", want.Name)
+		} else if !reflect.DeepEqual(got, want) {
+			t.Errorf("pulled-model tensor %q = %#v, want %#v", want.Name, got, want)
+		}
+	}
+	if strings.Contains(show.License, "MIT License") || strings.Contains(show.Template, "<|start_header_id|>") {
+		t.Error("pulled-model fallback reused the removed invented license/template")
 	}
 }
 

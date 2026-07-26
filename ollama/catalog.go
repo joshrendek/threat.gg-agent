@@ -38,6 +38,12 @@ type CatalogModel struct {
 	arch string `json:"-"`
 	// blocks is the transformer layer count, used for the /api/show tensor listing.
 	blocks int `json:"-"`
+	// showProfile records the canonical source identity for base entries, restored pulls and
+	// /api/copy destination renames.
+	showProfile string `json:"-"`
+	// immutableBase marks entries owned by catalog.base. Per-caller overlays deliberately remain
+	// false, including a deleted seed that the caller later re-pulls with a fresh timestamp.
+	immutableBase bool `json:"-"`
 }
 
 // seedModels is the advertised catalog. llama3.2:latest and mistral:latest are kept byte-identical
@@ -100,12 +106,12 @@ var seedModels = []CatalogModel{
 		Size:   4920738147,
 		Digest: "6995872bfe4c5b2b0e3b1a9c48ec1e2ba1b7f6b4ba9d40e1e4c0e6a0b5f2c3d7",
 		Details: Details{
-			Format: "gguf", Family: "qwen3", Families: []string{"qwen3"},
-			ParameterSize: "8.2B", QuantizationLevel: "Q4_K_M",
+			Format: "gguf", Family: "llama", Families: []string{"llama"},
+			ParameterSize: "8.0B", QuantizationLevel: "Q4_K_M",
 			ContextLength: 131072, EmbeddingLength: 4096,
 		},
 		Capabilities: []string{"completion", "thinking"},
-		arch:         "qwen3", blocks: 36,
+		arch:         "llama", blocks: 32,
 	},
 	{
 		Name: "llava:latest", Model: "llava:latest",
@@ -114,7 +120,7 @@ var seedModels = []CatalogModel{
 		Details: Details{
 			Format: "gguf", Family: "llama", Families: []string{"llama", "clip"},
 			ParameterSize: "7B", QuantizationLevel: "Q4_0",
-			ContextLength: 32768, EmbeddingLength: 4096,
+			ContextLength: 4096, EmbeddingLength: 4096,
 		},
 		Capabilities: []string{"completion", "vision"},
 		arch:         "llama", blocks: 32,
@@ -141,9 +147,14 @@ type catalog struct {
 
 // view is one requester's divergence from the base catalog.
 type view struct {
-	added   []CatalogModel  // models this IP pulled or copied
-	removed map[string]bool // base models this IP deleted
-	seen    time.Time
+	added        []CatalogModel               // models this IP pulled or copied
+	removed      map[string]bool              // base models this IP deleted
+	showPayloads map[string]cachedShowPayload // bounded with added and evicted with this view
+	showOrder    []string                     // FIFO order for the byte-bounded payload cache
+	showBytes    int                          // serialized bytes currently held in showPayloads
+	showLocks    map[string]*sync.Mutex       // coalesces builds per model, not per requester
+	showMu       sync.Mutex                   // protects showPayloads and showLocks
+	seen         time.Time
 }
 
 const (
@@ -153,6 +164,12 @@ const (
 	// maxAddedPerView caps models one IP can add, so repeated /api/pull cannot grow memory without
 	// bound. A real box would run out of disk long before this matters.
 	maxAddedPerView = 8
+	// maxModelNameBytes bounds attacker-controlled strings retained by catalog overlays and their
+	// serialized /api/show payloads. Real registry model references are far shorter than this.
+	maxModelNameBytes = 255
+	// maxShowCacheBytesPerView bounds serialized tensor inventories independently of entry count.
+	// Across maxViews this caps retained overlay response bodies at 32 MiB.
+	maxShowCacheBytesPerView = 128 << 10
 	// viewTTL is how long an overlay survives without traffic from that IP.
 	viewTTL = time.Hour
 )
@@ -170,6 +187,8 @@ func newCatalog() *catalog {
 	// same values.
 	base := time.Now().UTC().Add(-27 * 24 * time.Hour)
 	for i := range c.base {
+		c.base[i].showProfile = c.base[i].Name
+		c.base[i].immutableBase = true
 		c.base[i].ModifiedAt = base.
 			Add(time.Duration(i) * 53 * time.Hour).
 			Add(time.Duration(i*7919) * time.Millisecond).
@@ -227,7 +246,11 @@ func (c *catalog) viewFor(ip string, create bool) *view {
 			}
 			delete(c.views, oldestKey)
 		}
-		v = &view{removed: map[string]bool{}}
+		v = &view{
+			removed:      map[string]bool{},
+			showPayloads: map[string]cachedShowPayload{},
+			showLocks:    map[string]*sync.Mutex{},
+		}
 		c.views[ip] = v
 	}
 	v.seen = now
@@ -269,49 +292,233 @@ func (c *catalog) has(r *http.Request, name string) bool {
 	return ok
 }
 
-// add records a model as present for this requester only. Called by /api/pull and /api/copy once
-// the fake operation "completes". A no-op if already visible or if this IP is at its cap.
-func (c *catalog) add(r *http.Request, m CatalogModel) {
-	if c.has(r, m.Name) {
-		return
-	}
-	ip := clientIP(r)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	v := c.viewFor(ip, true)
-	if len(v.added) >= maxAddedPerView {
-		return
-	}
-	v.added = append(v.added, m)
+// add records a model as present for this requester only. Production uses it for pulls; tests also
+// install targeted overlays directly. It returns true when the model is visible afterward,
+// including when it was already present, and false when validation or the per-view cap prevents
+// storage. Visibility is checked under the same lock as the append so concurrent pulls cannot
+// create duplicate catalog entries.
+func (c *catalog) add(r *http.Request, m CatalogModel) bool {
+	return c.store(r, m, false)
 }
 
-// remove drops a model from this requester's view, backing /api/delete. Base models are never
-// mutated — the deletion is recorded in the caller's overlay, so they observe the faithful
-// behaviour (gone from /api/tags, inference 404s) while every other caller is unaffected.
+// replace creates or atomically replaces a copied model at its destination.
+func (c *catalog) replace(r *http.Request, m CatalogModel) bool {
+	return c.store(r, m, true)
+}
+
+func (c *catalog) store(r *http.Request, m CatalogModel, replace bool) bool {
+	if m.Name == "" || len(m.Name) > maxModelNameBytes {
+		return false
+	}
+	// Every addition is a per-caller overlay, even when /api/copy started from a base entry.
+	// Never let the immutable-base cache marker escape into attacker-mutable state.
+	m.immutableBase = false
+	ip := clientIP(r)
+	c.mu.Lock()
+	v := c.viewFor(ip, false)
+	baseVisible := false
+	for _, base := range c.base {
+		if base.Name == m.Name && (v == nil || !v.removed[m.Name]) {
+			baseVisible = true
+			break
+		}
+	}
+	if v != nil {
+		for i, added := range v.added {
+			if added.Name == m.Name {
+				if replace {
+					v.added[i] = m
+				}
+				c.mu.Unlock()
+				if replace {
+					v.invalidateShowPayload(m.Name)
+				}
+				return true
+			}
+		}
+	}
+	if baseVisible && !replace {
+		c.mu.Unlock()
+		return true
+	}
+	if v == nil {
+		v = c.viewFor(ip, true)
+	}
+	if len(v.added) >= maxAddedPerView {
+		c.mu.Unlock()
+		return false
+	}
+	if baseVisible {
+		v.removed[m.Name] = true
+	}
+	v.added = append(v.added, m)
+	c.mu.Unlock()
+	v.invalidateShowPayload(m.Name)
+	return true
+}
+
+// invalidateShowPayload drops one cached overlay response and its per-model build lock after the
+// caller has released the global catalog lock.
+func (v *view) invalidateShowPayload(name string) {
+	v.showMu.Lock()
+	v.removeShowPayloadLocked(name)
+	delete(v.showLocks, name)
+	v.showMu.Unlock()
+}
+
+// removeShowPayloadLocked removes one serialized entry and its accounting. v.showMu must be held.
+func (v *view) removeShowPayloadLocked(name string) {
+	if cached, ok := v.showPayloads[name]; ok {
+		v.showBytes -= len(cached.body)
+		delete(v.showPayloads, name)
+	}
+	for i, cachedName := range v.showOrder {
+		if cachedName == name {
+			v.showOrder = append(v.showOrder[:i], v.showOrder[i+1:]...)
+			break
+		}
+	}
+}
+
+// storeShowPayloadLocked applies the per-view byte budget and FIFO eviction. v.showMu must be held.
+func (v *view) storeShowPayloadLocked(name string, payload cachedShowPayload) {
+	v.removeShowPayloadLocked(name)
+	if len(payload.body) > maxShowCacheBytesPerView {
+		return
+	}
+	for v.showBytes+len(payload.body) > maxShowCacheBytesPerView && len(v.showOrder) > 0 {
+		v.removeShowPayloadLocked(v.showOrder[0])
+	}
+	v.showPayloads[name] = payload
+	v.showOrder = append(v.showOrder, name)
+	v.showBytes += len(payload.body)
+}
+
+// showLockFor returns the bounded per-model build lock for this view.
+func (v *view) showLockFor(name string) *sync.Mutex {
+	v.showMu.Lock()
+	defer v.showMu.Unlock()
+	lock := v.showLocks[name]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		v.showLocks[name] = lock
+	}
+	return lock
+}
+
+// viewForCachedShow returns an existing view in O(1) without performing the TTL/LRU maintenance
+// already done by the catalog lookup immediately before /api/show calls it.
+func (c *catalog) viewForCachedShow(ip string) *view {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.views[ip]
+}
+
+// cacheShowPayloadIfCurrent retains a completed overlay response only if the same model identity
+// is still visible in the same view. Catalog mutation and the brief cache insertion share c.mu,
+// so a delete cannot slip between validation and insertion.
+func (c *catalog) cacheShowPayloadIfCurrent(
+	ip string, expectedView *view, m CatalogModel, buildLock *sync.Mutex, built showPayload,
+) []byte {
+	c.mu.Lock()
+	v := c.views[ip]
+	nameVisible := false
+	identityCurrent := false
+	if v == expectedView {
+		for _, base := range c.base {
+			if base.Name == m.Name && !v.removed[m.Name] {
+				nameVisible = true
+				identityCurrent = built.key == (showCacheKey{
+					name: base.Name, digest: base.Digest, modifiedAt: base.ModifiedAt,
+				})
+				break
+			}
+		}
+		for _, added := range v.added {
+			if added.Name == m.Name {
+				nameVisible = true
+				identityCurrent = built.key == (showCacheKey{
+					name: added.Name, digest: added.Digest, modifiedAt: added.ModifiedAt,
+				})
+				break
+			}
+		}
+	}
+	if !identityCurrent {
+		c.mu.Unlock()
+		if !nameVisible {
+			expectedView.showMu.Lock()
+			if expectedView.showLocks[m.Name] == buildLock {
+				delete(expectedView.showLocks, m.Name)
+			}
+			expectedView.showMu.Unlock()
+		}
+		return built.body
+	}
+
+	v.showMu.Lock()
+	if cached, ok := v.showPayloads[m.Name]; ok && cached.key == built.key {
+		built.body = cached.body
+	} else {
+		v.storeShowPayloadLocked(m.Name, cachedShowPayload{key: built.key, body: built.body})
+	}
+	v.showMu.Unlock()
+	c.mu.Unlock()
+	return built.body
+}
+
+// remove drops an added model or shadows a base model for this requester, backing /api/delete.
+// Base models are never mutated, so every other caller remains unaffected.
 func (c *catalog) remove(r *http.Request, name string) bool {
 	n := normalize(name)
-	if !c.has(r, n) {
+	if n == "" {
 		return false
 	}
 	ip := clientIP(r)
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	v := c.viewFor(ip, true)
-	for i, m := range v.added {
-		if m.Name == n {
-			v.added = append(v.added[:i], v.added[i+1:]...)
-			return true
+	v := c.viewFor(ip, false)
+	if v != nil {
+		for i, m := range v.added {
+			if m.Name == n {
+				v.added = append(v.added[:i], v.added[i+1:]...)
+				c.mu.Unlock()
+				v.invalidateShowPayload(n)
+				return true
+			}
 		}
 	}
-	v.removed[n] = true
-	return true
+	for _, base := range c.base {
+		if base.Name != n || (v != nil && v.removed[n]) {
+			continue
+		}
+		if v == nil {
+			v = c.viewFor(ip, true)
+		}
+		v.removed[n] = true
+		c.mu.Unlock()
+		v.invalidateShowPayload(n)
+		return true
+	}
+	c.mu.Unlock()
+	return false
 }
 
-// synthesize builds a plausible catalog entry for a model an attacker pulled. Parameter size and
+// buildModelForName restores the exact base-catalog identity for a known model, or builds a plausible
+// catalog entry for an unknown model that an attacker pulled. Unknown-model parameter size and
 // footprint are inferred from the tag (":1b", ":70b", …) so a pulled llama3.2:1b does not claim
 // to be the same size as a 70B.
-func synthesize(name string) CatalogModel {
+func buildModelForName(name string) CatalogModel {
 	n := normalize(name)
+	// Pulling a model that exists in the immutable base catalog restores that exact registry
+	// model after a caller deleted it. Returning a generic same-name model here would make
+	// /api/tags and /api/show disagree with what the caller had before the delete.
+	for _, seeded := range seedModels {
+		if seeded.Name == n {
+			seeded.showProfile = seeded.Name
+			seeded.ModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			return seeded
+		}
+	}
 	tag := ""
 	if i := strings.LastIndex(n, ":"); i >= 0 {
 		tag = strings.ToLower(n[i+1:])
@@ -343,7 +550,7 @@ func synthesize(name string) CatalogModel {
 			ContextLength: ctx, EmbeddingLength: embd,
 		},
 		Capabilities: []string{"completion", "tools"},
-		arch:         "llama", blocks: blocks,
+		arch:         "llama", blocks: blocks, showProfile: n,
 	}
 }
 
