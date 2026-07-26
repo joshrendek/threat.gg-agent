@@ -507,15 +507,69 @@ func TestPullStreamsAndRegistersModel(t *testing.T) {
 	if err := json.Unmarshal(showRec.Body.Bytes(), &show); err != nil {
 		t.Fatalf("decode pulled model /api/show: %v", err)
 	}
-	if len(show.ModelInfo) < 15 || len(show.Tensors) < 50 {
-		t.Errorf("pulled model has incomplete show profile: model_info=%d tensors=%d",
-			len(show.ModelInfo), len(show.Tensors))
+	wantInfo := map[string]any{
+		"general.architecture":                   "llama",
+		"general.basename":                       "llama3.2",
+		"general.file_type":                      float64(15),
+		"general.parameter_count":                float64(1981647492),
+		"general.quantization_version":           float64(2),
+		"general.type":                           "model",
+		"llama.attention.head_count":             float64(16),
+		"llama.attention.head_count_kv":          float64(4),
+		"llama.attention.layer_norm_rms_epsilon": 1e-05,
+		"llama.block_count":                      float64(16),
+		"llama.context_length":                   float64(32768),
+		"llama.embedding_length":                 float64(2048),
+		"llama.feed_forward_length":              float64(8192),
+		"llama.rope.dimension_count":             float64(128),
+		"llama.rope.freq_base":                   float64(10000),
+		"llama.vocab_size":                       float64(32000),
+		"tokenizer.ggml.bos_token_id":            float64(1),
+		"tokenizer.ggml.eos_token_id":            float64(2),
+		"tokenizer.ggml.model":                   "llama",
+		"tokenizer.ggml.pre":                     "default",
 	}
-	if got := show.ModelInfo["llama.embedding_length"]; got != float64(2048) {
-		t.Errorf("pulled model embedding length = %v, want 2048", got)
+	if !reflect.DeepEqual(show.ModelInfo, wantInfo) {
+		t.Errorf("pulled-model metadata diverged from the explicit fallback profile:\n got=%#v\nwant=%#v",
+			show.ModelInfo, wantInfo)
 	}
-	if got := show.ModelInfo["llama.block_count"]; got != float64(16) {
-		t.Errorf("pulled model block count = %v, want 16", got)
+	wantDetails := showDetails{
+		Format: "gguf", Family: "llama", Families: []string{"llama"},
+		ParameterSize: "1.2B", QuantizationLevel: "Q4_K_M",
+	}
+	if !reflect.DeepEqual(show.Details, wantDetails) {
+		t.Errorf("pulled-model details = %#v, want %#v", show.Details, wantDetails)
+	}
+	if !reflect.DeepEqual(show.Capabilities, []string{"completion", "tools"}) {
+		t.Errorf("pulled-model capabilities = %v, want completion+tools", show.Capabilities)
+	}
+	if len(show.Tensors) != 147 {
+		t.Errorf("pulled-model tensor count = %d, want 147", len(show.Tensors))
+	}
+	tensors := make(map[string]tensor, len(show.Tensors))
+	blocks := make(map[string]bool, 16)
+	for _, candidate := range show.Tensors {
+		tensors[candidate.Name] = candidate
+		if strings.HasPrefix(candidate.Name, "blk.") {
+			blocks[strings.Split(candidate.Name, ".")[1]] = true
+		}
+	}
+	if len(blocks) != 16 {
+		t.Errorf("pulled-model text blocks = %d, want 16", len(blocks))
+	}
+	wantTensors := []tensor{
+		{Name: "token_embd.weight", Type: "Q4_K", Shape: []int{2048, 32000}},
+		{Name: "blk.0.attn_k.weight", Type: "Q4_K", Shape: []int{2048, 512}},
+		{Name: "blk.15.ffn_down.weight", Type: "Q6_K", Shape: []int{8192, 2048}},
+		{Name: "output_norm.weight", Type: "F32", Shape: []int{2048}},
+		{Name: "output.weight", Type: "Q6_K", Shape: []int{2048, 32000}},
+	}
+	for _, want := range wantTensors {
+		if got, ok := tensors[want.Name]; !ok {
+			t.Errorf("pulled-model tensor %q missing", want.Name)
+		} else if !reflect.DeepEqual(got, want) {
+			t.Errorf("pulled-model tensor %q = %#v, want %#v", want.Name, got, want)
+		}
 	}
 	if strings.Contains(show.License, "MIT License") || strings.Contains(show.Template, "<|start_header_id|>") {
 		t.Error("pulled-model fallback reused the removed invented license/template")

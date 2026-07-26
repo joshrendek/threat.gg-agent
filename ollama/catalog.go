@@ -307,7 +307,8 @@ func (c *catalog) remove(r *http.Request, name string) bool {
 	return true
 }
 
-// synthesize builds a plausible catalog entry for a model an attacker pulled. Parameter size and
+// synthesize restores the exact base-catalog identity for a known model, or builds a plausible
+// catalog entry for an unknown model an attacker pulled. Unknown-model parameter size and
 // footprint are inferred from the tag (":1b", ":70b", …) so a pulled llama3.2:1b does not claim
 // to be the same size as a 70B.
 func synthesize(name string) CatalogModel {
