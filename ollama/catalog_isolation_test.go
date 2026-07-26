@@ -446,6 +446,89 @@ func TestDeletedModelCannotRepopulateOverlayShowCache(t *testing.T) {
 	}
 }
 
+func TestReplacedModelCannotCacheInFlightOldIdentity(t *testing.T) {
+	const ip = "203.0.113.72"
+	const name = "racing-replacement:latest"
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+
+	old := buildModelForName("old-source:1b")
+	old.Name, old.Model = name, name
+	if !models.add(req, old) {
+		t.Fatal("add old replacement fixture")
+	}
+	v := models.viewForCachedShow(ip)
+	buildLock := v.showLockFor(name)
+	buildLock.Lock()
+	oldBuilt := buildShowPayload(old)
+
+	replacement := buildModelForName("new-source:70b")
+	replacement.Name, replacement.Model = name, name
+	replacement.ModifiedAt = time.Now().UTC().Add(time.Second).Format(time.RFC3339Nano)
+	if !models.replace(req, replacement) {
+		buildLock.Unlock()
+		t.Fatal("replace racing fixture")
+	}
+	models.cacheShowPayloadIfCurrent(ip, v, old, buildLock, oldBuilt)
+	buildLock.Unlock()
+
+	v.showMu.Lock()
+	stale, staleCached := v.showPayloads[name]
+	v.showMu.Unlock()
+	if staleCached && stale.key == oldBuilt.key {
+		t.Fatal("in-flight old identity was cached after replacement")
+	}
+
+	body := showBodyForRequest(req, replacement)
+	var show showResponse
+	if err := json.Unmarshal(body, &show); err != nil {
+		t.Fatalf("decode replacement show: %v", err)
+	}
+	if got := show.ModelInfo["llama.embedding_length"]; got != float64(8192) {
+		t.Errorf("replacement embedding length = %v, want 8192", got)
+	}
+	v.showMu.Lock()
+	current := v.showPayloads[name]
+	v.showMu.Unlock()
+	wantKey := showCacheKey{
+		name: replacement.Name, digest: replacement.Digest, modifiedAt: replacement.ModifiedAt,
+	}
+	if current.key != wantKey {
+		t.Errorf("cache key = %#v, want replacement identity %#v", current.key, wantKey)
+	}
+}
+
+func TestOverlayShowCacheHasPerViewByteBudget(t *testing.T) {
+	const ip = "203.0.113.73"
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+	var v *view
+	for i := 0; i < 3; i++ {
+		m := buildModelForName(fmt.Sprintf("large-%d:1b", i))
+		if !models.add(req, m) {
+			t.Fatalf("add large cache fixture %d", i)
+		}
+		if v == nil {
+			v = models.viewForCachedShow(ip)
+		}
+		lock := v.showLockFor(m.Name)
+		lock.Lock()
+		built := buildShowPayload(m)
+		built.body = make([]byte, maxShowCacheBytesPerView/2+1)
+		models.cacheShowPayloadIfCurrent(ip, v, m, lock, built)
+		lock.Unlock()
+	}
+	v.showMu.Lock()
+	bytes, entries := v.showBytes, len(v.showPayloads)
+	v.showMu.Unlock()
+	if bytes > maxShowCacheBytesPerView {
+		t.Fatalf("view retained %d show bytes, budget is %d", bytes, maxShowCacheBytesPerView)
+	}
+	if entries != 1 {
+		t.Errorf("byte budget retained %d large payloads, want FIFO eviction down to 1", entries)
+	}
+}
+
 func TestPulledModelNameByteLimit(t *testing.T) {
 	orig := pullStepDelay
 	pullStepDelay = func() time.Duration { return 0 }

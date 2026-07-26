@@ -150,6 +150,8 @@ type view struct {
 	added        []CatalogModel               // models this IP pulled or copied
 	removed      map[string]bool              // base models this IP deleted
 	showPayloads map[string]cachedShowPayload // bounded with added and evicted with this view
+	showOrder    []string                     // FIFO order for the byte-bounded payload cache
+	showBytes    int                          // serialized bytes currently held in showPayloads
 	showLocks    map[string]*sync.Mutex       // coalesces builds per model, not per requester
 	showMu       sync.Mutex                   // protects showPayloads and showLocks
 	seen         time.Time
@@ -165,6 +167,9 @@ const (
 	// maxModelNameBytes bounds attacker-controlled strings retained by catalog overlays and their
 	// serialized /api/show payloads. Real registry model references are far shorter than this.
 	maxModelNameBytes = 255
+	// maxShowCacheBytesPerView bounds serialized tensor inventories independently of entry count.
+	// Across maxViews this caps retained overlay response bodies at 32 MiB.
+	maxShowCacheBytesPerView = 128 << 10
 	// viewTTL is how long an overlay survives without traffic from that IP.
 	viewTTL = time.Hour
 )
@@ -287,15 +292,16 @@ func (c *catalog) has(r *http.Request, name string) bool {
 	return ok
 }
 
-// add records a pulled model as present for this requester only. It returns true when the model is
-// visible afterward, including when it was already present, and false when validation or the
-// per-view cap prevents storage. Visibility is checked under the same lock as the append so
-// concurrent pulls cannot create duplicate catalog entries.
+// add records a model as present for this requester only. Production uses it for pulls; tests also
+// install targeted overlays directly. It returns true when the model is visible afterward,
+// including when it was already present, and false when validation or the per-view cap prevents
+// storage. Visibility is checked under the same lock as the append so concurrent pulls cannot
+// create duplicate catalog entries.
 func (c *catalog) add(r *http.Request, m CatalogModel) bool {
 	return c.store(r, m, false)
 }
 
-// replace records a copied model, replacing an existing destination atomically.
+// replace creates or atomically replaces a copied model at its destination.
 func (c *catalog) replace(r *http.Request, m CatalogModel) bool {
 	return c.store(r, m, true)
 }
@@ -355,9 +361,35 @@ func (c *catalog) store(r *http.Request, m CatalogModel, replace bool) bool {
 // lock wait on response construction for this requester.
 func (v *view) invalidateShowPayload(name string) {
 	v.showMu.Lock()
-	delete(v.showPayloads, name)
+	v.removeShowPayloadLocked(name)
 	delete(v.showLocks, name)
 	v.showMu.Unlock()
+}
+
+func (v *view) removeShowPayloadLocked(name string) {
+	if cached, ok := v.showPayloads[name]; ok {
+		v.showBytes -= len(cached.body)
+		delete(v.showPayloads, name)
+	}
+	for i, cachedName := range v.showOrder {
+		if cachedName == name {
+			v.showOrder = append(v.showOrder[:i], v.showOrder[i+1:]...)
+			break
+		}
+	}
+}
+
+func (v *view) storeShowPayloadLocked(name string, payload cachedShowPayload) {
+	v.removeShowPayloadLocked(name)
+	if len(payload.body) > maxShowCacheBytesPerView {
+		return
+	}
+	for v.showBytes+len(payload.body) > maxShowCacheBytesPerView && len(v.showOrder) > 0 {
+		v.removeShowPayloadLocked(v.showOrder[0])
+	}
+	v.showPayloads[name] = payload
+	v.showOrder = append(v.showOrder, name)
+	v.showBytes += len(payload.body)
 }
 
 // showLockFor returns the bounded per-model build lock for this view.
@@ -426,7 +458,7 @@ func (c *catalog) cacheShowPayloadIfCurrent(
 	if cached, ok := v.showPayloads[m.Name]; ok && cached.key == built.key {
 		built.body = cached.body
 	} else {
-		v.showPayloads[m.Name] = cachedShowPayload{key: built.key, body: built.body}
+		v.storeShowPayloadLocked(m.Name, cachedShowPayload{key: built.key, body: built.body})
 	}
 	v.showMu.Unlock()
 	c.mu.Unlock()

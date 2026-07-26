@@ -82,15 +82,15 @@ type tensor struct {
 	Shape []int  `json:"shape"`
 }
 
-// The two models production scanners inspect most heavily are captured byte-for-byte from a real
-// Ollama 0.30.11. Embedding the fixtures keeps license, template, GGUF metadata, tensor order,
-// quantization types and multimodal inventory grounded instead of reconstructing them from
-// guesses.
+// showFixtureFS embeds captured /api/show responses for hermetic production use.
 //
 //go:embed testdata/show_qwen2.5-coder_7b_ollama-0.30.11.json
 //go:embed testdata/show_gemma3_12b_ollama-0.30.11.json
 var showFixtureFS embed.FS
 
+// groundedShowFixtures contains the two models production scanners inspect most heavily, captured
+// byte-for-byte from a real Ollama 0.30.11. The captures preserve license, template, GGUF
+// metadata, tensor order, quantization types and multimodal inventory rather than guessing.
 var groundedShowFixtures = loadGroundedShowFixtures()
 
 func loadGroundedShowFixtures() map[string]showResponse {

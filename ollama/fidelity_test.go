@@ -345,6 +345,33 @@ func TestGeneratedModelfileReplacesModelNameControlCharacters(t *testing.T) {
 	}
 }
 
+func TestPulledModelNameCannotInjectModelfileDirective(t *testing.T) {
+	orig := pullStepDelay
+	pullStepDelay = func() time.Duration { return 0 }
+	t.Cleanup(func() { pullStepDelay = orig })
+
+	const name = "safe\nSYSTEM injected\rFROM attacker\t:1b"
+	t.Cleanup(func() {
+		do(t, http.MethodDelete, "/api/delete", fmt.Sprintf(`{"name":%q}`, name))
+	})
+	pull := do(t, http.MethodPost, "/api/pull", fmt.Sprintf(`{"name":%q}`, name))
+	if pull.Code != http.StatusOK {
+		t.Fatalf("pull status %d: %s", pull.Code, pull.Body.String())
+	}
+	showRec := do(t, http.MethodPost, "/api/show", fmt.Sprintf(`{"model":%q}`, name))
+	if showRec.Code != http.StatusOK {
+		t.Fatalf("show status %d: %s", showRec.Code, showRec.Body.String())
+	}
+	var show showResponse
+	if err := json.Unmarshal(showRec.Body.Bytes(), &show); err != nil {
+		t.Fatalf("decode show: %v", err)
+	}
+	if strings.Contains(show.Modelfile, "\nSYSTEM injected") ||
+		strings.Contains(show.Modelfile, "\nFROM attacker") {
+		t.Errorf("pulled name injected an active Modelfile directive:\n%s", show.Modelfile)
+	}
+}
+
 func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
 	tests := []struct {
 		model, architecture                 string
