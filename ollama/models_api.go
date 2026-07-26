@@ -358,7 +358,7 @@ func isSeedModel(m CatalogModel) bool {
 	return ok && digest == m.Digest
 }
 
-// isImmutableSeedModel restricts the process-lifetime payload cache to catalog.base entries.
+// isImmutableSeedModel reports whether m is a grounded immutable catalog.base seed entry.
 func isImmutableSeedModel(m CatalogModel) bool {
 	return m.immutableBase && isSeedModel(m)
 }

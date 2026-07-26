@@ -520,12 +520,19 @@ func TestOverlayShowCacheHasPerViewByteBudget(t *testing.T) {
 	}
 	v.showMu.Lock()
 	bytes, entries := v.showBytes, len(v.showPayloads)
+	_, oldestRetained := v.showPayloads["large-0:1b"]
+	_, middleRetained := v.showPayloads["large-1:1b"]
+	_, newestRetained := v.showPayloads["large-2:1b"]
 	v.showMu.Unlock()
 	if bytes > maxShowCacheBytesPerView {
 		t.Fatalf("view retained %d show bytes, budget is %d", bytes, maxShowCacheBytesPerView)
 	}
 	if entries != 1 {
 		t.Errorf("byte budget retained %d large payloads, want FIFO eviction down to 1", entries)
+	}
+	if oldestRetained || middleRetained || !newestRetained {
+		t.Errorf("FIFO result: oldest=%v middle=%v newest=%v, want only newest",
+			oldestRetained, middleRetained, newestRetained)
 	}
 
 	oversized := buildModelForName("larger-than-cache:1b")
@@ -695,6 +702,24 @@ func TestCopyRejectsInvalidOrFullDestination(t *testing.T) {
 		}
 		if models.has(req, destination) {
 			t.Error("storage-limited copy destination was retained")
+		}
+
+		const existing = "copy-full-0:1b"
+		rec = doFrom(t, ip, http.MethodPost, "/api/copy",
+			`{"source":"llama3.2:latest","destination":"`+existing+`"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("replace at storage cap: status %d: %s", rec.Code, rec.Body.String())
+		}
+		showRec := doFrom(t, ip, http.MethodPost, "/api/show", `{"model":"`+existing+`"}`)
+		var show showResponse
+		if err := json.Unmarshal(showRec.Body.Bytes(), &show); err != nil {
+			t.Fatalf("decode replacement at cap: %v", err)
+		}
+		if got := show.ModelInfo["llama.embedding_length"]; got != float64(3072) {
+			t.Errorf("replacement-at-cap embedding length = %v, want source value 3072", got)
+		}
+		if got := show.ModelInfo["llama.block_count"]; got != float64(28) {
+			t.Errorf("replacement-at-cap block count = %v, want source value 28", got)
 		}
 	})
 }
