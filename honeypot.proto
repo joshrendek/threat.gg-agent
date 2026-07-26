@@ -117,6 +117,41 @@ message LlmRequest {
   string body = 6;
   string model = 7;
   string user_agent = 8;
+  int32 response_status = 9;
+  string response_content_type = 10;
+  int64 elapsed_ms = 11;
+  LlmResponseSource response_source = 12;
+  LlmStreamOutcome stream_outcome = 13;
+  LlmReplyKind reply_kind = 14;
+}
+
+// These enums deliberately keep response telemetry bounded. The agent must
+// classify its own handler result rather than forwarding response bodies or
+// attacker-controlled labels to the server.
+enum LlmResponseSource {
+  LLM_RESPONSE_SOURCE_UNSPECIFIED = 0;
+  LLM_RESPONSE_SOURCE_BUILTIN = 1;
+  LLM_RESPONSE_SOURCE_COMMAND_RESPONSE = 2;
+}
+
+enum LlmStreamOutcome {
+  LLM_STREAM_OUTCOME_UNSPECIFIED = 0;
+  LLM_STREAM_OUTCOME_NOT_STREAMED = 1;
+  LLM_STREAM_OUTCOME_COMPLETED = 2;
+  LLM_STREAM_OUTCOME_ABORTED = 3;
+}
+
+enum LlmReplyKind {
+  LLM_REPLY_KIND_UNSPECIFIED = 0;
+  LLM_REPLY_KIND_STATIC_ENDPOINT = 1;
+  LLM_REPLY_KIND_OLLAMA_DESCRIPTION = 2;
+  LLM_REPLY_KIND_MODEL_INTRO_EN = 3;
+  LLM_REPLY_KIND_MODEL_INTRO_ZH = 4;
+  LLM_REPLY_KIND_ARITHMETIC = 5;
+  LLM_REPLY_KIND_LITERAL_ECHO = 6;
+  LLM_REPLY_KIND_VALIDATION_FACT = 7;
+  LLM_REPLY_KIND_GENERIC_SAFE = 8;
+  LLM_REPLY_KIND_ERROR = 9;
 }
 
 message McpRequest {

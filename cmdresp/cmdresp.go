@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/joshrendek/threat.gg-agent/llmcore"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
 )
@@ -72,6 +73,7 @@ func HTTPOverride(w http.ResponseWriter, r *http.Request, commandType string) bo
 	if !ok {
 		return false
 	}
+	llmcore.MarkResponseSource(r, proto.LlmResponseSource_LLM_RESPONSE_SOURCE_COMMAND_RESPONSE)
 	if response, structured := parseHTTPResponse(body); structured {
 		for name, value := range response.Headers {
 			if validHTTPHeader(name, value) {
