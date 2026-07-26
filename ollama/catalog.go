@@ -38,6 +38,8 @@ type CatalogModel struct {
 	arch string `json:"-"`
 	// blocks is the transformer layer count, used for the /api/show tensor listing.
 	blocks int `json:"-"`
+	// showProfile preserves the source seed identity across /api/copy destination renames.
+	showProfile string `json:"-"`
 	// immutableBase marks entries owned by catalog.base. Per-caller overlays deliberately remain
 	// false, including a deleted seed that the caller later re-pulls with a fresh timestamp.
 	immutableBase bool `json:"-"`
@@ -147,6 +149,7 @@ type view struct {
 	added        []CatalogModel         // models this IP pulled or copied
 	removed      map[string]bool        // base models this IP deleted
 	showPayloads map[string]showPayload // bounded with added and evicted with this view
+	showMu       sync.Mutex             // coalesces payload builds for this requester
 	seen         time.Time
 }
 
@@ -174,6 +177,7 @@ func newCatalog() *catalog {
 	// same values.
 	base := time.Now().UTC().Add(-27 * 24 * time.Hour)
 	for i := range c.base {
+		c.base[i].showProfile = c.base[i].Name
 		c.base[i].immutableBase = true
 		c.base[i].ModifiedAt = base.
 			Add(time.Duration(i) * 53 * time.Hour).
@@ -290,7 +294,9 @@ func (c *catalog) add(r *http.Request, m CatalogModel) {
 	if len(v.added) >= maxAddedPerView {
 		return
 	}
+	v.showMu.Lock()
 	delete(v.showPayloads, m.Name)
+	v.showMu.Unlock()
 	v.added = append(v.added, m)
 }
 
@@ -309,11 +315,15 @@ func (c *catalog) remove(r *http.Request, name string) bool {
 	for i, m := range v.added {
 		if m.Name == n {
 			v.added = append(v.added[:i], v.added[i+1:]...)
+			v.showMu.Lock()
 			delete(v.showPayloads, n)
+			v.showMu.Unlock()
 			return true
 		}
 	}
+	v.showMu.Lock()
 	delete(v.showPayloads, n)
+	v.showMu.Unlock()
 	v.removed[n] = true
 	return true
 }
@@ -329,6 +339,7 @@ func synthesize(name string) CatalogModel {
 	// /api/tags and /api/show disagree with what the caller had before the delete.
 	for _, seeded := range seedModels {
 		if seeded.Name == n {
+			seeded.showProfile = seeded.Name
 			seeded.ModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			return seeded
 		}
@@ -364,7 +375,7 @@ func synthesize(name string) CatalogModel {
 			ContextLength: ctx, EmbeddingLength: embd,
 		},
 		Capabilities: []string{"completion", "tools"},
-		arch:         "llama", blocks: blocks,
+		arch:         "llama", blocks: blocks, showProfile: n,
 	}
 }
 

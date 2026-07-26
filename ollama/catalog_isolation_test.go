@@ -262,15 +262,13 @@ func TestCopiedModelUsesSourceIdentityAndClearsBaseMarker(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = ip + ":54321"
 
-	base, ok := models.get(req, "qwen2.5-coder:7b")
-	if !ok {
-		t.Fatal("base qwen model missing")
+	const copiedName = "qwen-copy:latest"
+	copyRec := doFrom(t, ip, http.MethodPost, "/api/copy",
+		`{"source":"qwen2.5-coder:7b","destination":"`+copiedName+`"}`)
+	if copyRec.Code != http.StatusOK {
+		t.Fatalf("copy through public endpoint: status %d: %s", copyRec.Code, copyRec.Body.String())
 	}
-	base.Name = "qwen-copy:latest"
-	base.Model = base.Name
-	base.ModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	models.add(req, base)
-	copied, ok := models.get(req, base.Name)
+	copied, ok := models.get(req, copiedName)
 	if !ok {
 		t.Fatal("copied overlay missing")
 	}
@@ -281,6 +279,10 @@ func TestCopiedModelUsesSourceIdentityAndClearsBaseMarker(t *testing.T) {
 	second := showPayloadForRequest(req, copied)
 	if &first.body[0] != &second.body[0] {
 		t.Error("copied overlay did not reuse its bounded per-view payload")
+	}
+	if len(first.response.ModelInfo) != 33 || len(first.response.Tensors) != 339 {
+		t.Errorf("copied qwen lost source profile: model_info=%d tensors=%d",
+			len(first.response.ModelInfo), len(first.response.Tensors))
 	}
 
 	const advertisedName = "llama3.2:latest"

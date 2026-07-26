@@ -347,28 +347,34 @@ func TestGeneratedModelfileEscapesModelNameControlCharacters(t *testing.T) {
 
 func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
 	tests := []struct {
-		model, architecture               string
-		blocks, context, embd, ffn, vocab int
-		kvWidth, tensorCount              int
-		vision                            bool
+		model, architecture                 string
+		family, parameterSize, quantization string
+		families                            []string
+		blocks, context, embd, ffn, vocab   int
+		kvWidth, tensorCount                int
+		vision                              bool
 	}{
 		{
 			model: "llama3.2:latest", architecture: "llama",
+			family: "llama", families: []string{"llama"}, parameterSize: "3.2B", quantization: "Q4_K_M",
 			blocks: 28, context: 131072, embd: 3072, ffn: 8192, vocab: 128256,
 			kvWidth: 1024, tensorCount: 255,
 		},
 		{
 			model: "mistral:latest", architecture: "llama",
+			family: "llama", families: []string{"llama"}, parameterSize: "7.2B", quantization: "Q4_0",
 			blocks: 32, context: 32768, embd: 4096, ffn: 14336, vocab: 32768,
 			kvWidth: 1024, tensorCount: 291,
 		},
 		{
 			model: "deepseek-r1:8b", architecture: "llama",
+			family: "llama", families: []string{"llama"}, parameterSize: "8.0B", quantization: "Q4_K_M",
 			blocks: 32, context: 131072, embd: 4096, ffn: 14336, vocab: 128256,
 			kvWidth: 1024, tensorCount: 291,
 		},
 		{
 			model: "llava:latest", architecture: "llama",
+			family: "llama", families: []string{"llama", "clip"}, parameterSize: "7B", quantization: "Q4_0",
 			blocks: 32, context: 4096, embd: 4096, ffn: 11008, vocab: 32000,
 			kvWidth: 4096, tensorCount: 488, vision: true,
 		},
@@ -383,6 +389,39 @@ func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
 			var resp showResponse
 			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 				t.Fatalf("decode generated /api/show response: %v", err)
+			}
+			wantShowDetails := showDetails{
+				Format: "gguf", Family: tc.family, Families: tc.families,
+				ParameterSize: tc.parameterSize, QuantizationLevel: tc.quantization,
+			}
+			if !reflect.DeepEqual(resp.Details, wantShowDetails) {
+				t.Errorf("/api/show details = %#v, want %#v", resp.Details, wantShowDetails)
+			}
+
+			tagsRec := do(t, "GET", "/api/tags", "")
+			var tags struct {
+				Models []CatalogModel `json:"models"`
+			}
+			if err := json.Unmarshal(tagsRec.Body.Bytes(), &tags); err != nil {
+				t.Fatalf("decode /api/tags: %v", err)
+			}
+			var tagged *CatalogModel
+			for i := range tags.Models {
+				if tags.Models[i].Name == tc.model {
+					tagged = &tags.Models[i]
+					break
+				}
+			}
+			if tagged == nil {
+				t.Fatalf("%s missing from /api/tags", tc.model)
+			}
+			wantTagDetails := Details{
+				Format: "gguf", Family: tc.family, Families: tc.families,
+				ParameterSize: tc.parameterSize, QuantizationLevel: tc.quantization,
+				ContextLength: tc.context, EmbeddingLength: tc.embd,
+			}
+			if !reflect.DeepEqual(tagged.Details, wantTagDetails) {
+				t.Errorf("/api/tags details = %#v, want %#v", tagged.Details, wantTagDetails)
 			}
 
 			assertStringInfo := func(key, want string) {
