@@ -182,6 +182,32 @@ func MarkReplyKind(r *http.Request, kind proto.LlmReplyKind) {
 	metadata.mu.Unlock()
 }
 
+// classifiedReply selects a safe semantic response and records only its bounded class.
+// Keeping the classification next to selection prevents response text from entering
+// telemetry and ensures every generation surface reports the same intent taxonomy.
+func classifiedReply(r *http.Request, prompt, model string) ReplyResult {
+	result := ReplyFor(prompt, model)
+	var kind proto.LlmReplyKind
+	switch result.Kind {
+	case ReplyKindOllamaDescription:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_OLLAMA_DESCRIPTION
+	case ReplyKindModelIntroEN:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_INTRO_EN
+	case ReplyKindModelIntroZH:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_INTRO_ZH
+	case ReplyKindArithmetic:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_ARITHMETIC
+	case ReplyKindLiteralEcho:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_LITERAL_ECHO
+	case ReplyKindValidationFact:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_VALIDATION_FACT
+	case ReplyKindGenericSafe:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_GENERIC_SAFE
+	}
+	MarkReplyKind(r, kind)
+	return result
+}
+
 type captureResponseWriter struct {
 	http.ResponseWriter
 	status      int

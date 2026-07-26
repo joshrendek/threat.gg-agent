@@ -167,6 +167,31 @@ func TestCaptureRecordsResponseStatusContentTypeLatencyAndReplyKind(t *testing.T
 	}
 }
 
+func TestCaptureRecordsSemanticReplyKindFromGeneration(t *testing.T) {
+	saved := make(chan *proto.LlmRequest, 1)
+	handler := Capture(func(in *proto.LlmRequest) error {
+		saved <- in
+		return nil
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		OllamaGenerate(w, r, Profile{DefaultModel: "llama3.2:latest"})
+	}))
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/generate",
+		strings.NewReader(`{"model":"llama3.2:latest","prompt":"Reply with a concise description of what an Ollama server does.","stream":false}`),
+	))
+
+	got := <-saved
+	if got.ReplyKind != proto.LlmReplyKind_LLM_REPLY_KIND_OLLAMA_DESCRIPTION {
+		t.Fatalf("reply kind = %v, want Ollama description", got.ReplyKind)
+	}
+	if !strings.Contains(recorder.Body.String(), "hosts and runs language models") {
+		t.Fatalf("response was not semantic: %s", recorder.Body.String())
+	}
+}
+
 func TestCaptureClassifiesHTTPError(t *testing.T) {
 	saved := make(chan *proto.LlmRequest, 1)
 	handler := Capture(func(in *proto.LlmRequest) error {

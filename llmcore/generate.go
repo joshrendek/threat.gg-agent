@@ -452,7 +452,7 @@ func ChatCompletion(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteModelNotFoundV1(w, p, model)
 		return
 	}
-	reply, chunks, finish := capReply(ReplyFor(promptText(body), model).Text, maxTokensOf(body))
+	reply, chunks, finish := capReply(classifiedReply(r, promptText(body), model).Text, maxTokensOf(body))
 	id := completionID(p, "chatcmpl")
 	created := time.Now().Unix()
 
@@ -513,7 +513,7 @@ func Completion(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteModelNotFoundV1(w, p, model)
 		return
 	}
-	reply, chunks, finish := capReply(ReplyFor(promptText(body), model).Text, maxTokensOf(body))
+	reply, chunks, finish := capReply(classifiedReply(r, promptText(body), model).Text, maxTokensOf(body))
 	pt := promptTokensFor(promptText(body))
 	WriteJSONCT(w, http.StatusOK, p.openAICT(), openAITextResponse{
 		ID: completionID(p, "cmpl"), Object: "text_completion",
@@ -622,7 +622,7 @@ func OllamaGenerate(w http.ResponseWriter, r *http.Request, p Profile) {
 		return
 	}
 	prompt := promptText(body)
-	reply, chunks, finish := capReply(ReplyFor(prompt, model).Text, maxTokensOf(body))
+	reply, chunks, finish := capReply(classifiedReply(r, prompt, model).Text, maxTokensOf(body))
 	pt := promptTokensFor(prompt)
 	t := newTimings(model, keepAliveOf(body), pt, len(chunks))
 
@@ -667,7 +667,7 @@ func OllamaChat(w http.ResponseWriter, r *http.Request, p Profile) {
 		return
 	}
 	prompt := promptText(body)
-	reply, chunks, finish := capReply(ReplyFor(prompt, model).Text, maxTokensOf(body))
+	reply, chunks, finish := capReply(classifiedReply(r, prompt, model).Text, maxTokensOf(body))
 	pt := promptTokensFor(prompt)
 	t := newTimings(model, keepAliveOf(body), pt, len(chunks))
 
