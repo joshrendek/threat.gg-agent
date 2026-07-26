@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +118,87 @@ func TestPulledModelsDoNotLeakAcrossCallers(t *testing.T) {
 	}
 	if rec := doFrom(t, other, "POST", "/api/generate", `{"model":"`+name+`","prompt":"hi","stream":false}`); rec.Code != http.StatusNotFound {
 		t.Errorf("another caller could use a model they never pulled: status %d", rec.Code)
+	}
+}
+
+func TestShowCacheUsesFullModelIdentity(t *testing.T) {
+	const ip = "203.0.113.61"
+	const name = "qwen2.5-coder:7b"
+
+	if rec := doFrom(t, ip, http.MethodDelete, "/api/delete", `{"name":"`+name+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("delete: status %d", rec.Code)
+	}
+
+	// Install a same-name overlay with a different identity. This models a changed registry
+	// manifest and pins the cache boundary independently of /api/pull's known-model restoration.
+	overlay := synthesize("attacker-model:1b")
+	overlay.Name = name
+	overlay.Model = name
+	overlay.Digest = strings.Repeat("b", 64)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+	models.add(req, overlay)
+
+	rec := doFrom(t, ip, http.MethodPost, "/api/show", `{"model":"`+name+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("show: status %d: %s", rec.Code, rec.Body.String())
+	}
+	var show showResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &show); err != nil {
+		t.Fatalf("decode show: %v", err)
+	}
+	if !strings.Contains(show.Modelfile, strings.Repeat("b", 64)) {
+		t.Errorf("show returned stale base Modelfile: %s", show.Modelfile)
+	}
+	if got := show.ModelInfo["general.architecture"]; got != "llama" {
+		t.Errorf("same-name overlay architecture = %v, want its llama fallback", got)
+	}
+	if len(show.Tensors) == 339 {
+		t.Error("same-name overlay received cached qwen2.5-coder tensor inventory")
+	}
+}
+
+func TestPullingDeletedSeedRestoresRegistryIdentity(t *testing.T) {
+	orig := pullStepDelay
+	pullStepDelay = func() time.Duration { return 0 }
+	t.Cleanup(func() { pullStepDelay = orig })
+
+	const ip = "203.0.113.62"
+	const name = "qwen2.5-coder:7b"
+
+	if rec := doFrom(t, ip, http.MethodDelete, "/api/delete", `{"name":"`+name+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("delete: status %d", rec.Code)
+	}
+	if rec := doFrom(t, ip, http.MethodPost, "/api/pull", `{"name":"`+name+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("pull: status %d", rec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+	restored, ok := models.get(req, name)
+	if !ok {
+		t.Fatal("re-pulled seed model missing")
+	}
+	var seeded CatalogModel
+	for _, candidate := range seedModels {
+		if candidate.Name == name {
+			seeded = candidate
+			break
+		}
+	}
+	if restored.Digest != seeded.Digest || !reflect.DeepEqual(restored.Details, seeded.Details) ||
+		!reflect.DeepEqual(restored.Capabilities, seeded.Capabilities) {
+		t.Errorf("re-pulled identity differs from registry seed:\n restored=%#v\n seed=%#v", restored, seeded)
+	}
+
+	rec := doFrom(t, ip, http.MethodPost, "/api/show", `{"model":"`+name+`"}`)
+	var show showResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &show); err != nil {
+		t.Fatalf("decode show: %v", err)
+	}
+	if len(show.ModelInfo) != 33 || len(show.Tensors) != 339 {
+		t.Errorf("re-pulled seed did not restore grounded profile: model_info=%d tensors=%d",
+			len(show.ModelInfo), len(show.Tensors))
 	}
 }
 

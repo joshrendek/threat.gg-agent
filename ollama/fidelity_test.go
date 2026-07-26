@@ -1,7 +1,9 @@
 package ollama
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -212,20 +214,37 @@ func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
 		licenseMarker  string
 		templateMarker string
 		system         string
+		fixturePath    string
+		fixtureSHA256  string
+		requiredTensor tensor
 	}{
 		{
 			model: "qwen2.5-coder:7b", modelInfoCount: 33, tensorCount: 339,
 			licenseMarker: "Apache License", templateMarker: "<|fim_prefix|>",
-			system: "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+			system:         "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+			fixturePath:    "testdata/show_qwen2.5-coder_7b_ollama-0.30.11.json",
+			fixtureSHA256:  "c7fd56f0cc81c546c3c69aa80972133037b25d96e98fe52005539f803d242795",
+			requiredTensor: tensor{Name: "blk.0.attn_k.bias", Type: "F32", Shape: []int{512}},
 		},
 		{
 			model: "gemma3:12b", modelInfoCount: 36, tensorCount: 1065,
 			licenseMarker: "Gemma Terms of Use", templateMarker: "<start_of_turn>",
+			fixturePath:    "testdata/show_gemma3_12b_ollama-0.30.11.json",
+			fixtureSHA256:  "34da6ab09d374135565e99c7a7fa556353edb5c85aa2864a04c2736579e14943",
+			requiredTensor: tensor{Name: "mm.mm_input_projection.weight", Type: "F16", Shape: []int{3840, 1152}},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.model, func(t *testing.T) {
+			fixture, err := showFixtureFS.ReadFile(tc.fixturePath)
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			if got := fmt.Sprintf("%x", sha256.Sum256(fixture)); got != tc.fixtureSHA256 {
+				t.Fatalf("fixture checksum = %s, want captured Ollama checksum %s", got, tc.fixtureSHA256)
+			}
+
 			rec := do(t, "POST", "/api/show", `{"model":"`+tc.model+`"}`)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
@@ -249,6 +268,20 @@ func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
 			if len(got.Tensors) != tc.tensorCount {
 				t.Errorf("tensors = %d, want %d", len(got.Tensors), tc.tensorCount)
 			}
+			foundRequiredTensor := false
+			for _, candidate := range got.Tensors {
+				if candidate.Name == tc.requiredTensor.Name {
+					foundRequiredTensor = true
+					if !reflect.DeepEqual(candidate, tc.requiredTensor) {
+						t.Errorf("tensor %q = %#v, want captured %#v",
+							candidate.Name, candidate, tc.requiredTensor)
+					}
+					break
+				}
+			}
+			if !foundRequiredTensor {
+				t.Errorf("captured tensor %q missing", tc.requiredTensor.Name)
+			}
 			if !strings.Contains(got.License, tc.licenseMarker) {
 				t.Errorf("license does not contain grounded marker %q", tc.licenseMarker)
 			}
@@ -268,7 +301,7 @@ func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
 			}
 			details := raw["details"].(map[string]any)
 			if len(details) != 6 {
-				t.Errorf("details keys = %d, want the six keys Ollama /api/show emits", len(details))
+				t.Errorf("details keys = %d, want exactly six show fields (excluding the two tags-only dimensions)", len(details))
 			}
 			if _, ok := details["context_length"]; ok {
 				t.Error("/api/show details must omit context_length (it appears only in /api/tags)")
@@ -281,13 +314,37 @@ func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
 }
 
 func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
-	grounded := map[string]bool{"qwen2.5-coder:7b": true, "gemma3:12b": true}
-	for _, m := range seedModels {
-		if grounded[m.Name] {
-			continue
-		}
-		t.Run(m.Name, func(t *testing.T) {
-			rec := do(t, "POST", "/api/show", `{"model":"`+m.Name+`"}`)
+	tests := []struct {
+		model, architecture               string
+		blocks, context, embd, ffn, vocab int
+		kvWidth, tensorCount              int
+		vision                            bool
+	}{
+		{
+			model: "llama3.2:latest", architecture: "llama",
+			blocks: 28, context: 131072, embd: 3072, ffn: 8192, vocab: 128256,
+			kvWidth: 1024, tensorCount: 255,
+		},
+		{
+			model: "mistral:latest", architecture: "llama",
+			blocks: 32, context: 32768, embd: 4096, ffn: 14336, vocab: 32768,
+			kvWidth: 1024, tensorCount: 291,
+		},
+		{
+			model: "deepseek-r1:8b", architecture: "llama",
+			blocks: 32, context: 131072, embd: 4096, ffn: 14336, vocab: 128256,
+			kvWidth: 1024, tensorCount: 291,
+		},
+		{
+			model: "llava:latest", architecture: "llama",
+			blocks: 32, context: 4096, embd: 4096, ffn: 11008, vocab: 32000,
+			kvWidth: 4096, tensorCount: 488, vision: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.model, func(t *testing.T) {
+			rec := do(t, "POST", "/api/show", `{"model":"`+tc.model+`"}`)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 			}
@@ -296,69 +353,83 @@ func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
 				t.Fatalf("decode generated /api/show response: %v", err)
 			}
 
-			p := profileFor(m)
-			info := modelInfo(m)
-			assertInfo := func(key string, want any) {
+			assertStringInfo := func(key, want string) {
 				t.Helper()
-				if got := info[key]; got != want {
+				if got := resp.ModelInfo[key]; got != want {
 					t.Errorf("model_info[%q] = %v, want %v", key, got, want)
 				}
 			}
-			assertInfo("general.architecture", p.architecture)
-			assertInfo(p.architecture+".block_count", p.blockCount)
-			assertInfo(p.architecture+".context_length", m.Details.ContextLength)
-			assertInfo(p.architecture+".embedding_length", m.Details.EmbeddingLength)
-			assertInfo(p.architecture+".feed_forward_length", p.feedForwardLength)
-
-			tensors := tensorList(m)
-			names := make(map[string]bool, len(tensors))
-			textBlocks := make(map[string]bool, p.blockCount)
-			hasVisionTensor := false
-			for _, tensor := range tensors {
-				if names[tensor.Name] {
-					t.Errorf("duplicate tensor %q", tensor.Name)
+			assertIntInfo := func(key string, want int) {
+				t.Helper()
+				got, ok := resp.ModelInfo[key].(float64)
+				if !ok || int(got) != want {
+					t.Errorf("model_info[%q] = %v, want %d", key, resp.ModelInfo[key], want)
 				}
-				names[tensor.Name] = true
-				for _, dimension := range tensor.Shape {
+			}
+			assertStringInfo("general.architecture", tc.architecture)
+			assertIntInfo(tc.architecture+".block_count", tc.blocks)
+			assertIntInfo(tc.architecture+".context_length", tc.context)
+			assertIntInfo(tc.architecture+".embedding_length", tc.embd)
+			assertIntInfo(tc.architecture+".feed_forward_length", tc.ffn)
+			assertIntInfo(tc.architecture+".vocab_size", tc.vocab)
+
+			if len(resp.Tensors) != tc.tensorCount {
+				t.Errorf("tensor count = %d, want independently specified %d",
+					len(resp.Tensors), tc.tensorCount)
+			}
+			tensors := make(map[string]tensor, len(resp.Tensors))
+			textBlocks := make(map[string]bool, tc.blocks)
+			hasVisionTensor := false
+			for _, candidate := range resp.Tensors {
+				if _, duplicate := tensors[candidate.Name]; duplicate {
+					t.Errorf("duplicate tensor %q", candidate.Name)
+				}
+				tensors[candidate.Name] = candidate
+				for _, dimension := range candidate.Shape {
 					if dimension <= 0 {
-						t.Errorf("tensor %q has non-positive shape %v", tensor.Name, tensor.Shape)
+						t.Errorf("tensor %q has non-positive shape %v", candidate.Name, candidate.Shape)
 					}
 				}
-				if strings.HasPrefix(tensor.Name, "blk.") {
-					parts := strings.Split(tensor.Name, ".")
+				if strings.HasPrefix(candidate.Name, "blk.") {
+					parts := strings.Split(candidate.Name, ".")
 					textBlocks[parts[1]] = true
 				}
-				if strings.HasPrefix(tensor.Name, "v.") || strings.HasPrefix(tensor.Name, "mm.") {
+				if strings.HasPrefix(candidate.Name, "v.") || strings.HasPrefix(candidate.Name, "mm.") {
 					hasVisionTensor = true
 				}
 			}
-			if len(textBlocks) != p.blockCount {
-				t.Errorf("text blocks = %d, want %d", len(textBlocks), p.blockCount)
+			if len(textBlocks) != tc.blocks {
+				t.Errorf("text blocks = %d, want %d", len(textBlocks), tc.blocks)
 			}
-			if !names["token_embd.weight"] || !names["output_norm.weight"] || !names["output.weight"] {
-				t.Error("text tensor inventory is missing embeddings or output tensors")
+			wantTensors := []tensor{
+				{Name: "token_embd.weight", Type: "Q4_K", Shape: []int{tc.embd, tc.vocab}},
+				{Name: "blk.0.attn_k.weight", Type: "Q4_K", Shape: []int{tc.embd, tc.kvWidth}},
+				{Name: "blk.0.ffn_down.weight", Type: "Q6_K", Shape: []int{tc.ffn, tc.embd}},
+				{Name: "output_norm.weight", Type: "F32", Shape: []int{tc.embd}},
+				{Name: "output.weight", Type: "Q6_K", Shape: []int{tc.embd, tc.vocab}},
+			}
+			if tc.vision {
+				wantTensors = append(wantTensors,
+					tensor{Name: "v.position_embd.weight", Type: "F16", Shape: []int{1024, 577}},
+					tensor{Name: "v.blk.23.ffn_down.weight", Type: "F16", Shape: []int{4096, 1024}},
+				)
+			}
+			for _, want := range wantTensors {
+				if got, ok := tensors[want.Name]; !ok {
+					t.Errorf("tensor %q missing", want.Name)
+				} else if !reflect.DeepEqual(got, want) {
+					t.Errorf("tensor %q = %#v, want %#v", want.Name, got, want)
+				}
+			}
+			if tc.vision != hasVisionTensor {
+				t.Errorf("vision profile = %t but vision tensors present = %t", tc.vision, hasVisionTensor)
 			}
 			hasVisionCapability := false
-			for _, capability := range m.Capabilities {
+			for _, capability := range resp.Capabilities {
 				hasVisionCapability = hasVisionCapability || capability == "vision"
 			}
-			if hasVisionCapability != hasVisionTensor {
-				t.Errorf("vision capability = %t but vision tensors present = %t", hasVisionCapability, hasVisionTensor)
-			}
-
-			if !reflect.DeepEqual(resp.Tensors, tensors) {
-				t.Error("serialized tensor inventory differs from the generated profile")
-			}
-			var wantInfo map[string]any
-			wantInfoJSON, err := json.Marshal(info)
-			if err != nil {
-				t.Fatalf("encode expected model_info: %v", err)
-			}
-			if err := json.Unmarshal(wantInfoJSON, &wantInfo); err != nil {
-				t.Fatalf("normalize expected model_info: %v", err)
-			}
-			if !reflect.DeepEqual(resp.ModelInfo, wantInfo) {
-				t.Error("serialized model_info differs from the generated profile")
+			if tc.vision != hasVisionCapability {
+				t.Errorf("vision profile = %t but vision capability present = %t", tc.vision, hasVisionCapability)
 			}
 			if resp.License != "" || resp.Template != "" || resp.System != "" || resp.Parameters != "" {
 				t.Error("ungrounded license/template/system/parameters must be omitted, not invented")
@@ -372,7 +443,7 @@ func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
 			}
 			details := raw["details"].(map[string]any)
 			if len(details) != 6 {
-				t.Errorf("serialized details keys = %d, want 6", len(details))
+				t.Errorf("details keys = %d, want exactly six show fields without tags-only dimensions", len(details))
 			}
 			if _, ok := details["context_length"]; ok {
 				t.Error("generated /api/show details must omit context_length")

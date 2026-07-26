@@ -312,6 +312,15 @@ func (c *catalog) remove(r *http.Request, name string) bool {
 // to be the same size as a 70B.
 func synthesize(name string) CatalogModel {
 	n := normalize(name)
+	// Pulling a model that exists in the immutable base catalog restores that exact registry
+	// model after a caller deleted it. Returning a generic same-name model here would make
+	// /api/tags and /api/show disagree with what the caller had before the delete.
+	for _, seeded := range seedModels {
+		if seeded.Name == n {
+			seeded.ModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			return seeded
+		}
+	}
 	tag := ""
 	if i := strings.LastIndex(n, ":"); i >= 0 {
 		tag = strings.ToLower(n[i+1:])

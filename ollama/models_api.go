@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -296,7 +297,7 @@ func showDetailsFor(m CatalogModel) showDetails {
 }
 
 func buildShow(m CatalogModel) showResponse {
-	if grounded, ok := groundedShowFixtures[m.Name]; ok {
+	if grounded, ok := groundedShowFixtures[m.Name]; ok && isSeedModel(m) {
 		return grounded
 	}
 	return showResponse{
@@ -312,24 +313,70 @@ func buildShow(m CatalogModel) showResponse {
 	}
 }
 
-// advertisedShows contains the expensive, immutable metadata maps and tensor inventories for the
-// base catalog. showFor returns a shallow copy and changes only ModifiedAt; encoding/json reads
-// the shared maps and slices without mutating them. Attacker-pulled models are built on demand
-// because their names and dimensions are not known at startup.
-var advertisedShows = func() map[string]showResponse {
-	out := make(map[string]showResponse, len(seedModels))
+var seedModelDigests = func() map[string]string {
+	out := make(map[string]string, len(seedModels))
 	for _, m := range seedModels {
-		out[m.Name] = buildShow(m)
+		out[m.Name] = m.Digest
 	}
 	return out
 }()
 
-func showFor(m CatalogModel) showResponse {
-	if cached, ok := advertisedShows[m.Name]; ok {
-		cached.ModifiedAt = m.ModifiedAt
-		return cached
+func isSeedModel(m CatalogModel) bool {
+	digest, ok := seedModelDigests[m.Name]
+	return ok && digest == m.Digest
+}
+
+func isImmutableSeedModel(m CatalogModel) bool {
+	for _, seeded := range seedModels {
+		if m.Name == seeded.Name && m.Digest == seeded.Digest && m.ModifiedAt == seeded.ModifiedAt {
+			return true
+		}
 	}
-	return buildShow(m)
+	return false
+}
+
+type showCacheKey struct {
+	name, digest, modifiedAt string
+}
+
+type showPayload struct {
+	response showResponse
+	body     []byte
+}
+
+// advertisedShowPayloads caches the final JSON only for the six immutable base-catalog entries.
+// The full model identity is part of the key so a same-name per-IP overlay cannot receive stale
+// base metadata. Pulled overlays, including re-pulled seeds with a fresh ModifiedAt, are not cached;
+// otherwise attacker-controlled identities could create an unbounded process-lifetime cache.
+var advertisedShowPayloads sync.Map
+
+func buildShowPayload(m CatalogModel) showPayload {
+	response := buildShow(m)
+	response.ModifiedAt = m.ModifiedAt
+	body, err := json.Marshal(response)
+	if err != nil {
+		// showResponse contains only JSON-native fixture/profile values. A marshal failure is a
+		// programmer/configuration error and should fail loudly rather than emit a partial body.
+		panic(fmt.Sprintf("marshal Ollama /api/show response for %s: %v", m.Name, err))
+	}
+	return showPayload{response: response, body: body}
+}
+
+func showPayloadFor(m CatalogModel) showPayload {
+	if !isImmutableSeedModel(m) {
+		return buildShowPayload(m)
+	}
+	key := showCacheKey{name: m.Name, digest: m.Digest, modifiedAt: m.ModifiedAt}
+	if cached, ok := advertisedShowPayloads.Load(key); ok {
+		return cached.(showPayload)
+	}
+	built := buildShowPayload(m)
+	cached, _ := advertisedShowPayloads.LoadOrStore(key, built)
+	return cached.(showPayload)
+}
+
+func showFor(m CatalogModel) showResponse {
+	return showPayloadFor(m).response
 }
 
 func handleShow(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +394,10 @@ func handleShow(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteModelNotFoundAPI(w, profile, normalize(req.model()))
 		return
 	}
-	llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, showFor(m))
+	payload := showPayloadFor(m)
+	w.Header().Set("Content-Type", llmcore.CTJSONCharset)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload.body)
 }
 
 // -- /api/pull

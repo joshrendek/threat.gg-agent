@@ -151,7 +151,7 @@ func TestShowAgainstReferenceServer(t *testing.T) {
 			t.Fatalf("%s /api/show %s: %v", base, model, err)
 		}
 		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if err != nil {
 			t.Fatalf("read %s /api/show %s: %v", base, model, err)
 		}
