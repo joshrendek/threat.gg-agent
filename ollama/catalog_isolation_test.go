@@ -527,6 +527,36 @@ func TestOverlayShowCacheHasPerViewByteBudget(t *testing.T) {
 	if entries != 1 {
 		t.Errorf("byte budget retained %d large payloads, want FIFO eviction down to 1", entries)
 	}
+
+	oversized := buildModelForName("larger-than-cache:1b")
+	if !models.add(req, oversized) {
+		t.Fatal("add oversized cache fixture")
+	}
+	lock := v.showLockFor(oversized.Name)
+	lock.Lock()
+	built := buildShowPayload(oversized)
+	built.body = make([]byte, maxShowCacheBytesPerView+1)
+	models.cacheShowPayloadIfCurrent(ip, v, oversized, lock, built)
+	lock.Unlock()
+
+	v.showMu.Lock()
+	_, retained := v.showPayloads[oversized.Name]
+	orderRetained := false
+	for _, name := range v.showOrder {
+		orderRetained = orderRetained || name == oversized.Name
+	}
+	afterOversizedBytes := v.showBytes
+	v.showMu.Unlock()
+	if retained || orderRetained || afterOversizedBytes != bytes {
+		t.Errorf("oversized body changed cache: retained=%v order=%v bytes=%d, want %d",
+			retained, orderRetained, afterOversizedBytes, bytes)
+	}
+
+	validBody := showBodyForRequest(req, oversized)
+	var validShow showResponse
+	if err := json.Unmarshal(validBody, &validShow); err != nil {
+		t.Fatalf("uncached oversized model did not return a valid response: %v", err)
+	}
 }
 
 func TestPulledModelNameByteLimit(t *testing.T) {

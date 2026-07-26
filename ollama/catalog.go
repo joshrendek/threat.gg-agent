@@ -357,8 +357,8 @@ func (c *catalog) store(r *http.Request, m CatalogModel, replace bool) bool {
 	return true
 }
 
-// invalidateShowPayload drops one serialized overlay response without making the global catalog
-// lock wait on response construction for this requester.
+// invalidateShowPayload drops one cached overlay response and its per-model build lock after the
+// caller has released the global catalog lock.
 func (v *view) invalidateShowPayload(name string) {
 	v.showMu.Lock()
 	v.removeShowPayloadLocked(name)
@@ -366,6 +366,7 @@ func (v *view) invalidateShowPayload(name string) {
 	v.showMu.Unlock()
 }
 
+// removeShowPayloadLocked removes one serialized entry and its accounting. v.showMu must be held.
 func (v *view) removeShowPayloadLocked(name string) {
 	if cached, ok := v.showPayloads[name]; ok {
 		v.showBytes -= len(cached.body)
@@ -379,6 +380,7 @@ func (v *view) removeShowPayloadLocked(name string) {
 	}
 }
 
+// storeShowPayloadLocked applies the per-view byte budget and FIFO eviction. v.showMu must be held.
 func (v *view) storeShowPayloadLocked(name string, payload cachedShowPayload) {
 	v.removeShowPayloadLocked(name)
 	if len(payload.body) > maxShowCacheBytesPerView {

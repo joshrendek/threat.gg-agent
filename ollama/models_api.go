@@ -185,8 +185,8 @@ func profileFor(m CatalogModel) architectureProfile {
 			return p
 		}
 	}
-	// Models added through /api/pull are unknown by definition. Keep their fallback self-
-	// consistent and deliberately modest rather than claiming metadata from a named real model.
+	// Any identity without a complete grounded architecture profile uses a self-consistent,
+	// deliberately modest fallback rather than claiming metadata from a named real model.
 	heads := m.Details.EmbeddingLength / 128
 	if heads < 1 {
 		heads = 8
@@ -352,19 +352,23 @@ func showProfileName(m CatalogModel) string {
 	return m.Name
 }
 
+// isSeedModel recognizes a grounded seed digest through its preserved source show profile.
 func isSeedModel(m CatalogModel) bool {
 	digest, ok := seedModelDigests[showProfileName(m)]
 	return ok && digest == m.Digest
 }
 
+// isImmutableSeedModel restricts the process-lifetime payload cache to catalog.base entries.
 func isImmutableSeedModel(m CatalogModel) bool {
 	return m.immutableBase && isSeedModel(m)
 }
 
+// showCacheKey is the identity triple shared by immutable and per-view response caches.
 type showCacheKey struct {
 	name, digest, modifiedAt string
 }
 
+// showPayload couples a decoded show response with its final serialized representation.
 type showPayload struct {
 	key      showCacheKey
 	response showResponse
