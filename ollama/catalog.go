@@ -279,6 +279,9 @@ func (c *catalog) add(r *http.Request, m CatalogModel) {
 	if c.has(r, m.Name) {
 		return
 	}
+	// Every addition is a per-caller overlay, even when /api/copy started from a base entry.
+	// Never let the immutable-base cache marker escape into attacker-mutable state.
+	m.immutableBase = false
 	ip := clientIP(r)
 	c.mu.Lock()
 	defer c.mu.Unlock()

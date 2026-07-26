@@ -177,8 +177,10 @@ var architectureProfiles = map[string]architectureProfile{
 }
 
 func profileFor(m CatalogModel) architectureProfile {
-	if p, ok := architectureProfiles[m.Name]; ok {
-		return p
+	if isSeedModel(m) {
+		if p, ok := architectureProfiles[m.Name]; ok {
+			return p
+		}
 	}
 	// Models added through /api/pull are unknown by definition. Keep their fallback self-
 	// consistent and deliberately modest rather than claiming metadata from a named real model.
@@ -241,9 +243,12 @@ func tensorList(m CatalogModel) []tensor {
 	ffn := p.feedForwardLength
 	headWidth := embd / p.headCount
 	kvWidth := headWidth * p.headCountKV
-	out := []tensor{
-		{Name: "token_embd.weight", Type: "Q4_K", Shape: []int{embd, p.vocabSize}},
+	capacity := 3 + 9*p.blockCount
+	if p.vision != nil {
+		capacity += 5 + 8*p.vision.blockCount
 	}
+	out := make([]tensor, 0, capacity)
+	out = append(out, tensor{Name: "token_embd.weight", Type: "Q4_K", Shape: []int{embd, p.vocabSize}})
 	for i := 0; i < p.blockCount; i++ {
 		p := fmt.Sprintf("blk.%d.", i)
 		out = append(out,

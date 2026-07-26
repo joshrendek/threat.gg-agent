@@ -125,6 +125,18 @@ func TestShowCacheUsesFullModelIdentity(t *testing.T) {
 	const ip = "203.0.113.61"
 	const name = "qwen2.5-coder:7b"
 
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+	base, ok := models.get(req, name)
+	if !ok {
+		t.Fatal("base qwen model missing")
+	}
+	// Prime the immutable payload before replacing this caller's view with a same-name overlay.
+	// A cache keyed only by name would now return this stale qwen response.
+	if payload := showPayloadFor(base); len(payload.body) == 0 {
+		t.Fatal("base qwen payload was empty")
+	}
+
 	if rec := doFrom(t, ip, http.MethodDelete, "/api/delete", `{"name":"`+name+`"}`); rec.Code != http.StatusOK {
 		t.Fatalf("delete: status %d", rec.Code)
 	}
@@ -135,8 +147,6 @@ func TestShowCacheUsesFullModelIdentity(t *testing.T) {
 	overlay.Name = name
 	overlay.Model = name
 	overlay.Digest = strings.Repeat("b", 64)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = ip + ":54321"
 	models.add(req, overlay)
 
 	rec := doFrom(t, ip, http.MethodPost, "/api/show", `{"model":"`+name+`"}`)
@@ -222,6 +232,14 @@ func TestPullingDeletedSeedRestoresRegistryIdentity(t *testing.T) {
 	if isImmutableSeedModel(restored) {
 		t.Error("re-pulled seed overlay must not enter the immutable base payload cache")
 	}
+	first := showPayloadFor(restored)
+	second := showPayloadFor(restored)
+	if len(first.body) == 0 || len(second.body) == 0 {
+		t.Fatal("re-pulled seed produced an empty /api/show payload")
+	}
+	if &first.body[0] == &second.body[0] {
+		t.Error("re-pulled seed reused a process-lifetime cached payload")
+	}
 
 	rec := doFrom(t, ip, http.MethodPost, "/api/show", `{"model":"`+name+`"}`)
 	var show showResponse
@@ -231,6 +249,61 @@ func TestPullingDeletedSeedRestoresRegistryIdentity(t *testing.T) {
 	if len(show.ModelInfo) != 33 || len(show.Tensors) != 339 {
 		t.Errorf("re-pulled seed did not restore grounded profile: model_info=%d tensors=%d",
 			len(show.ModelInfo), len(show.Tensors))
+	}
+}
+
+func TestCopiedModelUsesSourceIdentityAndClearsBaseMarker(t *testing.T) {
+	const ip = "203.0.113.63"
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+
+	base, ok := models.get(req, "qwen2.5-coder:7b")
+	if !ok {
+		t.Fatal("base qwen model missing")
+	}
+	base.Name = "qwen-copy:latest"
+	base.Model = base.Name
+	base.ModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	models.add(req, base)
+	copied, ok := models.get(req, base.Name)
+	if !ok {
+		t.Fatal("copied overlay missing")
+	}
+	if isImmutableSeedModel(copied) || copied.immutableBase {
+		t.Error("copy of a base model retained the immutable cache marker")
+	}
+	first := showPayloadFor(copied)
+	second := showPayloadFor(copied)
+	if &first.body[0] == &second.body[0] {
+		t.Error("copied overlay entered the immutable payload cache")
+	}
+
+	const advertisedName = "llama3.2:latest"
+	if rec := doFrom(t, ip, http.MethodDelete, "/api/delete", `{"name":"`+advertisedName+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("delete advertised destination: status %d", rec.Code)
+	}
+	source := synthesize("foo:1b")
+	source.Name = advertisedName
+	source.Model = advertisedName
+	models.add(req, source)
+
+	rec := doFrom(t, ip, http.MethodPost, "/api/show", `{"model":"`+advertisedName+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("show same-name copy: status %d: %s", rec.Code, rec.Body.String())
+	}
+	var show showResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &show); err != nil {
+		t.Fatalf("decode same-name copy: %v", err)
+	}
+	if got := show.ModelInfo["llama.embedding_length"]; got != float64(2048) {
+		t.Errorf("same-name copy embedding length = %v, want source fallback 2048", got)
+	}
+	if got := show.ModelInfo["llama.block_count"]; got != float64(16) {
+		t.Errorf("same-name copy block count = %v, want source fallback 16", got)
+	}
+	if show.Details.ParameterSize != "1.2B" || len(show.Tensors) != 147 {
+		t.Errorf("same-name copy used destination profile: details=%#v tensors=%d",
+			show.Details, len(show.Tensors))
 	}
 }
 
