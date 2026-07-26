@@ -499,7 +499,7 @@ func handlePull(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "model is required")
 		return
 	}
-	target := synthesize(name)
+	target := modelForName(name)
 	if target.Name == "" || len(target.Name) > maxModelNameBytes {
 		llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "invalid model name")
 		return

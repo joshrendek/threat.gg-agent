@@ -295,16 +295,17 @@ func (c *catalog) add(r *http.Request, m CatalogModel) bool {
 	m.immutableBase = false
 	ip := clientIP(r)
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	v := c.viewFor(ip, false)
 	for _, base := range c.base {
 		if base.Name == m.Name && (v == nil || !v.removed[m.Name]) {
+			c.mu.Unlock()
 			return true
 		}
 	}
 	if v != nil {
 		for _, added := range v.added {
 			if added.Name == m.Name {
+				c.mu.Unlock()
 				return true
 			}
 		}
@@ -312,13 +313,21 @@ func (c *catalog) add(r *http.Request, m CatalogModel) bool {
 		v = c.viewFor(ip, true)
 	}
 	if len(v.added) >= maxAddedPerView {
+		c.mu.Unlock()
 		return false
 	}
-	v.showMu.Lock()
-	delete(v.showPayloads, m.Name)
-	v.showMu.Unlock()
 	v.added = append(v.added, m)
+	c.mu.Unlock()
+	v.invalidateShowPayload(m.Name)
 	return true
+}
+
+// invalidateShowPayload drops one serialized overlay response without making the global catalog
+// lock wait on response construction for this requester.
+func (v *view) invalidateShowPayload(name string) {
+	v.showMu.Lock()
+	delete(v.showPayloads, name)
+	v.showMu.Unlock()
 }
 
 // viewForCachedShow returns an existing view in O(1) without performing the TTL/LRU maintenance
@@ -334,34 +343,43 @@ func (c *catalog) viewForCachedShow(ip string) *view {
 // behaviour (gone from /api/tags, inference 404s) while every other caller is unaffected.
 func (c *catalog) remove(r *http.Request, name string) bool {
 	n := normalize(name)
-	if !c.has(r, n) {
+	if n == "" {
 		return false
 	}
 	ip := clientIP(r)
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	v := c.viewFor(ip, true)
-	for i, m := range v.added {
-		if m.Name == n {
-			v.added = append(v.added[:i], v.added[i+1:]...)
-			v.showMu.Lock()
-			delete(v.showPayloads, n)
-			v.showMu.Unlock()
-			return true
+	v := c.viewFor(ip, false)
+	if v != nil {
+		for i, m := range v.added {
+			if m.Name == n {
+				v.added = append(v.added[:i], v.added[i+1:]...)
+				c.mu.Unlock()
+				v.invalidateShowPayload(n)
+				return true
+			}
 		}
 	}
-	v.showMu.Lock()
-	delete(v.showPayloads, n)
-	v.showMu.Unlock()
-	v.removed[n] = true
-	return true
+	for _, base := range c.base {
+		if base.Name != n || (v != nil && v.removed[n]) {
+			continue
+		}
+		if v == nil {
+			v = c.viewFor(ip, true)
+		}
+		v.removed[n] = true
+		c.mu.Unlock()
+		v.invalidateShowPayload(n)
+		return true
+	}
+	c.mu.Unlock()
+	return false
 }
 
-// synthesize restores the exact base-catalog identity for a known model, or builds a plausible
+// modelForName restores the exact base-catalog identity for a known model, or builds a plausible
 // catalog entry for an unknown model that an attacker pulled. Unknown-model parameter size and
 // footprint are inferred from the tag (":1b", ":70b", …) so a pulled llama3.2:1b does not claim
 // to be the same size as a 70B.
-func synthesize(name string) CatalogModel {
+func modelForName(name string) CatalogModel {
 	n := normalize(name)
 	// Pulling a model that exists in the immutable base catalog restores that exact registry
 	// model after a caller deleted it. Returning a generic same-name model here would make

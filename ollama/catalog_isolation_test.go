@@ -144,7 +144,7 @@ func TestShowCacheUsesFullModelIdentity(t *testing.T) {
 
 	// Install a same-name overlay with a different identity. This models a changed registry
 	// manifest and pins the cache boundary independently of /api/pull's known-model restoration.
-	overlay := synthesize("attacker-model:1b")
+	overlay := modelForName("attacker-model:1b")
 	overlay.Name = name
 	overlay.Model = name
 	overlay.Digest = strings.Repeat("b", 64)
@@ -184,7 +184,7 @@ func TestAdvertisedShowPayloadCacheExcludesOverlays(t *testing.T) {
 		t.Error("immutable base model did not reuse its serialized /api/show payload")
 	}
 
-	overlay := synthesize("cache-probe:1b")
+	overlay := modelForName("cache-probe:1b")
 	if isImmutableSeedModel(overlay) {
 		t.Fatal("pulled overlay was incorrectly recognized as an immutable seed")
 	}
@@ -294,7 +294,7 @@ func TestCopiedModelUsesSourceIdentityAndClearsBaseMarker(t *testing.T) {
 	if rec := doFrom(t, ip, http.MethodDelete, "/api/delete", `{"name":"`+advertisedName+`"}`); rec.Code != http.StatusOK {
 		t.Fatalf("delete advertised destination: status %d", rec.Code)
 	}
-	source := synthesize("foo:1b")
+	source := modelForName("foo:1b")
 	source.Name = advertisedName
 	source.Model = advertisedName
 	models.add(req, source)
@@ -418,7 +418,7 @@ func TestConcurrentAddsDoNotCreateDuplicateModels(t *testing.T) {
 	const name = "concurrent:1b"
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = ip + ":54321"
-	model := synthesize(name)
+	model := modelForName(name)
 	catalog := newCatalog()
 
 	var wg sync.WaitGroup
@@ -453,7 +453,7 @@ func TestPullReportsStorageLimitInsteadOfSuccess(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = ip + ":54321"
 	for i := 0; i < maxAddedPerView; i++ {
-		if !models.add(req, synthesize(fmt.Sprintf("full-%d:1b", i))) {
+		if !models.add(req, modelForName(fmt.Sprintf("full-%d:1b", i))) {
 			t.Fatalf("fill overlay at index %d", i)
 		}
 	}
@@ -473,6 +473,47 @@ func TestPullReportsStorageLimitInsteadOfSuccess(t *testing.T) {
 	if models.has(req, overflow) {
 		t.Error("storage-limited model was retained")
 	}
+}
+
+func TestCopyRejectsInvalidOrFullDestination(t *testing.T) {
+	t.Run("oversized destination", func(t *testing.T) {
+		const ip = "203.0.113.68"
+		destination := strings.Repeat("a", maxModelNameBytes+1) + ":copy"
+		rec := doFrom(t, ip, http.MethodPost, "/api/copy",
+			fmt.Sprintf(`{"source":"llama3.2:latest","destination":%q}`, destination))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("copy status %d, want 400: %s", rec.Code, rec.Body.String())
+		}
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = ip + ":54321"
+		if models.has(req, destination) {
+			t.Error("oversized copy destination was retained")
+		}
+	})
+
+	t.Run("full overlay", func(t *testing.T) {
+		const ip = "203.0.113.69"
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = ip + ":54321"
+		for i := 0; i < maxAddedPerView; i++ {
+			if !models.add(req, modelForName(fmt.Sprintf("copy-full-%d:1b", i))) {
+				t.Fatalf("fill overlay at index %d", i)
+			}
+		}
+
+		const destination = "copy-overflow:latest"
+		rec := doFrom(t, ip, http.MethodPost, "/api/copy",
+			`{"source":"llama3.2:latest","destination":"`+destination+`"}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("copy status %d, want 400: %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"error":"model storage limit reached"`) {
+			t.Errorf("copy error body %q, want storage-limit error", rec.Body.String())
+		}
+		if models.has(req, destination) {
+			t.Error("storage-limited copy destination was retained")
+		}
+	})
 }
 
 // Repeated pulls from one address must not grow memory without bound.
