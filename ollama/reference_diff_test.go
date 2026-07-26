@@ -11,7 +11,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
+
+var referenceHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // TestAgainstReferenceServer diffs this honeypot against a real Ollama, so the fidelity claims
 // in PRD 033 can be re-verified against a new upstream release rather than trusted forever.
@@ -82,7 +85,7 @@ func TestAgainstReferenceServer(t *testing.T) {
 		if c.body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := referenceHTTPClient.Do(req)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -142,7 +145,7 @@ func TestShowAgainstReferenceServer(t *testing.T) {
 
 	fetchShow := func(base, model string) (*http.Response, []byte) {
 		t.Helper()
-		resp, err := http.Post(base+"/api/show", "application/json",
+		resp, err := referenceHTTPClient.Post(base+"/api/show", "application/json",
 			strings.NewReader(`{"model":"`+model+`"}`))
 		if err != nil {
 			t.Fatalf("%s /api/show %s: %v", base, model, err)

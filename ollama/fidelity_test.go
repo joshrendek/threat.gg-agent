@@ -287,6 +287,15 @@ func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
 			continue
 		}
 		t.Run(m.Name, func(t *testing.T) {
+			rec := do(t, "POST", "/api/show", `{"model":"`+m.Name+`"}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+			}
+			var resp showResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode generated /api/show response: %v", err)
+			}
+
 			p := profileFor(m)
 			info := modelInfo(m)
 			assertInfo := func(key string, want any) {
@@ -337,12 +346,39 @@ func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
 				t.Errorf("vision capability = %t but vision tensors present = %t", hasVisionCapability, hasVisionTensor)
 			}
 
-			resp := showFor(m)
+			if !reflect.DeepEqual(resp.Tensors, tensors) {
+				t.Error("serialized tensor inventory differs from the generated profile")
+			}
+			var wantInfo map[string]any
+			wantInfoJSON, err := json.Marshal(info)
+			if err != nil {
+				t.Fatalf("encode expected model_info: %v", err)
+			}
+			if err := json.Unmarshal(wantInfoJSON, &wantInfo); err != nil {
+				t.Fatalf("normalize expected model_info: %v", err)
+			}
+			if !reflect.DeepEqual(resp.ModelInfo, wantInfo) {
+				t.Error("serialized model_info differs from the generated profile")
+			}
 			if resp.License != "" || resp.Template != "" || resp.System != "" || resp.Parameters != "" {
 				t.Error("ungrounded license/template/system/parameters must be omitted, not invented")
 			}
 			if strings.Contains(resp.Modelfile, "TEMPLATE") {
 				t.Error("ungrounded generated Modelfile must not claim a template")
+			}
+			var raw map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+				t.Fatalf("decode raw generated response: %v", err)
+			}
+			details := raw["details"].(map[string]any)
+			if len(details) != 6 {
+				t.Errorf("serialized details keys = %d, want 6", len(details))
+			}
+			if _, ok := details["context_length"]; ok {
+				t.Error("generated /api/show details must omit context_length")
+			}
+			if _, ok := details["embedding_length"]; ok {
+				t.Error("generated /api/show details must omit embedding_length")
 			}
 		})
 	}
@@ -391,6 +427,27 @@ func TestPullStreamsAndRegistersModel(t *testing.T) {
 	}
 	if !strings.Contains(do(t, "GET", "/api/tags", "").Body.String(), name) {
 		t.Error("pulled model missing from /api/tags")
+	}
+	showRec := do(t, "POST", "/api/show", `{"model":"`+name+`"}`)
+	if showRec.Code != http.StatusOK {
+		t.Fatalf("pulled model /api/show status %d: %s", showRec.Code, showRec.Body.String())
+	}
+	var show showResponse
+	if err := json.Unmarshal(showRec.Body.Bytes(), &show); err != nil {
+		t.Fatalf("decode pulled model /api/show: %v", err)
+	}
+	if len(show.ModelInfo) < 15 || len(show.Tensors) < 50 {
+		t.Errorf("pulled model has incomplete show profile: model_info=%d tensors=%d",
+			len(show.ModelInfo), len(show.Tensors))
+	}
+	if got := show.ModelInfo["llama.embedding_length"]; got != float64(2048) {
+		t.Errorf("pulled model embedding length = %v, want 2048", got)
+	}
+	if got := show.ModelInfo["llama.block_count"]; got != float64(16) {
+		t.Errorf("pulled model block count = %v, want 16", got)
+	}
+	if strings.Contains(show.License, "MIT License") || strings.Contains(show.Template, "<|start_header_id|>") {
+		t.Error("pulled-model fallback reused the removed invented license/template")
 	}
 }
 

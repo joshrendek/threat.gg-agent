@@ -138,9 +138,8 @@ type visionProfile struct {
 }
 
 // architectureProfiles cover advertised models that are not available on the local reference
-// host. Values come from their published model architectures. Unlike the previous generic
-// generator, every metadata dimension is also used by the tensor inventory, so these responses
-// cannot contradict themselves.
+// host. Values come from their published model architectures. Every metadata dimension is also
+// used by the tensor inventory, so these responses cannot contradict themselves.
 var architectureProfiles = map[string]architectureProfile{
 	"llama3.2:latest": {
 		architecture: "llama", basename: "Llama-3.2-3B-Instruct",
@@ -296,9 +295,8 @@ func showDetailsFor(m CatalogModel) showDetails {
 	}
 }
 
-func showFor(m CatalogModel) showResponse {
+func buildShow(m CatalogModel) showResponse {
 	if grounded, ok := groundedShowFixtures[m.Name]; ok {
-		grounded.ModifiedAt = m.ModifiedAt
 		return grounded
 	}
 	return showResponse{
@@ -312,6 +310,26 @@ func showFor(m CatalogModel) showResponse {
 		Capabilities: m.Capabilities,
 		ModifiedAt:   m.ModifiedAt,
 	}
+}
+
+// advertisedShows contains the expensive, immutable metadata maps and tensor inventories for the
+// base catalog. showFor returns a shallow copy and changes only ModifiedAt; encoding/json reads
+// the shared maps and slices without mutating them. Attacker-pulled models are built on demand
+// because their names and dimensions are not known at startup.
+var advertisedShows = func() map[string]showResponse {
+	out := make(map[string]showResponse, len(seedModels))
+	for _, m := range seedModels {
+		out[m.Name] = buildShow(m)
+	}
+	return out
+}()
+
+func showFor(m CatalogModel) showResponse {
+	if cached, ok := advertisedShows[m.Name]; ok {
+		cached.ModifiedAt = m.ModifiedAt
+		return cached
+	}
+	return buildShow(m)
 }
 
 func handleShow(w http.ResponseWriter, r *http.Request) {
