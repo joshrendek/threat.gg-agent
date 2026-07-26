@@ -79,7 +79,7 @@ func Responses(w http.ResponseWriter, r *http.Request, p Profile) {
 		return
 	}
 	prompt := promptText(body)
-	reply, chunks, _ := capReply(smartReply(prompt), maxTokensOf(body))
+	reply, chunks, _ := capReply(ReplyFor(prompt, model).Text, maxTokensOf(body))
 	now := time.Now().Unix()
 	in := promptTokensFor(prompt)
 
