@@ -240,6 +240,11 @@ func TestPullingDeletedSeedRestoresRegistryIdentity(t *testing.T) {
 	if &first.body[0] == &second.body[0] {
 		t.Error("re-pulled seed reused a process-lifetime cached payload")
 	}
+	first = showPayloadForRequest(req, restored)
+	second = showPayloadForRequest(req, restored)
+	if &first.body[0] != &second.body[0] {
+		t.Error("re-pulled seed did not reuse its bounded per-view payload")
+	}
 
 	rec := doFrom(t, ip, http.MethodPost, "/api/show", `{"model":"`+name+`"}`)
 	var show showResponse
@@ -272,10 +277,10 @@ func TestCopiedModelUsesSourceIdentityAndClearsBaseMarker(t *testing.T) {
 	if isImmutableSeedModel(copied) || copied.immutableBase {
 		t.Error("copy of a base model retained the immutable cache marker")
 	}
-	first := showPayloadFor(copied)
-	second := showPayloadFor(copied)
-	if &first.body[0] == &second.body[0] {
-		t.Error("copied overlay entered the immutable payload cache")
+	first := showPayloadForRequest(req, copied)
+	second := showPayloadForRequest(req, copied)
+	if &first.body[0] != &second.body[0] {
+		t.Error("copied overlay did not reuse its bounded per-view payload")
 	}
 
 	const advertisedName = "llama3.2:latest"

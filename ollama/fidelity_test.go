@@ -262,6 +262,25 @@ func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				t.Fatal("/api/show response diverged from its grounded Ollama 0.30.11 fixture")
 			}
+			var fixtureRaw, responseRaw map[string]json.RawMessage
+			if err := json.Unmarshal(fixture, &fixtureRaw); err != nil {
+				t.Fatalf("decode raw fixture: %v", err)
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &responseRaw); err != nil {
+				t.Fatalf("decode raw response keys: %v", err)
+			}
+			fixtureKeys := make(map[string]bool, len(fixtureRaw))
+			responseKeys := make(map[string]bool, len(responseRaw))
+			for key := range fixtureRaw {
+				fixtureKeys[key] = true
+			}
+			for key := range responseRaw {
+				responseKeys[key] = true
+			}
+			if !reflect.DeepEqual(responseKeys, fixtureKeys) {
+				t.Errorf("wire-level top-level keys = %v, want captured fixture keys %v",
+					responseKeys, fixtureKeys)
+			}
 			if len(got.ModelInfo) != tc.modelInfoCount {
 				t.Errorf("model_info keys = %d, want %d", len(got.ModelInfo), tc.modelInfoCount)
 			}
@@ -310,6 +329,19 @@ func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
 				t.Error("/api/show details must omit embedding_length (it appears only in /api/tags)")
 			}
 		})
+	}
+}
+
+func TestGeneratedModelfileEscapesModelNameControlCharacters(t *testing.T) {
+	m := synthesize("safe:1b")
+	m.Name = "safe\nSYSTEM injected\rFROM attacker\t"
+	show := buildShow(m)
+	if strings.Contains(show.Modelfile, "\nSYSTEM injected") ||
+		strings.Contains(show.Modelfile, "\nFROM attacker") {
+		t.Errorf("model name injected an active Modelfile directive:\n%s", show.Modelfile)
+	}
+	if !strings.Contains(show.Modelfile, "# FROM safe SYSTEM injected FROM attacker ") {
+		t.Errorf("escaped model name missing from one comment line:\n%s", show.Modelfile)
 	}
 }
 

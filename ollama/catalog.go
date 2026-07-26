@@ -144,9 +144,10 @@ type catalog struct {
 
 // view is one requester's divergence from the base catalog.
 type view struct {
-	added   []CatalogModel  // models this IP pulled or copied
-	removed map[string]bool // base models this IP deleted
-	seen    time.Time
+	added        []CatalogModel         // models this IP pulled or copied
+	removed      map[string]bool        // base models this IP deleted
+	showPayloads map[string]showPayload // bounded with added and evicted with this view
+	seen         time.Time
 }
 
 const (
@@ -231,7 +232,7 @@ func (c *catalog) viewFor(ip string, create bool) *view {
 			}
 			delete(c.views, oldestKey)
 		}
-		v = &view{removed: map[string]bool{}}
+		v = &view{removed: map[string]bool{}, showPayloads: map[string]showPayload{}}
 		c.views[ip] = v
 	}
 	v.seen = now
@@ -289,6 +290,7 @@ func (c *catalog) add(r *http.Request, m CatalogModel) {
 	if len(v.added) >= maxAddedPerView {
 		return
 	}
+	delete(v.showPayloads, m.Name)
 	v.added = append(v.added, m)
 }
 
@@ -307,15 +309,17 @@ func (c *catalog) remove(r *http.Request, name string) bool {
 	for i, m := range v.added {
 		if m.Name == n {
 			v.added = append(v.added[:i], v.added[i+1:]...)
+			delete(v.showPayloads, n)
 			return true
 		}
 	}
+	delete(v.showPayloads, n)
 	v.removed[n] = true
 	return true
 }
 
 // synthesize restores the exact base-catalog identity for a known model, or builds a plausible
-// catalog entry for an unknown model an attacker pulled. Unknown-model parameter size and
+// catalog entry for an unknown model that an attacker pulled. Unknown-model parameter size and
 // footprint are inferred from the tag (":1b", ":70b", …) so a pulled llama3.2:1b does not claim
 // to be the same size as a 70B.
 func synthesize(name string) CatalogModel {
