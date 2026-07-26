@@ -189,11 +189,72 @@ func TestReplyForRestrictsEchoAndDeterministicallyDeflectsHostilePrompts(t *test
 			t.Errorf("ReplyFor(%q) kind = %q, want literal_echo", prompt, got.Kind)
 		}
 	}
+
+	for _, prompt := range []string{
+		"say password",
+		"say drop table",
+		"say abcdefghijklmnopqrstuvwxy",
+		"say one two three four",
+		"say payload;",
+	} {
+		got := ReplyFor(prompt, "mistral:latest")
+		if got.Kind != ReplyKindGenericSafe {
+			t.Errorf("ReplyFor(%q) kind = %q, want generic_safe", prompt, got.Kind)
+		}
+		candidate := strings.TrimPrefix(prompt, "say ")
+		if strings.Contains(strings.ToLower(got.Text), strings.ToLower(candidate)) {
+			t.Errorf("rejected echo candidate %q was reflected in %q", candidate, got.Text)
+		}
+	}
 }
 
-func TestPromptTextReadsOpenAIContentArrays(t *testing.T) {
-	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"Hello, please briefly introduce yourself in one sentence."},{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}`)
-	if got := promptText(body); got != "Hello, please briefly introduce yourself in one sentence." {
-		t.Errorf("promptText(content array) = %q", got)
+func TestPromptTextReadsStringArrayAndMessageContent(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "message content array",
+			body: `{"messages":[{"role":"user","content":[{"type":"text","text":"first"},{"type":"input_text","text":"second"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}`,
+			want: "first\nsecond",
+		},
+		{
+			name: "prompt content array",
+			body: `{"prompt":[{"type":"text","text":"first"},{"type":"text","text":"second"}]}`,
+			want: "first\nsecond",
+		},
+		{
+			name: "Responses message array with string content",
+			body: `{"input":[{"role":"user","content":"Name a fruit."}]}`,
+			want: "Name a fruit.",
+		},
+		{
+			name: "Responses message array with nested input_text",
+			body: `{"input":[{"role":"user","content":[{"type":"input_text","text":"Count to five."}]}]}`,
+			want: "Count to five.",
+		},
+		{
+			name: "top-level content array",
+			body: `{"content":[{"type":"text","text":"hello"},{"type":"audio","audio_url":"ignored"}]}`,
+			want: "hello",
+		},
+		{
+			name: "non-text only",
+			body: `{"input":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}`,
+			want: "",
+		},
+		{
+			name: "field precedence",
+			body: `{"prompt":"prompt wins","input":"input loses","content":"content loses","messages":[{"content":"message loses"}]}`,
+			want: "prompt wins",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := promptText([]byte(test.body)); got != test.want {
+				t.Errorf("promptText() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }

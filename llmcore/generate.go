@@ -152,8 +152,8 @@ func ReplyFor(prompt, model string) ReplyResult {
 	return genericReply(p, model)
 }
 
-// smartReply preserves the package's original helper for focused tests and non-model-specific
-// callers. Production generation paths call ReplyFor with the resolved advertised model.
+// smartReply is a test convenience for model-neutral response selection. Production
+// generation paths use classifiedReply with the resolved advertised model.
 func smartReply(prompt string) string { return ReplyFor(prompt, "").Text }
 
 func genericReply(prompt, model string) ReplyResult {
@@ -288,26 +288,47 @@ func capReply(reply string, max int) (text string, chunks []string, finish strin
 type promptContent string
 
 func (c *promptContent) UnmarshalJSON(body []byte) error {
-	var text string
-	if json.Unmarshal(body, &text) == nil {
-		*c = promptContent(text)
+	*c = promptContent(strings.Join(promptTextParts(body, 0), "\n"))
+	return nil
+}
+
+const maxPromptContentDepth = 4
+
+func promptTextParts(body []byte, depth int) []string {
+	if depth > maxPromptContentDepth {
 		return nil
 	}
-	var parts []struct {
-		Text string `json:"text"`
+	var text string
+	if json.Unmarshal(body, &text) == nil {
+		if text == "" {
+			return nil
+		}
+		return []string{text}
 	}
+	var parts []json.RawMessage
 	if json.Unmarshal(body, &parts) == nil {
 		var values []string
 		for _, part := range parts {
-			if part.Text != "" {
-				values = append(values, part.Text)
-			}
+			values = append(values, promptTextParts(part, depth+1)...)
 		}
-		*c = promptContent(strings.Join(values, "\n"))
+		return values
 	}
-	// Ignore non-text content blocks; image/audio parts should not make the enclosing request
-	// fail to yield the text blocks that can be classified.
-	return nil
+
+	var part struct {
+		Text    string          `json:"text"`
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(body, &part) != nil {
+		return nil
+	}
+	var values []string
+	if part.Text != "" {
+		values = append(values, part.Text)
+	}
+	if len(part.Content) > 0 {
+		values = append(values, promptTextParts(part.Content, depth+1)...)
+	}
+	return values
 }
 
 func promptText(body []byte) string {

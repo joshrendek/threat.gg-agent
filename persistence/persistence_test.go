@@ -26,10 +26,39 @@ func (blockingClient) SaveMemcachedCommand(ctx context.Context, in *proto.Memcac
 	return nil, ctx.Err()
 }
 
-// TestSaveMemcachedIsTimeBounded is the regression for finding 5: a fire-and-forget
-// persistence call against a stalled server must return within the bounded timeout
-// instead of blocking forever and letting goroutines/calls accumulate.
-func TestSaveMemcachedIsTimeBounded(t *testing.T) {
+func (blockingClient) SaveVllm(ctx context.Context, in *proto.LlmRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (blockingClient) SaveOllama(ctx context.Context, in *proto.LlmRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (blockingClient) SaveRay(ctx context.Context, in *proto.LlmRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (blockingClient) SaveLocalai(ctx context.Context, in *proto.LlmRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (blockingClient) SaveLlamacpp(ctx context.Context, in *proto.LlmRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (blockingClient) SaveComfyui(ctx context.Context, in *proto.LlmRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestAsynchronousSaveCallsAreTimeBounded ensures a stalled gRPC server cannot
+// retain fire-and-forget capture goroutines or their request buffers indefinitely.
+func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 	origClient, origTimeout := honeypotClient, saveTimeout
 	t.Cleanup(func() { honeypotClient, saveTimeout = origClient, origTimeout })
 	honeypotClient = blockingClient{}
@@ -39,6 +68,12 @@ func TestSaveMemcachedIsTimeBounded(t *testing.T) {
 		name string
 		call func() error
 	}{
+		{"vllm", func() error { return SaveVllmRequest(&proto.LlmRequest{}) }},
+		{"ollama", func() error { return SaveOllamaRequest(&proto.LlmRequest{}) }},
+		{"ray", func() error { return SaveRayRequest(&proto.LlmRequest{}) }},
+		{"localai", func() error { return SaveLocalaiRequest(&proto.LlmRequest{}) }},
+		{"llamacpp", func() error { return SaveLlamacppRequest(&proto.LlmRequest{}) }},
+		{"comfyui", func() error { return SaveComfyuiRequest(&proto.LlmRequest{}) }},
 		{"connect", func() error { return SaveMemcachedConnect(&proto.MemcachedConnectRequest{}) }},
 		{"command", func() error { return SaveMemcachedCommand(&proto.MemcachedCommandRequest{}) }},
 	} {

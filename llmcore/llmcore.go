@@ -29,7 +29,10 @@ import (
 // independent of any global middleware).
 const MaxBodySize = 1 << 20 // 1MB
 
+const maxConcurrentCaptureSaves = 64
+
 var logger = zerolog.New(os.Stdout).With().Caller().Str("honeypot", "llmcore").Logger()
+var captureSaveSlots = make(chan struct{}, maxConcurrentCaptureSaves)
 
 // ParseModel returns the JSON "model" field from body, or "" if absent/unparseable.
 func ParseModel(body []byte) string {
@@ -124,7 +127,18 @@ func captureRequest(r *http.Request) (*proto.LlmRequest, bool) {
 }
 
 func saveCapturedRequest(in *proto.LlmRequest, save func(*proto.LlmRequest) error) {
+	slots := captureSaveSlots
+	select {
+	case slots <- struct{}{}:
+	default:
+		logger.Warn().
+			Str("method", in.Method).
+			Str("path", in.Path).
+			Msg("dropping llm capture because persistence is saturated")
+		return
+	}
 	go func(req *proto.LlmRequest) {
+		defer func() { <-slots }()
 		defer func() {
 			if rec := recover(); rec != nil {
 				logger.Error().Interface("panic", rec).Msg("panic saving llm request")

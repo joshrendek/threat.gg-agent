@@ -93,6 +93,46 @@ func TestCaptureTruncatesOversizeBody(t *testing.T) {
 	}
 }
 
+func TestCaptureBoundsConcurrentPersistence(t *testing.T) {
+	originalSlots := captureSaveSlots
+	captureSaveSlots = make(chan struct{}, 1)
+	t.Cleanup(func() { captureSaveSlots = originalSlots })
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	finished := make(chan struct{}, 1)
+	save := func(*proto.LlmRequest) error {
+		started <- struct{}{}
+		<-release
+		finished <- struct{}{}
+		return nil
+	}
+	handler := Capture(save)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/generate", nil))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first persistence call did not start")
+	}
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/generate", nil))
+	select {
+	case <-started:
+		t.Fatal("persistence exceeded its bounded in-flight capacity")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("blocked persistence call did not finish")
+	}
+}
+
 func TestParseModel(t *testing.T) {
 	if m := ParseModel([]byte(`{"model":"gpt-4o","x":1}`)); m != "gpt-4o" {
 		t.Fatalf("ParseModel = %q, want gpt-4o", m)
@@ -167,28 +207,65 @@ func TestCaptureRecordsResponseStatusContentTypeLatencyAndReplyKind(t *testing.T
 	}
 }
 
-func TestCaptureRecordsSemanticReplyKindFromGeneration(t *testing.T) {
-	saved := make(chan *proto.LlmRequest, 1)
-	handler := Capture(func(in *proto.LlmRequest) error {
-		saved <- in
-		return nil
-	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		OllamaGenerate(w, r, Profile{DefaultModel: "llama3.2:latest"})
-	}))
-
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(
-		http.MethodPost,
-		"/api/generate",
-		strings.NewReader(`{"model":"llama3.2:latest","prompt":"Reply with a concise description of what an Ollama server does.","stream":false}`),
-	))
-
-	got := <-saved
-	if got.ReplyKind != proto.LlmReplyKind_LLM_REPLY_KIND_OLLAMA_DESCRIPTION {
-		t.Fatalf("reply kind = %v, want Ollama description", got.ReplyKind)
+func TestCaptureRecordsSemanticReplyKindsAcrossGenerationSurfaces(t *testing.T) {
+	profile := Profile{DefaultModel: "llama3.2:latest"}
+	tests := []struct {
+		name    string
+		path    string
+		body    string
+		handler http.HandlerFunc
+		want    proto.LlmReplyKind
+	}{
+		{
+			name: "chat completions", path: "/v1/chat/completions",
+			body:    `{"model":"llama3.2:latest","messages":[{"role":"user","content":"Hello, please briefly introduce yourself in one sentence."}]}`,
+			handler: func(w http.ResponseWriter, r *http.Request) { ChatCompletion(w, r, profile) },
+			want:    proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_INTRO_EN,
+		},
+		{
+			name: "legacy completions", path: "/v1/completions",
+			body:    `{"model":"llama3.2:latest","prompt":"What is 2 plus 2?"}`,
+			handler: func(w http.ResponseWriter, r *http.Request) { Completion(w, r, profile) },
+			want:    proto.LlmReplyKind_LLM_REPLY_KIND_ARITHMETIC,
+		},
+		{
+			name: "Ollama generate", path: "/api/generate",
+			body:    `{"model":"llama3.2:latest","prompt":"Reply with a concise description of what an Ollama server does.","stream":false}`,
+			handler: func(w http.ResponseWriter, r *http.Request) { OllamaGenerate(w, r, profile) },
+			want:    proto.LlmReplyKind_LLM_REPLY_KIND_OLLAMA_DESCRIPTION,
+		},
+		{
+			name: "Ollama chat", path: "/api/chat",
+			body:    `{"model":"llama3.2:latest","messages":[{"role":"user","content":"请用中文简要介绍一下你自己，包括你的名称、能力范围，限 100 字以内。"}],"stream":false}`,
+			handler: func(w http.ResponseWriter, r *http.Request) { OllamaChat(w, r, profile) },
+			want:    proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_INTRO_ZH,
+		},
+		{
+			name: "Responses", path: "/v1/responses",
+			body:    `{"model":"llama3.2:latest","input":[{"role":"user","content":"Name a fruit."}]}`,
+			handler: func(w http.ResponseWriter, r *http.Request) { Responses(w, r, profile) },
+			want:    proto.LlmReplyKind_LLM_REPLY_KIND_VALIDATION_FACT,
+		},
 	}
-	if !strings.Contains(recorder.Body.String(), "hosts and runs language models") {
-		t.Fatalf("response was not semantic: %s", recorder.Body.String())
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			saved := make(chan *proto.LlmRequest, 1)
+			handler := Capture(func(in *proto.LlmRequest) error {
+				saved <- in
+				return nil
+			})(test.handler)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(
+				http.MethodPost, test.path, strings.NewReader(test.body),
+			))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d; body=%s", recorder.Code, recorder.Body.String())
+			}
+			if got := (<-saved).ReplyKind; got != test.want {
+				t.Fatalf("reply kind = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 
@@ -336,6 +413,44 @@ func (w *optionalResponseWriter) ReadFrom(r io.Reader) (int64, error) {
 	return int64(len(data)), err
 }
 func (w *optionalResponseWriter) CloseNotify() <-chan bool { return w.closeNotify }
+
+type failingReaderFromResponseWriter struct {
+	header http.Header
+}
+
+func (w *failingReaderFromResponseWriter) Header() http.Header         { return w.header }
+func (w *failingReaderFromResponseWriter) WriteHeader(_ int)           {}
+func (w *failingReaderFromResponseWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (w *failingReaderFromResponseWriter) ReadFrom(r io.Reader) (int64, error) {
+	n, _ := io.Copy(io.Discard, r)
+	return n, errors.New("client disconnected during ReadFrom")
+}
+
+func TestCaptureReadFromRecordsResponseMetadataAndFailure(t *testing.T) {
+	saved := make(chan *proto.LlmRequest, 1)
+	handler := Capture(func(in *proto.LlmRequest) error {
+		saved <- in
+		return nil
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", CTNDJSON)
+		_, _ = io.Copy(w, io.LimitReader(strings.NewReader("{\"done\":true}\n"), 64))
+	}))
+
+	handler.ServeHTTP(
+		&failingReaderFromResponseWriter{header: make(http.Header)},
+		httptest.NewRequest(http.MethodPost, "/api/chat", nil),
+	)
+	got := <-saved
+	if got.ResponseStatus != http.StatusOK {
+		t.Fatalf("status = %d, want 200", got.ResponseStatus)
+	}
+	if got.ResponseContentType != CTNDJSON {
+		t.Fatalf("content type = %q, want %q", got.ResponseContentType, CTNDJSON)
+	}
+	if got.StreamOutcome != proto.LlmStreamOutcome_LLM_STREAM_OUTCOME_ABORTED {
+		t.Fatalf("stream outcome = %v, want aborted", got.StreamOutcome)
+	}
+}
 
 func TestCaptureResponseWriterPreservesStreamingInterfaces(t *testing.T) {
 	base := &optionalResponseWriter{header: make(http.Header), closeNotify: make(chan bool)}
