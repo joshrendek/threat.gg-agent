@@ -314,6 +314,73 @@ func TestCopiedModelUsesSourceIdentityAndClearsBaseMarker(t *testing.T) {
 	}
 }
 
+func TestOverlayShowCacheInvalidatesAfterDeleteAndReplacement(t *testing.T) {
+	orig := pullStepDelay
+	pullStepDelay = func() time.Duration { return 0 }
+	t.Cleanup(func() { pullStepDelay = orig })
+
+	const ip = "203.0.113.64"
+	const destination = "cache-swap:1b"
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+
+	if rec := doFrom(t, ip, http.MethodPost, "/api/pull", `{"name":"`+destination+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("pull initial model: status %d", rec.Code)
+	}
+	initial, ok := models.get(req, destination)
+	if !ok {
+		t.Fatal("initial overlay missing")
+	}
+	initialPayload := showPayloadForRequest(req, initial)
+	if got := initialPayload.response.ModelInfo["llama.embedding_length"]; got != 2048 {
+		t.Fatalf("initial embedding length = %v, want 2048", got)
+	}
+	if rec := doFrom(t, ip, http.MethodDelete, "/api/delete", `{"name":"`+destination+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("delete initial model: status %d", rec.Code)
+	}
+
+	const source = "cache-source:70b"
+	if rec := doFrom(t, ip, http.MethodPost, "/api/pull", `{"name":"`+source+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("pull replacement source: status %d", rec.Code)
+	}
+	if rec := doFrom(t, ip, http.MethodPost, "/api/copy",
+		`{"source":"`+source+`","destination":"`+destination+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("copy replacement: status %d", rec.Code)
+	}
+	replacement, ok := models.get(req, destination)
+	if !ok {
+		t.Fatal("replacement overlay missing")
+	}
+	replacementPayload := showPayloadForRequest(req, replacement)
+	if &initialPayload.body[0] == &replacementPayload.body[0] {
+		t.Error("replacement reused the deleted overlay's serialized payload")
+	}
+	if got := replacementPayload.response.ModelInfo["llama.embedding_length"]; got != 8192 {
+		t.Errorf("replacement embedding length = %v, want 8192", got)
+	}
+	if got := replacementPayload.response.ModelInfo["llama.block_count"]; got != 80 {
+		t.Errorf("replacement block count = %v, want 80", got)
+	}
+}
+
+func TestOversizedPulledModelNameIsNotRetained(t *testing.T) {
+	orig := pullStepDelay
+	pullStepDelay = func() time.Duration { return 0 }
+	t.Cleanup(func() { pullStepDelay = orig })
+
+	const ip = "203.0.113.65"
+	name := strings.Repeat("a", maxModelNameBytes+1) + ":1b"
+	rec := doFrom(t, ip, http.MethodPost, "/api/pull", `{"name":"`+name+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("oversized pull status %d", rec.Code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+	if models.has(req, name) {
+		t.Error("oversized attacker-controlled model name was retained in the catalog")
+	}
+}
+
 // Repeated pulls from one address must not grow memory without bound.
 func TestAddedModelsAreCappedPerCaller(t *testing.T) {
 	orig := pullStepDelay

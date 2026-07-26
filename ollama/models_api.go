@@ -141,9 +141,9 @@ type visionProfile struct {
 	imageSize         int
 }
 
-// architectureProfiles cover advertised models that are not available on the local reference
-// host. Values come from their published model architectures. Every metadata dimension is also
-// used by the tensor inventory, so these responses cannot contradict themselves.
+// architectureProfiles cover advertised models without captured fixture JSON in testdata.
+// Values come from their published model architectures. Every metadata dimension is also used by
+// the tensor inventory, so these responses cannot contradict themselves.
 var architectureProfiles = map[string]architectureProfile{
 	"llama3.2:latest": {
 		architecture: "llama", basename: "Llama-3.2-3B-Instruct",
@@ -313,6 +313,7 @@ func safeModelfileName(name string) string {
 	}, name)
 }
 
+// buildShow selects a captured response by source identity or builds a consistent fallback.
 func buildShow(m CatalogModel) showResponse {
 	profileName := showProfileName(m)
 	if grounded, ok := groundedShowFixtures[profileName]; ok && isSeedModel(m) {
@@ -370,7 +371,7 @@ type showPayload struct {
 	body     []byte
 }
 
-// advertisedShowPayloads caches the final JSON only for the six immutable base-catalog entries.
+// advertisedShowPayloads caches final JSON only for immutable base-catalog entries.
 // The full model identity is part of the key so a same-name per-IP overlay cannot receive stale
 // base metadata. Pulled overlays, including re-pulled seeds with a fresh ModifiedAt, are not cached;
 // otherwise attacker-controlled identities could create an unbounded process-lifetime cache.

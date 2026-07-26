@@ -160,6 +160,9 @@ const (
 	// maxAddedPerView caps models one IP can add, so repeated /api/pull cannot grow memory without
 	// bound. A real box would run out of disk long before this matters.
 	maxAddedPerView = 8
+	// maxModelNameBytes bounds attacker-controlled strings retained by catalog overlays and their
+	// serialized /api/show payloads. Real registry model references are far shorter than this.
+	maxModelNameBytes = 255
 	// viewTTL is how long an overlay survives without traffic from that IP.
 	viewTTL = time.Hour
 )
@@ -281,6 +284,9 @@ func (c *catalog) has(r *http.Request, name string) bool {
 // add records a model as present for this requester only. Called by /api/pull and /api/copy once
 // the fake operation "completes". A no-op if already visible or if this IP is at its cap.
 func (c *catalog) add(r *http.Request, m CatalogModel) {
+	if len(m.Name) > maxModelNameBytes {
+		return
+	}
 	if c.has(r, m.Name) {
 		return
 	}
