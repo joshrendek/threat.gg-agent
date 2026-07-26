@@ -327,12 +327,7 @@ func isSeedModel(m CatalogModel) bool {
 }
 
 func isImmutableSeedModel(m CatalogModel) bool {
-	for _, seeded := range seedModels {
-		if m.Name == seeded.Name && m.Digest == seeded.Digest && m.ModifiedAt == seeded.ModifiedAt {
-			return true
-		}
-	}
-	return false
+	return m.immutableBase && isSeedModel(m)
 }
 
 type showCacheKey struct {

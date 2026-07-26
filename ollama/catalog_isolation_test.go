@@ -158,6 +158,35 @@ func TestShowCacheUsesFullModelIdentity(t *testing.T) {
 	}
 }
 
+func TestAdvertisedShowPayloadCacheExcludesOverlays(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	base, ok := models.get(req, "qwen2.5-coder:7b")
+	if !ok {
+		t.Fatal("base seed model missing")
+	}
+	if !isImmutableSeedModel(base) {
+		t.Fatal("base catalog model was not recognized as immutable")
+	}
+	first := showPayloadFor(base)
+	second := showPayloadFor(base)
+	if len(first.body) == 0 || len(second.body) == 0 || &first.body[0] != &second.body[0] {
+		t.Error("immutable base model did not reuse its serialized /api/show payload")
+	}
+
+	overlay := synthesize("cache-probe:1b")
+	if isImmutableSeedModel(overlay) {
+		t.Fatal("pulled overlay was incorrectly recognized as an immutable seed")
+	}
+	first = showPayloadFor(overlay)
+	second = showPayloadFor(overlay)
+	if len(first.body) == 0 || len(second.body) == 0 {
+		t.Fatal("pulled overlay produced an empty /api/show payload")
+	}
+	if &first.body[0] == &second.body[0] {
+		t.Error("attacker-controlled overlay unexpectedly entered the process-lifetime cache")
+	}
+}
+
 func TestPullingDeletedSeedRestoresRegistryIdentity(t *testing.T) {
 	orig := pullStepDelay
 	pullStepDelay = func() time.Duration { return 0 }
@@ -189,6 +218,9 @@ func TestPullingDeletedSeedRestoresRegistryIdentity(t *testing.T) {
 	if restored.Digest != seeded.Digest || !reflect.DeepEqual(restored.Details, seeded.Details) ||
 		!reflect.DeepEqual(restored.Capabilities, seeded.Capabilities) {
 		t.Errorf("re-pulled identity differs from registry seed:\n restored=%#v\n seed=%#v", restored, seeded)
+	}
+	if isImmutableSeedModel(restored) {
+		t.Error("re-pulled seed overlay must not enter the immutable base payload cache")
 	}
 
 	rec := doFrom(t, ip, http.MethodPost, "/api/show", `{"model":"`+name+`"}`)

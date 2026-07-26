@@ -38,6 +38,9 @@ type CatalogModel struct {
 	arch string `json:"-"`
 	// blocks is the transformer layer count, used for the /api/show tensor listing.
 	blocks int `json:"-"`
+	// immutableBase marks entries owned by catalog.base. Per-caller overlays deliberately remain
+	// false, including a deleted seed that the caller later re-pulls with a fresh timestamp.
+	immutableBase bool `json:"-"`
 }
 
 // seedModels is the advertised catalog. llama3.2:latest and mistral:latest are kept byte-identical
@@ -170,6 +173,7 @@ func newCatalog() *catalog {
 	// same values.
 	base := time.Now().UTC().Add(-27 * 24 * time.Hour)
 	for i := range c.base {
+		c.base[i].immutableBase = true
 		c.base[i].ModifiedAt = base.
 			Add(time.Duration(i) * 53 * time.Hour).
 			Add(time.Duration(i*7919) * time.Millisecond).

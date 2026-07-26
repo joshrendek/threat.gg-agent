@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-var referenceHTTPClient = &http.Client{Timeout: 15 * time.Second}
-
 // TestAgainstReferenceServer diffs this honeypot against a real Ollama, so the fidelity claims
 // in PRD 033 can be re-verified against a new upstream release rather than trusted forever.
 //
@@ -33,6 +31,7 @@ func TestAgainstReferenceServer(t *testing.T) {
 		t.Skip("set OLLAMA_REFERENCE_URL to a real Ollama to run the reference diff")
 	}
 	ref = strings.TrimRight(ref, "/")
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	srv := httptest.NewServer(buildHandler())
 	defer srv.Close()
@@ -85,7 +84,7 @@ func TestAgainstReferenceServer(t *testing.T) {
 		if c.body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		resp, err := referenceHTTPClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -139,13 +138,14 @@ func TestShowAgainstReferenceServer(t *testing.T) {
 		t.Skip("set OLLAMA_REFERENCE_URL to a real Ollama to run the reference diff")
 	}
 	ref = strings.TrimRight(ref, "/")
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	srv := httptest.NewServer(buildHandler())
 	defer srv.Close()
 
 	fetchShow := func(base, model string) (*http.Response, []byte) {
 		t.Helper()
-		resp, err := referenceHTTPClient.Post(base+"/api/show", "application/json",
+		resp, err := client.Post(base+"/api/show", "application/json",
 			strings.NewReader(`{"model":"`+model+`"}`))
 		if err != nil {
 			t.Fatalf("%s /api/show %s: %v", base, model, err)
