@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -200,6 +201,150 @@ func TestShowIsDetailed(t *testing.T) {
 	}
 	if len(resp.Capabilities) == 0 {
 		t.Error("capabilities missing")
+	}
+}
+
+func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
+	tests := []struct {
+		model          string
+		modelInfoCount int
+		tensorCount    int
+		licenseMarker  string
+		templateMarker string
+		system         string
+	}{
+		{
+			model: "qwen2.5-coder:7b", modelInfoCount: 33, tensorCount: 339,
+			licenseMarker: "Apache License", templateMarker: "<|fim_prefix|>",
+			system: "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+		},
+		{
+			model: "gemma3:12b", modelInfoCount: 36, tensorCount: 1065,
+			licenseMarker: "Gemma Terms of Use", templateMarker: "<start_of_turn>",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.model, func(t *testing.T) {
+			rec := do(t, "POST", "/api/show", `{"model":"`+tc.model+`"}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+			}
+			var got showResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			want := groundedShowFixtures[tc.model]
+			m, ok := models.get(httptest.NewRequest("GET", "/", nil), tc.model)
+			if !ok {
+				t.Fatalf("grounded model %q is not advertised", tc.model)
+			}
+			want.ModifiedAt = m.ModifiedAt
+			if !reflect.DeepEqual(got, want) {
+				t.Fatal("/api/show response diverged from its grounded Ollama 0.30.11 fixture")
+			}
+			if len(got.ModelInfo) != tc.modelInfoCount {
+				t.Errorf("model_info keys = %d, want %d", len(got.ModelInfo), tc.modelInfoCount)
+			}
+			if len(got.Tensors) != tc.tensorCount {
+				t.Errorf("tensors = %d, want %d", len(got.Tensors), tc.tensorCount)
+			}
+			if !strings.Contains(got.License, tc.licenseMarker) {
+				t.Errorf("license does not contain grounded marker %q", tc.licenseMarker)
+			}
+			if !strings.Contains(got.Template, tc.templateMarker) {
+				t.Errorf("template does not contain grounded marker %q", tc.templateMarker)
+			}
+			if got.System != tc.system {
+				t.Errorf("system = %q, want %q", got.System, tc.system)
+			}
+			if strings.Contains(got.Modelfile, "/Users/") {
+				t.Error("capturing host's model-store path leaked into fixture")
+			}
+
+			var raw map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+				t.Fatalf("decode raw response: %v", err)
+			}
+			details := raw["details"].(map[string]any)
+			if len(details) != 6 {
+				t.Errorf("details keys = %d, want the six keys Ollama /api/show emits", len(details))
+			}
+			if _, ok := details["context_length"]; ok {
+				t.Error("/api/show details must omit context_length (it appears only in /api/tags)")
+			}
+			if _, ok := details["embedding_length"]; ok {
+				t.Error("/api/show details must omit embedding_length (it appears only in /api/tags)")
+			}
+		})
+	}
+}
+
+func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
+	grounded := map[string]bool{"qwen2.5-coder:7b": true, "gemma3:12b": true}
+	for _, m := range seedModels {
+		if grounded[m.Name] {
+			continue
+		}
+		t.Run(m.Name, func(t *testing.T) {
+			p := profileFor(m)
+			info := modelInfo(m)
+			assertInfo := func(key string, want any) {
+				t.Helper()
+				if got := info[key]; got != want {
+					t.Errorf("model_info[%q] = %v, want %v", key, got, want)
+				}
+			}
+			assertInfo("general.architecture", p.architecture)
+			assertInfo(p.architecture+".block_count", p.blockCount)
+			assertInfo(p.architecture+".context_length", m.Details.ContextLength)
+			assertInfo(p.architecture+".embedding_length", m.Details.EmbeddingLength)
+			assertInfo(p.architecture+".feed_forward_length", p.feedForwardLength)
+
+			tensors := tensorList(m)
+			names := make(map[string]bool, len(tensors))
+			textBlocks := make(map[string]bool, p.blockCount)
+			hasVisionTensor := false
+			for _, tensor := range tensors {
+				if names[tensor.Name] {
+					t.Errorf("duplicate tensor %q", tensor.Name)
+				}
+				names[tensor.Name] = true
+				for _, dimension := range tensor.Shape {
+					if dimension <= 0 {
+						t.Errorf("tensor %q has non-positive shape %v", tensor.Name, tensor.Shape)
+					}
+				}
+				if strings.HasPrefix(tensor.Name, "blk.") {
+					parts := strings.Split(tensor.Name, ".")
+					textBlocks[parts[1]] = true
+				}
+				if strings.HasPrefix(tensor.Name, "v.") || strings.HasPrefix(tensor.Name, "mm.") {
+					hasVisionTensor = true
+				}
+			}
+			if len(textBlocks) != p.blockCount {
+				t.Errorf("text blocks = %d, want %d", len(textBlocks), p.blockCount)
+			}
+			if !names["token_embd.weight"] || !names["output_norm.weight"] || !names["output.weight"] {
+				t.Error("text tensor inventory is missing embeddings or output tensors")
+			}
+			hasVisionCapability := false
+			for _, capability := range m.Capabilities {
+				hasVisionCapability = hasVisionCapability || capability == "vision"
+			}
+			if hasVisionCapability != hasVisionTensor {
+				t.Errorf("vision capability = %t but vision tensors present = %t", hasVisionCapability, hasVisionTensor)
+			}
+
+			resp := showFor(m)
+			if resp.License != "" || resp.Template != "" || resp.System != "" || resp.Parameters != "" {
+				t.Error("ungrounded license/template/system/parameters must be omitted, not invented")
+			}
+			if strings.Contains(resp.Modelfile, "TEMPLATE") {
+				t.Error("ungrounded generated Modelfile must not claim a template")
+			}
+		})
 	}
 }
 

@@ -100,12 +100,12 @@ var seedModels = []CatalogModel{
 		Size:   4920738147,
 		Digest: "6995872bfe4c5b2b0e3b1a9c48ec1e2ba1b7f6b4ba9d40e1e4c0e6a0b5f2c3d7",
 		Details: Details{
-			Format: "gguf", Family: "qwen3", Families: []string{"qwen3"},
-			ParameterSize: "8.2B", QuantizationLevel: "Q4_K_M",
+			Format: "gguf", Family: "llama", Families: []string{"llama"},
+			ParameterSize: "8.0B", QuantizationLevel: "Q4_K_M",
 			ContextLength: 131072, EmbeddingLength: 4096,
 		},
 		Capabilities: []string{"completion", "thinking"},
-		arch:         "qwen3", blocks: 36,
+		arch:         "llama", blocks: 32,
 	},
 	{
 		Name: "llava:latest", Model: "llava:latest",
@@ -114,7 +114,7 @@ var seedModels = []CatalogModel{
 		Details: Details{
 			Format: "gguf", Family: "llama", Families: []string{"llama", "clip"},
 			ParameterSize: "7B", QuantizationLevel: "Q4_0",
-			ContextLength: 32768, EmbeddingLength: 4096,
+			ContextLength: 4096, EmbeddingLength: 4096,
 		},
 		Capabilities: []string{"completion", "vision"},
 		arch:         "llama", blocks: 32,

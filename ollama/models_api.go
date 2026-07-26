@@ -1,6 +1,7 @@
 package ollama
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -48,15 +49,27 @@ func (m modelRequest) model() string {
 // -- /api/show
 
 type showResponse struct {
-	License      string         `json:"license"`
+	License      string         `json:"license,omitempty"`
 	Modelfile    string         `json:"modelfile"`
-	Parameters   string         `json:"parameters"`
-	Template     string         `json:"template"`
-	Details      Details        `json:"details"`
+	Parameters   string         `json:"parameters,omitempty"`
+	Template     string         `json:"template,omitempty"`
+	System       string         `json:"system,omitempty"`
+	Details      showDetails    `json:"details"`
 	ModelInfo    map[string]any `json:"model_info"`
 	Tensors      []tensor       `json:"tensors"`
 	Capabilities []string       `json:"capabilities"`
 	ModifiedAt   string         `json:"modified_at"`
+}
+
+// showDetails is intentionally separate from Details. Ollama includes context_length and
+// embedding_length in /api/tags, but omits both from /api/show's details object.
+type showDetails struct {
+	ParentModel       string   `json:"parent_model"`
+	Format            string   `json:"format"`
+	Family            string   `json:"family"`
+	Families          []string `json:"families"`
+	ParameterSize     string   `json:"parameter_size"`
+	QuantizationLevel string   `json:"quantization_level"`
 }
 
 type tensor struct {
@@ -65,57 +78,179 @@ type tensor struct {
 	Shape []int  `json:"shape"`
 }
 
-// modelInfo synthesises the GGUF metadata block /api/show returns. Real responses carry ~36
-// architecture-prefixed keys; a five-key stub is the giveaway, not the exact values.
-func modelInfo(m CatalogModel) map[string]any {
-	a := m.arch
+// The two models production scanners inspect most heavily are captured byte-for-byte from a real
+// Ollama 0.30.11. Embedding the fixtures keeps license, template, GGUF metadata, tensor order,
+// quantization types and multimodal inventory grounded instead of reconstructing them from
+// guesses. modified_at is replaced with this process's stable catalog timestamp at response time.
+//
+//go:embed testdata/show_qwen2.5-coder_7b_ollama-0.30.11.json
+//go:embed testdata/show_gemma3_12b_ollama-0.30.11.json
+var showFixtureFS embed.FS
+
+var groundedShowFixtures = loadGroundedShowFixtures()
+
+func loadGroundedShowFixtures() map[string]showResponse {
+	files := map[string]string{
+		"qwen2.5-coder:7b": "testdata/show_qwen2.5-coder_7b_ollama-0.30.11.json",
+		"gemma3:12b":       "testdata/show_gemma3_12b_ollama-0.30.11.json",
+	}
+	out := make(map[string]showResponse, len(files))
+	for model, path := range files {
+		b, err := showFixtureFS.ReadFile(path)
+		if err != nil {
+			panic(fmt.Sprintf("read grounded Ollama fixture %s: %v", path, err))
+		}
+		var resp showResponse
+		if err := json.Unmarshal(b, &resp); err != nil {
+			panic(fmt.Sprintf("decode grounded Ollama fixture %s: %v", path, err))
+		}
+		out[model] = resp
+	}
+	return out
+}
+
+type architectureProfile struct {
+	architecture      string
+	basename          string
+	parameterCount    int64
+	blockCount        int
+	contextLength     int
+	embeddingLength   int
+	feedForwardLength int
+	vocabSize         int
+	headCount         int
+	headCountKV       int
+	ropeDimension     int
+	ropeFreqBase      int
+	tokenizerModel    string
+	tokenizerPre      string
+	bosTokenID        int
+	eosTokenID        int
+	vision            *visionProfile
+}
+
+type visionProfile struct {
+	blockCount        int
+	embeddingLength   int
+	feedForwardLength int
+	patchSize         int
+	imageSize         int
+}
+
+// architectureProfiles cover advertised models that are not available on the local reference
+// host. Values come from their published model architectures. Unlike the previous generic
+// generator, every metadata dimension is also used by the tensor inventory, so these responses
+// cannot contradict themselves.
+var architectureProfiles = map[string]architectureProfile{
+	"llama3.2:latest": {
+		architecture: "llama", basename: "Llama-3.2-3B-Instruct",
+		parameterCount: 3212749888, blockCount: 28, contextLength: 131072,
+		embeddingLength: 3072, feedForwardLength: 8192, vocabSize: 128256,
+		headCount: 24, headCountKV: 8, ropeDimension: 128, ropeFreqBase: 500000,
+		tokenizerModel: "gpt2", tokenizerPre: "llama-bpe", bosTokenID: 128000, eosTokenID: 128009,
+	},
+	"mistral:latest": {
+		architecture: "llama", basename: "Mistral-7B-Instruct-v0.3",
+		parameterCount: 7248023552, blockCount: 32, contextLength: 32768,
+		embeddingLength: 4096, feedForwardLength: 14336, vocabSize: 32768,
+		headCount: 32, headCountKV: 8, ropeDimension: 128, ropeFreqBase: 1000000,
+		tokenizerModel: "llama", tokenizerPre: "default", bosTokenID: 1, eosTokenID: 2,
+	},
+	"deepseek-r1:8b": {
+		architecture: "llama", basename: "DeepSeek-R1-Distill-Llama-8B",
+		parameterCount: 8030261248, blockCount: 32, contextLength: 131072,
+		embeddingLength: 4096, feedForwardLength: 14336, vocabSize: 128256,
+		headCount: 32, headCountKV: 8, ropeDimension: 128, ropeFreqBase: 500000,
+		tokenizerModel: "gpt2", tokenizerPre: "llama-bpe", bosTokenID: 128000, eosTokenID: 128001,
+	},
+	"llava:latest": {
+		architecture: "llama", basename: "LLaVA-v1.5-7B",
+		parameterCount: 7066308608, blockCount: 32, contextLength: 4096,
+		embeddingLength: 4096, feedForwardLength: 11008, vocabSize: 32000,
+		headCount: 32, headCountKV: 32, ropeDimension: 128, ropeFreqBase: 10000,
+		tokenizerModel: "llama", tokenizerPre: "default", bosTokenID: 1, eosTokenID: 2,
+		vision: &visionProfile{
+			blockCount: 24, embeddingLength: 1024, feedForwardLength: 4096,
+			patchSize: 14, imageSize: 336,
+		},
+	},
+}
+
+func profileFor(m CatalogModel) architectureProfile {
+	if p, ok := architectureProfiles[m.Name]; ok {
+		return p
+	}
+	// Models added through /api/pull are unknown by definition. Keep their fallback self-
+	// consistent and deliberately modest rather than claiming metadata from a named real model.
 	heads := m.Details.EmbeddingLength / 128
 	if heads < 1 {
 		heads = 8
 	}
-	return map[string]any{
-		"general.architecture":                  a,
-		"general.basename":                      strings.SplitN(m.Name, ":", 2)[0],
-		"general.file_type":                     15,
-		"general.parameter_count":               m.Size / 2 * 3,
-		"general.quantization_version":          2,
-		"general.type":                          "model",
-		a + ".attention.head_count":             heads,
-		a + ".attention.head_count_kv":          8,
-		a + ".attention.layer_norm_rms_epsilon": 1e-05,
-		a + ".block_count":                      m.blocks,
-		a + ".context_length":                   m.Details.ContextLength,
-		a + ".embedding_length":                 m.Details.EmbeddingLength,
-		a + ".feed_forward_length":              m.Details.EmbeddingLength * 4,
-		a + ".rope.dimension_count":             128,
-		a + ".rope.freq_base":                   500000,
-		a + ".vocab_size":                       128256,
-		"tokenizer.ggml.bos_token_id":           128000,
-		"tokenizer.ggml.eos_token_id":           128009,
-		"tokenizer.ggml.model":                  "gpt2",
-		"tokenizer.ggml.pre":                    a,
+	return architectureProfile{
+		architecture: m.arch, basename: strings.SplitN(m.Name, ":", 2)[0],
+		parameterCount: m.Size / 2 * 3, blockCount: m.blocks,
+		contextLength: m.Details.ContextLength, embeddingLength: m.Details.EmbeddingLength,
+		feedForwardLength: m.Details.EmbeddingLength * 4, vocabSize: 32000,
+		headCount: heads, headCountKV: max(1, heads/4), ropeDimension: 128,
+		ropeFreqBase: 10000, tokenizerModel: "llama", tokenizerPre: "default",
+		bosTokenID: 1, eosTokenID: 2,
 	}
 }
 
-// tensorList synthesises the per-layer tensor inventory /api/show reports, following the GGUF
-// naming convention (token_embd, output_norm, blk.N.*).
+func modelInfo(m CatalogModel) map[string]any {
+	p := profileFor(m)
+	a := p.architecture
+	info := map[string]any{
+		"general.architecture":                  a,
+		"general.basename":                      p.basename,
+		"general.file_type":                     15,
+		"general.parameter_count":               p.parameterCount,
+		"general.quantization_version":          2,
+		"general.type":                          "model",
+		a + ".attention.head_count":             p.headCount,
+		a + ".attention.head_count_kv":          p.headCountKV,
+		a + ".attention.layer_norm_rms_epsilon": 1e-05,
+		a + ".block_count":                      p.blockCount,
+		a + ".context_length":                   p.contextLength,
+		a + ".embedding_length":                 p.embeddingLength,
+		a + ".feed_forward_length":              p.feedForwardLength,
+		a + ".rope.dimension_count":             p.ropeDimension,
+		a + ".rope.freq_base":                   p.ropeFreqBase,
+		a + ".vocab_size":                       p.vocabSize,
+		"tokenizer.ggml.bos_token_id":           p.bosTokenID,
+		"tokenizer.ggml.eos_token_id":           p.eosTokenID,
+		"tokenizer.ggml.model":                  p.tokenizerModel,
+		"tokenizer.ggml.pre":                    p.tokenizerPre,
+	}
+	if p.vision != nil {
+		info["clip.vision.block_count"] = p.vision.blockCount
+		info["clip.vision.embedding_length"] = p.vision.embeddingLength
+		info["clip.vision.feed_forward_length"] = p.vision.feedForwardLength
+		info["clip.vision.image_size"] = p.vision.imageSize
+		info["clip.vision.patch_size"] = p.vision.patchSize
+	}
+	return info
+}
+
 func tensorList(m CatalogModel) []tensor {
-	embd := m.Details.EmbeddingLength
+	p := profileFor(m)
+	embd := p.embeddingLength
 	if embd == 0 {
 		embd = 4096
 	}
-	ffn := embd * 4
+	ffn := p.feedForwardLength
+	headWidth := embd / p.headCount
+	kvWidth := headWidth * p.headCountKV
 	out := []tensor{
-		{Name: "output_norm.weight", Type: "F32", Shape: []int{embd}},
-		{Name: "token_embd.weight", Type: "Q6_K", Shape: []int{embd, 128256}},
+		{Name: "token_embd.weight", Type: "Q4_K", Shape: []int{embd, p.vocabSize}},
 	}
-	for i := 0; i < m.blocks; i++ {
+	for i := 0; i < p.blockCount; i++ {
 		p := fmt.Sprintf("blk.%d.", i)
 		out = append(out,
 			tensor{Name: p + "attn_norm.weight", Type: "F32", Shape: []int{embd}},
 			tensor{Name: p + "attn_q.weight", Type: "Q4_K", Shape: []int{embd, embd}},
-			tensor{Name: p + "attn_k.weight", Type: "Q4_K", Shape: []int{embd, embd / 4}},
-			tensor{Name: p + "attn_v.weight", Type: "Q6_K", Shape: []int{embd, embd / 4}},
+			tensor{Name: p + "attn_k.weight", Type: "Q4_K", Shape: []int{embd, kvWidth}},
+			tensor{Name: p + "attn_v.weight", Type: "Q6_K", Shape: []int{embd, kvWidth}},
 			tensor{Name: p + "attn_output.weight", Type: "Q4_K", Shape: []int{embd, embd}},
 			tensor{Name: p + "ffn_norm.weight", Type: "F32", Shape: []int{embd}},
 			tensor{Name: p + "ffn_gate.weight", Type: "Q4_K", Shape: []int{embd, ffn}},
@@ -123,7 +258,60 @@ func tensorList(m CatalogModel) []tensor {
 			tensor{Name: p + "ffn_down.weight", Type: "Q6_K", Shape: []int{ffn, embd}},
 		)
 	}
+	out = append(out,
+		tensor{Name: "output_norm.weight", Type: "F32", Shape: []int{embd}},
+		tensor{Name: "output.weight", Type: "Q6_K", Shape: []int{embd, p.vocabSize}},
+	)
+	if p.vision != nil {
+		v := p.vision
+		out = append(out,
+			tensor{Name: "mm.0.weight", Type: "F16", Shape: []int{v.embeddingLength, embd}},
+			tensor{Name: "mm.2.weight", Type: "F16", Shape: []int{embd, embd}},
+			tensor{Name: "v.class_embd", Type: "F32", Shape: []int{v.embeddingLength}},
+			tensor{Name: "v.patch_embd.weight", Type: "F16", Shape: []int{v.patchSize, v.patchSize, 3, v.embeddingLength}},
+			tensor{Name: "v.position_embd.weight", Type: "F16", Shape: []int{v.embeddingLength, 1 + (v.imageSize/v.patchSize)*(v.imageSize/v.patchSize)}},
+		)
+		for i := 0; i < v.blockCount; i++ {
+			prefix := fmt.Sprintf("v.blk.%d.", i)
+			out = append(out,
+				tensor{Name: prefix + "attn_norm.weight", Type: "F32", Shape: []int{v.embeddingLength}},
+				tensor{Name: prefix + "attn_q.weight", Type: "F16", Shape: []int{v.embeddingLength, v.embeddingLength}},
+				tensor{Name: prefix + "attn_k.weight", Type: "F16", Shape: []int{v.embeddingLength, v.embeddingLength}},
+				tensor{Name: prefix + "attn_v.weight", Type: "F16", Shape: []int{v.embeddingLength, v.embeddingLength}},
+				tensor{Name: prefix + "attn_output.weight", Type: "F16", Shape: []int{v.embeddingLength, v.embeddingLength}},
+				tensor{Name: prefix + "ffn_norm.weight", Type: "F32", Shape: []int{v.embeddingLength}},
+				tensor{Name: prefix + "ffn_up.weight", Type: "F16", Shape: []int{v.embeddingLength, v.feedForwardLength}},
+				tensor{Name: prefix + "ffn_down.weight", Type: "F16", Shape: []int{v.feedForwardLength, v.embeddingLength}},
+			)
+		}
+	}
 	return out
+}
+
+func showDetailsFor(m CatalogModel) showDetails {
+	return showDetails{
+		ParentModel: m.Details.ParentModel, Format: m.Details.Format,
+		Family: m.Details.Family, Families: m.Details.Families,
+		ParameterSize: m.Details.ParameterSize, QuantizationLevel: m.Details.QuantizationLevel,
+	}
+}
+
+func showFor(m CatalogModel) showResponse {
+	if grounded, ok := groundedShowFixtures[m.Name]; ok {
+		grounded.ModifiedAt = m.ModifiedAt
+		return grounded
+	}
+	return showResponse{
+		Modelfile: fmt.Sprintf("# Modelfile generated by \"ollama show\"\n"+
+			"# To build a new Modelfile based on this, replace FROM with:\n"+
+			"# FROM %s\n\nFROM /root/.ollama/models/blobs/sha256-%s",
+			m.Name, m.Digest),
+		Details:      showDetailsFor(m),
+		ModelInfo:    modelInfo(m),
+		Tensors:      tensorList(m),
+		Capabilities: m.Capabilities,
+		ModifiedAt:   m.ModifiedAt,
+	}
 }
 
 func handleShow(w http.ResponseWriter, r *http.Request) {
@@ -141,21 +329,7 @@ func handleShow(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteModelNotFoundAPI(w, profile, normalize(req.model()))
 		return
 	}
-	llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, showResponse{
-		License: "MIT License\n\nPermission is hereby granted, free of charge, to any person " +
-			"obtaining a copy of this software and associated documentation files.",
-		Modelfile: fmt.Sprintf("# Modelfile generated by \"ollama show\"\n"+
-			"# To build a new Modelfile based on this, replace FROM with:\n"+
-			"# FROM %s\n\nFROM /root/.ollama/models/blobs/sha256-%s\nTEMPLATE \"\"\"{{ .System }}{{ .Prompt }}\"\"\"",
-			m.Name, m.Digest),
-		Parameters:   "stop                           \"<|start_header_id|>\"\nstop                           \"<|end_header_id|>\"\nstop                           \"<|eot_id|>\"",
-		Template:     "{{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n",
-		Details:      m.Details,
-		ModelInfo:    modelInfo(m),
-		Tensors:      tensorList(m),
-		Capabilities: m.Capabilities,
-		ModifiedAt:   m.ModifiedAt,
-	})
+	llmcore.WriteJSONCT(w, http.StatusOK, llmcore.CTJSONCharset, showFor(m))
 }
 
 // -- /api/pull
