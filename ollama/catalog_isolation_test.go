@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -240,9 +241,9 @@ func TestPullingDeletedSeedRestoresRegistryIdentity(t *testing.T) {
 	if &first.body[0] == &second.body[0] {
 		t.Error("re-pulled seed reused a process-lifetime cached payload")
 	}
-	first = showPayloadForRequest(req, restored)
-	second = showPayloadForRequest(req, restored)
-	if &first.body[0] != &second.body[0] {
+	firstBody := showBodyForRequest(req, restored)
+	secondBody := showBodyForRequest(req, restored)
+	if &firstBody[0] != &secondBody[0] {
 		t.Error("re-pulled seed did not reuse its bounded per-view payload")
 	}
 
@@ -275,14 +276,18 @@ func TestCopiedModelUsesSourceIdentityAndClearsBaseMarker(t *testing.T) {
 	if isImmutableSeedModel(copied) || copied.immutableBase {
 		t.Error("copy of a base model retained the immutable cache marker")
 	}
-	first := showPayloadForRequest(req, copied)
-	second := showPayloadForRequest(req, copied)
-	if &first.body[0] != &second.body[0] {
+	first := showBodyForRequest(req, copied)
+	second := showBodyForRequest(req, copied)
+	if &first[0] != &second[0] {
 		t.Error("copied overlay did not reuse its bounded per-view payload")
 	}
-	if len(first.response.ModelInfo) != 33 || len(first.response.Tensors) != 339 {
+	var copiedShow showResponse
+	if err := json.Unmarshal(first, &copiedShow); err != nil {
+		t.Fatalf("decode copied show payload: %v", err)
+	}
+	if len(copiedShow.ModelInfo) != 33 || len(copiedShow.Tensors) != 339 {
 		t.Errorf("copied qwen lost source profile: model_info=%d tensors=%d",
-			len(first.response.ModelInfo), len(first.response.Tensors))
+			len(copiedShow.ModelInfo), len(copiedShow.Tensors))
 	}
 
 	const advertisedName = "llama3.2:latest"
@@ -331,8 +336,12 @@ func TestOverlayShowCacheInvalidatesAfterDeleteAndReplacement(t *testing.T) {
 	if !ok {
 		t.Fatal("initial overlay missing")
 	}
-	initialPayload := showPayloadForRequest(req, initial)
-	if got := initialPayload.response.ModelInfo["llama.embedding_length"]; got != 2048 {
+	initialPayload := showBodyForRequest(req, initial)
+	var initialShow showResponse
+	if err := json.Unmarshal(initialPayload, &initialShow); err != nil {
+		t.Fatalf("decode initial show payload: %v", err)
+	}
+	if got := initialShow.ModelInfo["llama.embedding_length"]; got != float64(2048) {
 		t.Fatalf("initial embedding length = %v, want 2048", got)
 	}
 	if rec := doFrom(t, ip, http.MethodDelete, "/api/delete", `{"name":"`+destination+`"}`); rec.Code != http.StatusOK {
@@ -351,33 +360,118 @@ func TestOverlayShowCacheInvalidatesAfterDeleteAndReplacement(t *testing.T) {
 	if !ok {
 		t.Fatal("replacement overlay missing")
 	}
-	replacementPayload := showPayloadForRequest(req, replacement)
-	if &initialPayload.body[0] == &replacementPayload.body[0] {
+	replacementPayload := showBodyForRequest(req, replacement)
+	if &initialPayload[0] == &replacementPayload[0] {
 		t.Error("replacement reused the deleted overlay's serialized payload")
 	}
-	if got := replacementPayload.response.ModelInfo["llama.embedding_length"]; got != 8192 {
+	var replacementShow showResponse
+	if err := json.Unmarshal(replacementPayload, &replacementShow); err != nil {
+		t.Fatalf("decode replacement show payload: %v", err)
+	}
+	if got := replacementShow.ModelInfo["llama.embedding_length"]; got != float64(8192) {
 		t.Errorf("replacement embedding length = %v, want 8192", got)
 	}
-	if got := replacementPayload.response.ModelInfo["llama.block_count"]; got != 80 {
+	if got := replacementShow.ModelInfo["llama.block_count"]; got != float64(80) {
 		t.Errorf("replacement block count = %v, want 80", got)
 	}
 }
 
-func TestOversizedPulledModelNameIsNotRetained(t *testing.T) {
+func TestPulledModelNameByteLimit(t *testing.T) {
 	orig := pullStepDelay
 	pullStepDelay = func() time.Duration { return 0 }
 	t.Cleanup(func() { pullStepDelay = orig })
 
 	const ip = "203.0.113.65"
-	name := strings.Repeat("a", maxModelNameBytes+1) + ":1b"
-	rec := doFrom(t, ip, http.MethodPost, "/api/pull", `{"name":"`+name+`"}`)
+	atLimit := strings.Repeat("a", maxModelNameBytes-len(":1b")) + ":1b"
+	rec := doFrom(t, ip, http.MethodPost, "/api/pull", `{"name":"`+atLimit+`"}`)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("oversized pull status %d", rec.Code)
+		t.Fatalf("boundary pull status %d: %s", rec.Code, rec.Body.String())
 	}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = ip + ":54321"
-	if models.has(req, name) {
-		t.Error("oversized attacker-controlled model name was retained in the catalog")
+	if !models.has(req, atLimit) {
+		t.Error("model name exactly at the byte limit was not retained")
+	}
+
+	for _, tc := range []struct {
+		name  string
+		model string
+	}{
+		{name: "ASCII", model: strings.Repeat("a", maxModelNameBytes+1) + ":1b"},
+		{name: "UTF-8", model: strings.Repeat("é", maxModelNameBytes/2+1) + ":1b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doFrom(t, ip, http.MethodPost, "/api/pull",
+				fmt.Sprintf(`{"name":%q}`, tc.model))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("oversized pull status %d, want 400: %s", rec.Code, rec.Body.String())
+			}
+			if models.has(req, tc.model) {
+				t.Error("oversized attacker-controlled model name was retained in the catalog")
+			}
+		})
+	}
+}
+
+func TestConcurrentAddsDoNotCreateDuplicateModels(t *testing.T) {
+	const ip = "203.0.113.66"
+	const name = "concurrent:1b"
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+	model := synthesize(name)
+	catalog := newCatalog()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !catalog.add(req, model) {
+				t.Error("concurrent add did not leave the model visible")
+			}
+		}()
+	}
+	wg.Wait()
+
+	count := 0
+	for _, candidate := range catalog.list(req) {
+		if candidate.Name == name {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("concurrent catalog contains %d copies of %q, want 1", count, name)
+	}
+}
+
+func TestPullReportsStorageLimitInsteadOfSuccess(t *testing.T) {
+	orig := pullStepDelay
+	pullStepDelay = func() time.Duration { return 0 }
+	t.Cleanup(func() { pullStepDelay = orig })
+
+	const ip = "203.0.113.67"
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = ip + ":54321"
+	for i := 0; i < maxAddedPerView; i++ {
+		if !models.add(req, synthesize(fmt.Sprintf("full-%d:1b", i))) {
+			t.Fatalf("fill overlay at index %d", i)
+		}
+	}
+
+	const overflow = "one-too-many:1b"
+	rec := doFrom(t, ip, http.MethodPost, "/api/pull", `{"name":"`+overflow+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("streaming pull status %d: %s", rec.Code, rec.Body.String())
+	}
+	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+	if got := lines[len(lines)-1]; !strings.Contains(got, `"error":"model storage limit reached"`) {
+		t.Fatalf("last pull line %q, want storage-limit error", got)
+	}
+	if strings.Contains(rec.Body.String(), `"status":"success"`) {
+		t.Error("storage-limited pull falsely reported success")
+	}
+	if models.has(req, overflow) {
+		t.Error("storage-limited model was retained")
 	}
 }
 

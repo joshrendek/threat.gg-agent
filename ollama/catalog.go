@@ -38,7 +38,8 @@ type CatalogModel struct {
 	arch string `json:"-"`
 	// blocks is the transformer layer count, used for the /api/show tensor listing.
 	blocks int `json:"-"`
-	// showProfile preserves the source seed identity across /api/copy destination renames.
+	// showProfile records the canonical source identity for base entries, restored pulls and
+	// /api/copy destination renames.
 	showProfile string `json:"-"`
 	// immutableBase marks entries owned by catalog.base. Per-caller overlays deliberately remain
 	// false, including a deleted seed that the caller later re-pulls with a fresh timestamp.
@@ -146,10 +147,10 @@ type catalog struct {
 
 // view is one requester's divergence from the base catalog.
 type view struct {
-	added        []CatalogModel         // models this IP pulled or copied
-	removed      map[string]bool        // base models this IP deleted
-	showPayloads map[string]showPayload // bounded with added and evicted with this view
-	showMu       sync.Mutex             // coalesces payload builds for this requester
+	added        []CatalogModel               // models this IP pulled or copied
+	removed      map[string]bool              // base models this IP deleted
+	showPayloads map[string]cachedShowPayload // bounded with added and evicted with this view
+	showMu       sync.Mutex                   // coalesces payload builds for this requester
 	seen         time.Time
 }
 
@@ -239,7 +240,7 @@ func (c *catalog) viewFor(ip string, create bool) *view {
 			}
 			delete(c.views, oldestKey)
 		}
-		v = &view{removed: map[string]bool{}, showPayloads: map[string]showPayload{}}
+		v = &view{removed: map[string]bool{}, showPayloads: map[string]cachedShowPayload{}}
 		c.views[ip] = v
 	}
 	v.seen = now
@@ -281,14 +282,13 @@ func (c *catalog) has(r *http.Request, name string) bool {
 	return ok
 }
 
-// add records a model as present for this requester only. Called by /api/pull and /api/copy once
-// the fake operation "completes". A no-op if already visible or if this IP is at its cap.
-func (c *catalog) add(r *http.Request, m CatalogModel) {
-	if len(m.Name) > maxModelNameBytes {
-		return
-	}
-	if c.has(r, m.Name) {
-		return
+// add records a model as present for this requester only. It returns true when the model is
+// visible afterward, including when it was already present, and false when validation or the
+// per-view cap prevents storage. Visibility is checked under the same lock as the append so
+// concurrent pulls and copies cannot create duplicate catalog entries.
+func (c *catalog) add(r *http.Request, m CatalogModel) bool {
+	if m.Name == "" || len(m.Name) > maxModelNameBytes {
+		return false
 	}
 	// Every addition is a per-caller overlay, even when /api/copy started from a base entry.
 	// Never let the immutable-base cache marker escape into attacker-mutable state.
@@ -296,14 +296,37 @@ func (c *catalog) add(r *http.Request, m CatalogModel) {
 	ip := clientIP(r)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	v := c.viewFor(ip, true)
+	v := c.viewFor(ip, false)
+	for _, base := range c.base {
+		if base.Name == m.Name && (v == nil || !v.removed[m.Name]) {
+			return true
+		}
+	}
+	if v != nil {
+		for _, added := range v.added {
+			if added.Name == m.Name {
+				return true
+			}
+		}
+	} else {
+		v = c.viewFor(ip, true)
+	}
 	if len(v.added) >= maxAddedPerView {
-		return
+		return false
 	}
 	v.showMu.Lock()
 	delete(v.showPayloads, m.Name)
 	v.showMu.Unlock()
 	v.added = append(v.added, m)
+	return true
+}
+
+// viewForCachedShow returns an existing view in O(1) without performing the TTL/LRU maintenance
+// already done by the catalog lookup immediately before /api/show calls it.
+func (c *catalog) viewForCachedShow(ip string) *view {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.views[ip]
 }
 
 // remove drops a model from this requester's view, backing /api/delete. Base models are never

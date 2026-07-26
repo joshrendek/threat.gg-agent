@@ -85,7 +85,7 @@ type tensor struct {
 // The two models production scanners inspect most heavily are captured byte-for-byte from a real
 // Ollama 0.30.11. Embedding the fixtures keeps license, template, GGUF metadata, tensor order,
 // quantization types and multimodal inventory grounded instead of reconstructing them from
-// guesses. modified_at is replaced with this process's stable catalog timestamp at response time.
+// guesses.
 //
 //go:embed testdata/show_qwen2.5-coder_7b_ollama-0.30.11.json
 //go:embed testdata/show_gemma3_12b_ollama-0.30.11.json
@@ -371,6 +371,14 @@ type showPayload struct {
 	body     []byte
 }
 
+// cachedShowPayload is the compact per-view cache representation. Mutable entries only need the
+// serialized response at request time, so retaining a second decoded tensor inventory would
+// roughly double the bounded cache's memory.
+type cachedShowPayload struct {
+	key  showCacheKey
+	body []byte
+}
+
 // advertisedShowPayloads caches final JSON only for immutable base-catalog entries.
 // The full model identity is part of the key so a same-name per-IP overlay cannot receive stale
 // base metadata. Pulled overlays, including re-pulled seeds with a fresh ModifiedAt, are not cached;
@@ -380,6 +388,8 @@ var advertisedShowPayloads sync.Map
 func buildShowPayload(m CatalogModel) showPayload {
 	key := showCacheKey{name: m.Name, digest: m.Digest, modifiedAt: m.ModifiedAt}
 	response := buildShow(m)
+	// Grounded fixtures retain their captured content, but use the stable timestamp belonging to
+	// the catalog entry currently being served.
 	response.ModifiedAt = m.ModifiedAt
 	body, err := json.Marshal(response)
 	if err != nil {
@@ -403,31 +413,27 @@ func showPayloadFor(m CatalogModel) showPayload {
 	return cached.(showPayload)
 }
 
-// showPayloadForRequest adds a bounded cache for mutable overlays. Its entries live inside the
+// showBodyForRequest adds a bounded cache for mutable overlays. Its entries live inside the
 // caller's capped, TTL-evicted catalog view and are replaced by name, so fresh re-pulls cannot
 // create a process-lifetime cache entry for every ModifiedAt value.
-func showPayloadForRequest(r *http.Request, m CatalogModel) showPayload {
+func showBodyForRequest(r *http.Request, m CatalogModel) []byte {
 	if isImmutableSeedModel(m) {
-		return showPayloadFor(m)
+		return showPayloadFor(m).body
 	}
 	key := showCacheKey{name: m.Name, digest: m.Digest, modifiedAt: m.ModifiedAt}
-	ip := clientIP(r)
-
-	models.mu.Lock()
-	v := models.viewFor(ip, false)
-	models.mu.Unlock()
+	v := models.viewForCachedShow(clientIP(r))
 	if v == nil {
-		return buildShowPayload(m)
+		return buildShowPayload(m).body
 	}
 
 	v.showMu.Lock()
 	defer v.showMu.Unlock()
 	if cached, ok := v.showPayloads[m.Name]; ok && cached.key == key {
-		return cached
+		return cached.body
 	}
 	built := buildShowPayload(m)
-	v.showPayloads[m.Name] = built
-	return built
+	v.showPayloads[m.Name] = cachedShowPayload{key: built.key, body: built.body}
+	return built.body
 }
 
 func showFor(m CatalogModel) showResponse {
@@ -449,10 +455,10 @@ func handleShow(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteModelNotFoundAPI(w, profile, normalize(req.model()))
 		return
 	}
-	payload := showPayloadForRequest(r, m)
+	body := showBodyForRequest(r, m)
 	w.Header().Set("Content-Type", llmcore.CTJSONCharset)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(payload.body)
+	_, _ = w.Write(body)
 }
 
 // -- /api/pull
@@ -462,6 +468,7 @@ type pullStatus struct {
 	Digest    string `json:"digest,omitempty"`
 	Total     int64  `json:"total,omitempty"`
 	Completed int64  `json:"completed,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // pullLayers is how many blob layers a pull reports before finishing.
@@ -492,6 +499,11 @@ func handlePull(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "model is required")
 		return
 	}
+	target := synthesize(name)
+	if target.Name == "" || len(target.Name) > maxModelNameBytes {
+		llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "invalid model name")
+		return
+	}
 
 	w.Header().Set("Content-Type", llmcore.CTNDJSON)
 	w.WriteHeader(http.StatusOK)
@@ -512,7 +524,6 @@ func handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target := synthesize(name)
 	remaining := target.Size
 	for layer := 0; layer < pullLayers && remaining > 0; layer++ {
 		digest := pseudoDigest(fmt.Sprintf("%s/layer/%d", normalize(name), layer))
@@ -539,12 +550,16 @@ func handlePull(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for _, s := range []string{"verifying sha256 digest", "writing manifest", "success"} {
+	for _, s := range []string{"verifying sha256 digest", "writing manifest"} {
 		if !emit(pullStatus{Status: s}) {
 			return
 		}
 	}
-	models.add(r, target)
+	if !models.add(r, target) {
+		emit(pullStatus{Error: "model storage limit reached"})
+		return
+	}
+	emit(pullStatus{Status: "success"})
 }
 
 // -- /api/push, /api/create
@@ -613,7 +628,14 @@ func handleCopy(w http.ResponseWriter, r *http.Request) {
 		copied.Name = normalize(req.Dest)
 		copied.Model = copied.Name
 		copied.ModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		models.add(r, copied)
+		if copied.Name == "" || len(copied.Name) > maxModelNameBytes {
+			llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "invalid model name")
+			return
+		}
+		if !models.add(r, copied) {
+			llmcore.WriteOllamaError(w, profile, http.StatusBadRequest, "model storage limit reached")
+			return
+		}
 	}
 	w.WriteHeader(http.StatusOK)
 }
