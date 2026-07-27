@@ -118,8 +118,8 @@ func TestAgainstReferenceServer(t *testing.T) {
 			if r, o := realResp.Header.Get("Allow"), ourResp.Header.Get("Allow"); r != o {
 				t.Errorf("Allow header: honeypot %q, real %q", o, r)
 			}
-			// For plain-text and not-found paths the bodies should match exactly; for
-			// catalog-dependent endpoints they legitimately differ.
+			// Compare exact bodies for stable root/error responses. Catalog and generated
+			// response bodies legitimately depend on local models, timestamps, or output.
 			if c.unknownModel || strings.HasPrefix(c.name, "404") || strings.HasPrefix(c.name, "405") ||
 				c.name == "root" || c.name == "show no model" || c.name == "generate no model" ||
 				c.name == "blob bad digest" {

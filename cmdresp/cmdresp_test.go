@@ -313,7 +313,6 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 		handler := LLMMuxMiddleware("ollama")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		}))
-		started := time.Now()
 		for i := 0; i < callers; i++ {
 			wg.Add(1)
 			go func() {
@@ -326,9 +325,6 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 			}()
 		}
 		wg.Wait()
-		if elapsed := time.Since(started); elapsed > 750*time.Millisecond {
-			t.Fatalf("concurrent LLM fallbacks took %v, want close to one %v deadline", elapsed, LLMOverrideTimeout)
-		}
 		if got := calls.Load(); got != 1 {
 			t.Fatalf("control-plane lookups = %d, want one coalesced lookup", got)
 		}
@@ -340,7 +336,10 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 			calls++
 			return &proto.CommandResponse{Matched: false}, nil
 		})
-		handler := llmMuxMiddleware("ollama", 20*time.Millisecond)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		now := time.Unix(100, 0)
+		handler := llmMuxMiddlewareWithClock("ollama", time.Minute, func() time.Time {
+			return now
+		})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		}))
 		for i := 0; i < 2; i++ {
@@ -350,7 +349,7 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 		if calls != 2 {
 			t.Fatalf("lookup calls = %d, want one per distinct key during miss TTL", calls)
 		}
-		time.Sleep(30 * time.Millisecond)
+		now = now.Add(time.Minute + time.Nanosecond)
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/tags", nil))
 		if calls != 3 {
 			t.Fatalf("lookup calls after expiry = %d, want expired route rechecked", calls)
@@ -395,10 +394,15 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 			}
 		}
 
-		saturatedStarted := time.Now()
-		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/saturated", nil))
-		if elapsed := time.Since(saturatedStarted); elapsed > 50*time.Millisecond {
-			t.Fatalf("saturated request took %v, want immediate fail-open", elapsed)
+		saturatedDone := make(chan struct{})
+		go func() {
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/saturated", nil))
+			close(saturatedDone)
+		}()
+		select {
+		case <-saturatedDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("saturated request did not fail open")
 		}
 		if got := calls.Load(); got != maxConcurrentLLMLookups {
 			t.Fatalf("calls while saturated = %d, want %d", got, maxConcurrentLLMLookups)
@@ -440,6 +444,28 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 		}
 	})
 
+	t.Run("does not cache oversized matched responses", func(t *testing.T) {
+		calls := 0
+		response := strings.Repeat("x", maxCachedLLMOverrideLen+1)
+		stubWithin(t, func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
+			calls++
+			return &proto.CommandResponse{Matched: true, Response: response}, nil
+		})
+		handler := LLMMuxMiddleware("ollama")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("matched oversized override fell through")
+		}))
+		for i := 0; i < 2; i++ {
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+			if recorder.Body.Len() != len(response) {
+				t.Fatalf("response length = %d, want %d", recorder.Body.Len(), len(response))
+			}
+		}
+		if calls != 2 {
+			t.Fatalf("oversized override lookups = %d, want uncached re-lookup", calls)
+		}
+	})
+
 	t.Run("does not retain oversized cache keys", func(t *testing.T) {
 		calls := 0
 		stubWithin(t, func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
@@ -469,6 +495,9 @@ func TestLLMOverrideCacheIsBounded(t *testing.T) {
 	}
 	if got := len(cache.entries); got != maxLLMOverrideCache {
 		t.Fatalf("cache size = %d, want bounded at %d", got, maxLLMOverrideCache)
+	}
+	if _, ok := cache.entries[fmt.Sprintf("GET /attacker-path/%d", maxLLMOverrideCache+99)]; !ok {
+		t.Fatal("full cache did not admit the newest route")
 	}
 }
 

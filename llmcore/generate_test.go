@@ -138,6 +138,12 @@ func TestOllamaGenerateEmptyPromptUsesLoadAndUnloadLifecycle(t *testing.T) {
 			wantLoaded: true,
 		},
 		{
+			name:       "explicit empty prompt loads",
+			body:       `{"model":"qwen2.5-coder:7b","prompt":"","stream":false}`,
+			reason:     "load",
+			wantLoaded: true,
+		},
+		{
 			name:       "zero keep alive unloads",
 			body:       `{"model":"qwen2.5-coder:7b","prompt":null,"keep_alive":0}`,
 			reason:     "unload",

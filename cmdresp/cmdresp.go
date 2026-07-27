@@ -248,8 +248,17 @@ func LLMMuxMiddleware(commandType string) func(http.Handler) http.Handler {
 }
 
 func llmMuxMiddleware(commandType string, cacheTTL time.Duration) func(http.Handler) http.Handler {
+	return llmMuxMiddlewareWithClock(commandType, cacheTTL, time.Now)
+}
+
+func llmMuxMiddlewareWithClock(
+	commandType string,
+	cacheTTL time.Duration,
+	now func() time.Time,
+) func(http.Handler) http.Handler {
 	cache := &llmOverrideCache{
 		ttl:      cacheTTL,
+		now:      now,
 		entries:  make(map[string]llmOverrideCacheEntry),
 		inFlight: make(map[string]*llmOverrideLookup),
 	}
@@ -279,6 +288,7 @@ func llmMuxMiddleware(commandType string, cacheTTL time.Duration) func(http.Hand
 type llmOverrideCache struct {
 	mu       sync.Mutex
 	ttl      time.Duration
+	now      func() time.Time
 	entries  map[string]llmOverrideCacheEntry
 	inFlight map[string]*llmOverrideLookup
 }
@@ -296,7 +306,7 @@ type llmOverrideLookup struct {
 }
 
 func (c *llmOverrideCache) lookup(key string, lookup func() llmOverrideResult) (string, bool) {
-	now := time.Now()
+	now := c.currentTime()
 	c.mu.Lock()
 	if entry, ok := c.entries[key]; ok {
 		if now.Before(entry.until) {
@@ -328,7 +338,7 @@ func (c *llmOverrideCache) lookup(key string, lookup func() llmOverrideResult) (
 	c.mu.Lock()
 	if result.cacheable {
 		c.rememberLocked(key, llmOverrideCacheEntry{
-			until: time.Now().Add(c.ttl), body: result.body, matched: result.matched,
+			until: c.currentTime().Add(c.ttl), body: result.body, matched: result.matched,
 		})
 	}
 	delete(c.inFlight, key)
@@ -337,16 +347,32 @@ func (c *llmOverrideCache) lookup(key string, lookup func() llmOverrideResult) (
 	return call.body, call.matched
 }
 
+func (c *llmOverrideCache) currentTime() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
 func (c *llmOverrideCache) rememberLocked(key string, entry llmOverrideCacheEntry) {
 	if len(c.entries) >= maxLLMOverrideCache {
-		now := time.Now()
+		now := c.currentTime()
 		for cachedKey, cachedEntry := range c.entries {
 			if !now.Before(cachedEntry.until) {
 				delete(c.entries, cachedKey)
 			}
 		}
 		if len(c.entries) >= maxLLMOverrideCache {
-			return
+			// Keep the bounded cache useful under path churn by replacing the entry
+			// nearest expiry instead of permanently declining all new routes.
+			var oldestKey string
+			var oldestUntil time.Time
+			for cachedKey, cachedEntry := range c.entries {
+				if oldestKey == "" || cachedEntry.until.Before(oldestUntil) {
+					oldestKey, oldestUntil = cachedKey, cachedEntry.until
+				}
+			}
+			delete(c.entries, oldestKey)
 		}
 	}
 	c.entries[key] = entry
