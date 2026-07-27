@@ -14,6 +14,7 @@ func TestSmartReply(t *testing.T) {
 	cases := []struct{ prompt, want string }{
 		{"say pong", "pong"},
 		{"Say Pong", "Pong"},
+		{"Say hi in one word", "Hi"},
 		{"reply with OK.", "OK"},
 		{"Reply with OK", "OK"},
 		{"repeat after me: hello world", "hello world"},
@@ -148,6 +149,7 @@ func TestReplyForValidationProbes(t *testing.T) {
 	}{
 		{"What is 2 plus 2?", "4", ReplyKindArithmetic},
 		{"WHAT IS 2 PLUS 2?", "4", ReplyKindArithmetic},
+		{"Say hi in one word", "Hi", ReplyKindValidationFact},
 		{"Name a fruit.", "Apple.", ReplyKindValidationFact},
 		{"Count to five.", "One, two, three, four, five.", ReplyKindValidationFact},
 		{"What color is the sky?", "The sky usually appears blue during the day.", ReplyKindValidationFact},

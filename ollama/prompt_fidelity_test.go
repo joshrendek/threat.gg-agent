@@ -26,6 +26,7 @@ const (
 	lighthousePrompt        = "Write exactly 100 words of original prose about a lighthouse keeper who discovers a message in a bottle. Do not introduce yourself. Count your words carefully."
 	arithmeticNoncePrompt   = "What is 17*23? Answer with just the number, then write PINEAPPLE77."
 	isPrimePrompt           = "Write a Python function named is_prime(n) that returns True if n is prime, else False. Respond with only the code."
+	oneWordGreetingPrompt   = "Say hi in one word"
 )
 
 func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
@@ -121,6 +122,7 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 				{"lighthouse prose", "/api/chat", lighthousePrompt, ""},
 				{"arithmetic nonce", "/api/chat", arithmeticNoncePrompt, "391 PINEAPPLE77"},
 				{"prime function", "/api/generate", isPrimePrompt, "def is_prime(n):"},
+				{"one-word greeting", "/api/chat", oneWordGreetingPrompt, "Hi"},
 			} {
 				detailed := detailed
 				t.Run("detailed "+detailed.name, func(t *testing.T) {
@@ -162,6 +164,34 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 					}
 				})
 			}
+
+			t.Run("one-word greeting generate stream", func(t *testing.T) {
+				rec := do(t, http.MethodPost, "/api/generate", fmt.Sprintf(
+					`{"model":%q,"prompt":%q,"stream":true,"options":{"num_predict":5}}`,
+					model, oneWordGreetingPrompt))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+				}
+				var text string
+				var finalDone bool
+				for _, line := range strings.Split(strings.TrimSpace(rec.Body.String()), "\n") {
+					var chunk struct {
+						Response string `json:"response"`
+						Done     bool   `json:"done"`
+					}
+					if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+						t.Fatalf("invalid generate NDJSON %q: %v", line, err)
+					}
+					text += chunk.Response
+					finalDone = chunk.Done
+				}
+				if text != "Hi" {
+					t.Fatalf("response = %q, want %q", text, "Hi")
+				}
+				if !finalDone {
+					t.Error("generate stream terminal object has done:false")
+				}
+			})
 
 			t.Run("chat English stream", func(t *testing.T) {
 				rec := do(t, http.MethodPost, "/api/chat", fmt.Sprintf(
