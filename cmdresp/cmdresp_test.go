@@ -275,7 +275,9 @@ func TestMuxMiddlewareMarksCapturedCommandResponseSource(t *testing.T) {
 
 func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testing.T) {
 	t.Run("matched override", func(t *testing.T) {
+		calls := 0
 		stubWithin(t, func(in *proto.CommandRequest, timeout time.Duration) (*proto.CommandResponse, error) {
+			calls++
 			if timeout != LLMOverrideTimeout {
 				t.Fatalf("timeout = %v, want %v", timeout, LLMOverrideTimeout)
 			}
@@ -284,12 +286,18 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 			}
 			return &proto.CommandResponse{Matched: true, Response: `{"models":[]}`}, nil
 		})
-		recorder := httptest.NewRecorder()
-		LLMMuxMiddleware("ollama")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		handler := LLMMuxMiddleware("ollama")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			t.Fatal("matched override fell through")
-		})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
-		if got := recorder.Body.String(); got != `{"models":[]}` {
-			t.Fatalf("body = %q", got)
+		}))
+		for i := 0; i < 2; i++ {
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+			if got := recorder.Body.String(); got != `{"models":[]}` {
+				t.Fatalf("body = %q", got)
+			}
+		}
+		if calls != 1 {
+			t.Fatalf("matched control-plane lookups = %d, want one cached lookup", calls)
 		}
 	})
 
@@ -351,6 +359,7 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 
 	t.Run("caps concurrent distinct-route lookups", func(t *testing.T) {
 		var active, peak, calls atomic.Int32
+		entered := make(chan struct{}, maxConcurrentLLMLookups)
 		release := make(chan struct{})
 		stubWithin(t, func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
 			calls.Add(1)
@@ -361,6 +370,7 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 					break
 				}
 			}
+			entered <- struct{}{}
 			<-release
 			active.Add(-1)
 			return nil, context.DeadlineExceeded
@@ -368,9 +378,8 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 		handler := LLMMuxMiddleware("ollama")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		}))
-		const callers = maxConcurrentLLMLookups * 2
 		var wg sync.WaitGroup
-		for i := 0; i < callers; i++ {
+		for i := 0; i < maxConcurrentLLMLookups; i++ {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -378,14 +387,56 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 				handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
 			}(i)
 		}
-		time.Sleep(25 * time.Millisecond)
+		for i := 0; i < maxConcurrentLLMLookups; i++ {
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("lookup slots did not fill")
+			}
+		}
+
+		saturatedStarted := time.Now()
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/saturated", nil))
+		if elapsed := time.Since(saturatedStarted); elapsed > 50*time.Millisecond {
+			t.Fatalf("saturated request took %v, want immediate fail-open", elapsed)
+		}
+		if got := calls.Load(); got != maxConcurrentLLMLookups {
+			t.Fatalf("calls while saturated = %d, want %d", got, maxConcurrentLLMLookups)
+		}
+
 		close(release)
 		wg.Wait()
-		if got := peak.Load(); got > maxConcurrentLLMLookups {
-			t.Fatalf("peak control-plane lookups = %d, max = %d", got, maxConcurrentLLMLookups)
+		if got := peak.Load(); got != maxConcurrentLLMLookups {
+			t.Fatalf("peak control-plane lookups = %d, want %d", got, maxConcurrentLLMLookups)
 		}
-		if got := calls.Load(); got == 0 || got > maxConcurrentLLMLookups {
-			t.Fatalf("control-plane calls = %d, want 1..%d", got, maxConcurrentLLMLookups)
+
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/saturated", nil))
+		if got := calls.Load(); got != maxConcurrentLLMLookups+1 {
+			t.Fatalf("calls after slots released = %d, want saturated route retried", got)
+		}
+	})
+
+	t.Run("does not cache transient lookup errors", func(t *testing.T) {
+		calls := 0
+		stubWithin(t, func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
+			calls++
+			if calls == 1 {
+				return nil, context.DeadlineExceeded
+			}
+			return &proto.CommandResponse{Matched: true, Response: "RECOVERED"}, nil
+		})
+		handler := LLMMuxMiddleware("ollama")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		first := httptest.NewRecorder()
+		handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+		if first.Code != http.StatusNoContent {
+			t.Fatalf("first status = %d, want fail-open 204", first.Code)
+		}
+		second := httptest.NewRecorder()
+		handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+		if second.Body.String() != "RECOVERED" || calls != 2 {
+			t.Fatalf("recovery body = %q, calls = %d", second.Body.String(), calls)
 		}
 	})
 
@@ -408,16 +459,16 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 	})
 }
 
-func TestLLMOverrideMissCacheIsBounded(t *testing.T) {
-	cache := &llmOverrideMissCache{until: make(map[string]time.Time)}
+func TestLLMOverrideCacheIsBounded(t *testing.T) {
+	cache := &llmOverrideCache{entries: make(map[string]llmOverrideCacheEntry)}
 	until := time.Now().Add(time.Minute)
-	for i := 0; i < maxLLMOverrideMissCache+100; i++ {
+	for i := 0; i < maxLLMOverrideCache+100; i++ {
 		cache.mu.Lock()
-		cache.rememberLocked(fmt.Sprintf("GET /attacker-path/%d", i), until)
+		cache.rememberLocked(fmt.Sprintf("GET /attacker-path/%d", i), llmOverrideCacheEntry{until: until})
 		cache.mu.Unlock()
 	}
-	if got := len(cache.until); got != maxLLMOverrideMissCache {
-		t.Fatalf("cache size = %d, want bounded at %d", got, maxLLMOverrideMissCache)
+	if got := len(cache.entries); got != maxLLMOverrideCache {
+		t.Fatalf("cache size = %d, want bounded at %d", got, maxLLMOverrideCache)
 	}
 }
 

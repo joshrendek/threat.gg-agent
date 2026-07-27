@@ -389,8 +389,8 @@ func GetCommandResponseWithin(in *proto.CommandRequest, timeout time.Duration) (
 	if timeout <= 0 {
 		return nil, errors.New("command response timeout must be positive")
 	}
-	// Bound the call so a slow or stalled server can't hang the interactive honeypot
-	// session (this runs on the per-command hot path for ssh and telnet).
+	// Bound both interactive command lookups and HTTP override lookups so a slow
+	// control plane cannot hang their request paths.
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

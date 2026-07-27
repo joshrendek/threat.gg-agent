@@ -30,9 +30,10 @@ const MaxServerLookupLen = 4096
 const LLMOverrideTimeout = 250 * time.Millisecond
 
 const (
-	llmOverrideMissTTL      = 30 * time.Second
-	maxLLMOverrideMissCache = 256
+	llmOverrideCacheTTL     = 30 * time.Second
+	maxLLMOverrideCache     = 256
 	maxConcurrentLLMLookups = 32
+	maxCachedLLMOverrideLen = 64 << 10
 )
 
 var llmOverrideLookupSlots = make(chan struct{}, maxConcurrentLLMLookups)
@@ -65,9 +66,8 @@ func Lookup(commandType, command string) (string, bool) {
 
 // LookupWithin is Lookup with a caller-selected gRPC deadline.
 func LookupWithin(commandType, command string, timeout time.Duration) (string, bool) {
-	return lookup(commandType, command, func(in *proto.CommandRequest) (*proto.CommandResponse, error) {
-		return GetCommandResponseWithin(in, timeout)
-	})
+	result := lookupWithinResult(commandType, command, timeout)
+	return result.body, result.matched
 }
 
 func lookup(commandType, command string, get func(*proto.CommandRequest) (*proto.CommandResponse, error)) (string, bool) {
@@ -79,6 +79,34 @@ func lookup(commandType, command string, get func(*proto.CommandRequest) (*proto
 		return "", false
 	}
 	return resp.Response, true
+}
+
+type llmOverrideResult struct {
+	body      string
+	matched   bool
+	cacheable bool
+}
+
+func lookupWithinResult(commandType, command string, timeout time.Duration) llmOverrideResult {
+	if len(command) > MaxServerLookupLen {
+		return llmOverrideResult{}
+	}
+	resp, err := GetCommandResponseWithin(
+		&proto.CommandRequest{Command: command, CommandType: commandType},
+		timeout,
+	)
+	if err != nil || resp == nil {
+		// A transient control-plane failure must not become a cached route miss.
+		return llmOverrideResult{}
+	}
+	if !resp.Matched {
+		return llmOverrideResult{cacheable: true}
+	}
+	return llmOverrideResult{
+		body:      resp.Response,
+		matched:   true,
+		cacheable: len(resp.Response) <= maxCachedLLMOverrideLen,
+	}
 }
 
 // LookupAndRecord persists the exact bounded key used for response matching, then performs
@@ -216,13 +244,13 @@ func MuxMiddleware(commandType string) func(http.Handler) http.Handler {
 // LLMMuxMiddleware preserves authored LLM overrides while failing open within a small,
 // fidelity-safe bound when the optional control plane is slow or unavailable.
 func LLMMuxMiddleware(commandType string) func(http.Handler) http.Handler {
-	return llmMuxMiddleware(commandType, llmOverrideMissTTL)
+	return llmMuxMiddleware(commandType, llmOverrideCacheTTL)
 }
 
-func llmMuxMiddleware(commandType string, missTTL time.Duration) func(http.Handler) http.Handler {
-	misses := &llmOverrideMissCache{
-		ttl:      missTTL,
-		until:    make(map[string]time.Time),
+func llmMuxMiddleware(commandType string, cacheTTL time.Duration) func(http.Handler) http.Handler {
+	cache := &llmOverrideCache{
+		ttl:      cacheTTL,
+		entries:  make(map[string]llmOverrideCacheEntry),
 		inFlight: make(map[string]*llmOverrideLookup),
 	}
 	return func(next http.Handler) http.Handler {
@@ -234,8 +262,8 @@ func llmMuxMiddleware(commandType string, missTTL time.Duration) func(http.Handl
 				next.ServeHTTP(w, r)
 				return
 			}
-			body, matched := misses.lookup(key, func() (string, bool) {
-				return LookupWithin(commandType, key, LLMOverrideTimeout)
+			body, matched := cache.lookup(key, func() llmOverrideResult {
+				return lookupWithinResult(commandType, key, LLMOverrideTimeout)
 			})
 			if matched {
 				writeHTTPOverride(w, r, body)
@@ -246,13 +274,19 @@ func llmMuxMiddleware(commandType string, missTTL time.Duration) func(http.Handl
 	}
 }
 
-// llmOverrideMissCache removes the normal remote round trip from repeated requests, coalesces
-// concurrent requests for one route, and keeps authored overrides eventually consistent.
-type llmOverrideMissCache struct {
+// llmOverrideCache caches bounded matched responses and confirmed misses, while coalescing
+// concurrent requests for the same route. Errors and saturation remain immediately retryable.
+type llmOverrideCache struct {
 	mu       sync.Mutex
 	ttl      time.Duration
-	until    map[string]time.Time
+	entries  map[string]llmOverrideCacheEntry
 	inFlight map[string]*llmOverrideLookup
+}
+
+type llmOverrideCacheEntry struct {
+	until   time.Time
+	body    string
+	matched bool
 }
 
 type llmOverrideLookup struct {
@@ -261,15 +295,15 @@ type llmOverrideLookup struct {
 	matched bool
 }
 
-func (c *llmOverrideMissCache) lookup(key string, lookup func() (string, bool)) (string, bool) {
+func (c *llmOverrideCache) lookup(key string, lookup func() llmOverrideResult) (string, bool) {
 	now := time.Now()
 	c.mu.Lock()
-	if until, ok := c.until[key]; ok {
-		if now.Before(until) {
+	if entry, ok := c.entries[key]; ok {
+		if now.Before(entry.until) {
 			c.mu.Unlock()
-			return "", false
+			return entry.body, entry.matched
 		}
-		delete(c.until, key)
+		delete(c.entries, key)
 	}
 	if call, ok := c.inFlight[key]; ok {
 		c.mu.Unlock()
@@ -280,20 +314,22 @@ func (c *llmOverrideMissCache) lookup(key string, lookup func() (string, bool)) 
 	c.inFlight[key] = call
 	c.mu.Unlock()
 
-	cacheMiss := false
+	var result llmOverrideResult
 	select {
 	case llmOverrideLookupSlots <- struct{}{}:
-		call.body, call.matched = lookup()
+		result = lookup()
 		<-llmOverrideLookupSlots
-		cacheMiss = !call.matched
 	default:
 		// Saturation is a fail-open condition. Do not cache it: a later request should
 		// retry once one of the globally bounded lookup slots becomes available.
 	}
+	call.body, call.matched = result.body, result.matched
 
 	c.mu.Lock()
-	if cacheMiss {
-		c.rememberLocked(key, time.Now().Add(c.ttl))
+	if result.cacheable {
+		c.rememberLocked(key, llmOverrideCacheEntry{
+			until: time.Now().Add(c.ttl), body: result.body, matched: result.matched,
+		})
 	}
 	delete(c.inFlight, key)
 	close(call.done)
@@ -301,19 +337,19 @@ func (c *llmOverrideMissCache) lookup(key string, lookup func() (string, bool)) 
 	return call.body, call.matched
 }
 
-func (c *llmOverrideMissCache) rememberLocked(key string, until time.Time) {
-	if len(c.until) >= maxLLMOverrideMissCache {
+func (c *llmOverrideCache) rememberLocked(key string, entry llmOverrideCacheEntry) {
+	if len(c.entries) >= maxLLMOverrideCache {
 		now := time.Now()
-		for cachedKey, cachedUntil := range c.until {
-			if !now.Before(cachedUntil) {
-				delete(c.until, cachedKey)
+		for cachedKey, cachedEntry := range c.entries {
+			if !now.Before(cachedEntry.until) {
+				delete(c.entries, cachedKey)
 			}
 		}
-		if len(c.until) >= maxLLMOverrideMissCache {
+		if len(c.entries) >= maxLLMOverrideCache {
 			return
 		}
 	}
-	c.until[key] = until
+	c.entries[key] = entry
 }
 
 // rowReturningVerbs are the leading SQL keywords whose statements return a result set;
