@@ -169,8 +169,11 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 				rec := do(t, http.MethodPost, "/api/generate", fmt.Sprintf(
 					`{"model":%q,"prompt":%q,"stream":true,"options":{"num_predict":5}}`,
 					model, oneWordGreetingPrompt))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+				}
 				var text string
-				var done bool
+				var finalDone bool
 				for _, line := range strings.Split(strings.TrimSpace(rec.Body.String()), "\n") {
 					var chunk struct {
 						Response string `json:"response"`
@@ -180,13 +183,13 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 						t.Fatalf("invalid generate NDJSON %q: %v", line, err)
 					}
 					text += chunk.Response
-					done = done || chunk.Done
+					finalDone = chunk.Done
 				}
 				if text != "Hi" {
 					t.Fatalf("response = %q, want %q", text, "Hi")
 				}
-				if !done {
-					t.Error("generate stream has no done:true terminal object")
+				if !finalDone {
+					t.Error("generate stream terminal object has done:false")
 				}
 			})
 
