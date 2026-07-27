@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestChatCompletionNonStreamEchoesModelAndShape(t *testing.T) {
@@ -109,5 +110,89 @@ func TestOllamaGenerateStreamNDJSONEndsDone(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil || !last.Done {
 		t.Fatalf("last NDJSON line must have done:true; got %q", lines[len(lines)-1])
+	}
+}
+
+func TestOllamaGenerateEmptyPromptUsesLoadAndUnloadLifecycle(t *testing.T) {
+	const model = "qwen2.5-coder:7b"
+	models.mu.Lock()
+	original := models.residing
+	models.residing = map[string]time.Time{}
+	models.mu.Unlock()
+	t.Cleanup(func() {
+		models.mu.Lock()
+		models.residing = original
+		models.mu.Unlock()
+	})
+
+	tests := []struct {
+		name       string
+		body       string
+		reason     string
+		wantLoaded bool
+	}{
+		{
+			name:       "null prompt loads despite stream true",
+			body:       `{"model":"qwen2.5-coder:7b","prompt":null,"stream":true}`,
+			reason:     "load",
+			wantLoaded: true,
+		},
+		{
+			name:       "zero keep alive unloads",
+			body:       `{"model":"qwen2.5-coder:7b","prompt":null,"keep_alive":0}`,
+			reason:     "unload",
+			wantLoaded: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(test.body))
+			rec := httptest.NewRecorder()
+			OllamaGenerate(rec, req, Profile{DefaultModel: model})
+			if got := rec.Header().Get("Content-Type"); got != CTJSON {
+				t.Fatalf("content type = %q, want %q", got, CTJSON)
+			}
+			var response map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("invalid JSON: %v; body=%s", err, rec.Body.String())
+			}
+			if response["model"] != model || response["response"] != "" ||
+				response["done"] != true || response["done_reason"] != test.reason {
+				t.Fatalf("lifecycle response = %#v", response)
+			}
+			if len(response) != 5 {
+				t.Fatalf("lifecycle response keys = %#v, want only real Ollama's five keys", response)
+			}
+			_, loaded := ResidentModels()[model]
+			if loaded != test.wantLoaded {
+				t.Fatalf("loaded = %v, want %v", loaded, test.wantLoaded)
+			}
+		})
+	}
+}
+
+func TestOllamaGenerateMissingBodyIsNotLifecycleRequest(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/generate", nil)
+	rec := httptest.NewRecorder()
+	OllamaGenerate(rec, req, Profile{DefaultModel: "llama3.2:latest"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != `{"error":"missing request body"}` {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestOllamaGenerateLifecycleRequiresModel(t *testing.T) {
+	for _, body := range []string{`{}`, `{"prompt":null}`} {
+		req := httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		OllamaGenerate(rec, req, Profile{DefaultModel: "llama3.2:latest"})
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("body %s: status = %d, want 404; response=%s", body, rec.Code, rec.Body.String())
+		}
+		if got := rec.Body.String(); got != `{"error":"model '' not found"}` {
+			t.Fatalf("body %s: response = %q", body, got)
+		}
 	}
 }

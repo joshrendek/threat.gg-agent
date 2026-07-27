@@ -246,6 +246,30 @@ func TestCaptureRecordsSemanticReplyKindsAcrossGenerationSurfaces(t *testing.T) 
 			handler: func(w http.ResponseWriter, r *http.Request) { Responses(w, r, profile) },
 			want:    proto.LlmReplyKind_LLM_REPLY_KIND_VALIDATION_FACT,
 		},
+		{
+			name: "observed code validation", path: "/api/chat",
+			body:    `{"model":"llama3.2:latest","messages":[{"role":"user","content":"Write a Python function called reverse_string that takes a string and returns the reversed string. Give only the code."}],"stream":false}`,
+			handler: func(w http.ResponseWriter, r *http.Request) { OllamaChat(w, r, profile) },
+			want:    proto.LlmReplyKind_LLM_REPLY_KIND_CODE_VALIDATION,
+		},
+		{
+			name: "observed constrained prose", path: "/api/chat",
+			body:    `{"model":"llama3.2:latest","messages":[{"role":"user","content":"Write exactly 100 words of original prose about a lighthouse keeper who discovers a message in a bottle. Do not introduce yourself. Count your words carefully."}],"stream":false}`,
+			handler: func(w http.ResponseWriter, r *http.Request) { OllamaChat(w, r, profile) },
+			want:    proto.LlmReplyKind_LLM_REPLY_KIND_CONSTRAINED_PROSE,
+		},
+		{
+			name: "observed arithmetic nonce", path: "/api/chat",
+			body:    `{"model":"llama3.2:latest","messages":[{"role":"user","content":"What is 17*23? Answer with just the number, then write PINEAPPLE77."}],"stream":false}`,
+			handler: func(w http.ResponseWriter, r *http.Request) { OllamaChat(w, r, profile) },
+			want:    proto.LlmReplyKind_LLM_REPLY_KIND_ARITHMETIC_NONCE,
+		},
+		{
+			name: "model lifecycle", path: "/api/generate",
+			body:    `{"model":"llama3.2:latest","prompt":null,"stream":false}`,
+			handler: func(w http.ResponseWriter, r *http.Request) { OllamaGenerate(w, r, profile) },
+			want:    proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_LIFECYCLE,
+		},
 	}
 
 	for _, test := range tests {

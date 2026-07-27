@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/joshrendek/threat.gg-agent/llmcore"
 	"github.com/joshrendek/threat.gg-agent/persistence"
@@ -20,6 +22,17 @@ import (
 // MaxServerLookupLen bounds the attacker-controlled command forwarded to the server's
 // response lookup; anything longer skips the lookup and falls back to local handlers.
 const MaxServerLookupLen = 4096
+
+// LLMOverrideTimeout is deliberately short: LLM HTTP responses are generated locally and
+// command-response overrides are optional. A control-plane outage must fail open quickly
+// instead of adding the persistence layer's three-second interactive-command deadline to
+// every catalog, health, metrics, and inference request.
+const LLMOverrideTimeout = 250 * time.Millisecond
+
+const (
+	llmOverrideMissTTL      = 30 * time.Second
+	maxLLMOverrideMissCache = 256
+)
 
 // HTTPResponsePrefix marks an opt-in structured HTTP response stored in the existing
 // response text column. Plain rows remain body-only for backward compatibility.
@@ -34,6 +47,7 @@ type authoredHTTPResponse struct {
 // GetCommandResponse is an injectable seam over the gRPC call so the matched/miss/error
 // paths are unit-testable without a live server.
 var GetCommandResponse = persistence.GetCommandResponse
+var GetCommandResponseWithin = persistence.GetCommandResponseWithin
 var SaveResponseLookup = persistence.SaveResponseLookup
 
 // Lookup returns the admin-authored response for (commandType, command) when a Matched row
@@ -41,10 +55,23 @@ var SaveResponseLookup = persistence.SaveResponseLookup
 // falls back to its hardcoded handler. Matched (not a non-empty Response) is the gate, so
 // an intentionally-silent authored row is honored rather than treated as a miss.
 func Lookup(commandType, command string) (string, bool) {
+	return lookup(commandType, command, func(in *proto.CommandRequest) (*proto.CommandResponse, error) {
+		return GetCommandResponse(in)
+	})
+}
+
+// LookupWithin is Lookup with a caller-selected gRPC deadline.
+func LookupWithin(commandType, command string, timeout time.Duration) (string, bool) {
+	return lookup(commandType, command, func(in *proto.CommandRequest) (*proto.CommandResponse, error) {
+		return GetCommandResponseWithin(in, timeout)
+	})
+}
+
+func lookup(commandType, command string, get func(*proto.CommandRequest) (*proto.CommandResponse, error)) (string, bool) {
 	if len(command) > MaxServerLookupLen {
 		return "", false
 	}
-	resp, err := GetCommandResponse(&proto.CommandRequest{Command: command, CommandType: commandType})
+	resp, err := get(&proto.CommandRequest{Command: command, CommandType: commandType})
 	if err != nil || resp == nil || !resp.Matched {
 		return "", false
 	}
@@ -69,7 +96,23 @@ func LookupAndRecord(commandType, command, guid string) (string, bool) {
 // caller's already-set Content-Type/headers are preserved; on a miss it writes nothing and
 // returns false so the caller renders its default response.
 func HTTPOverride(w http.ResponseWriter, r *http.Request, commandType string) bool {
-	body, ok := Lookup(commandType, r.Method+" "+r.URL.Path)
+	return httpOverride(w, r, commandType, Lookup)
+}
+
+// HTTPOverrideWithin is HTTPOverride with a bounded lookup deadline.
+func HTTPOverrideWithin(w http.ResponseWriter, r *http.Request, commandType string, timeout time.Duration) bool {
+	return httpOverride(w, r, commandType, func(commandType, command string) (string, bool) {
+		return LookupWithin(commandType, command, timeout)
+	})
+}
+
+func httpOverride(
+	w http.ResponseWriter,
+	r *http.Request,
+	commandType string,
+	lookup func(string, string) (string, bool),
+) bool {
+	body, ok := lookup(commandType, r.Method+" "+r.URL.Path)
 	if !ok {
 		return false
 	}
@@ -161,6 +204,65 @@ func MuxMiddleware(commandType string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// LLMMuxMiddleware preserves authored LLM overrides while failing open within a small,
+// fidelity-safe bound when the optional control plane is slow or unavailable.
+func LLMMuxMiddleware(commandType string) func(http.Handler) http.Handler {
+	misses := &llmOverrideMissCache{until: make(map[string]time.Time)}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := r.Method + " " + r.URL.Path
+			if misses.contains(key, time.Now()) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if HTTPOverrideWithin(w, r, commandType, LLMOverrideTimeout) {
+				return
+			}
+			misses.remember(key, time.Now().Add(llmOverrideMissTTL))
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// llmOverrideMissCache removes the normal remote round trip from repeated requests while
+// keeping authored overrides eventually consistent. Its key space is attacker-controlled,
+// so it is deliberately bounded rather than acting as a general-purpose unbounded cache.
+type llmOverrideMissCache struct {
+	mu    sync.Mutex
+	until map[string]time.Time
+}
+
+func (c *llmOverrideMissCache) contains(key string, now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	until, ok := c.until[key]
+	if !ok {
+		return false
+	}
+	if now.Before(until) {
+		return true
+	}
+	delete(c.until, key)
+	return false
+}
+
+func (c *llmOverrideMissCache) remember(key string, until time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.until) >= maxLLMOverrideMissCache {
+		now := time.Now()
+		for cachedKey, cachedUntil := range c.until {
+			if !now.Before(cachedUntil) {
+				delete(c.until, cachedKey)
+			}
+		}
+		if len(c.until) >= maxLLMOverrideMissCache {
+			return
+		}
+	}
+	c.until[key] = until
 }
 
 // rowReturningVerbs are the leading SQL keywords whose statements return a result set;

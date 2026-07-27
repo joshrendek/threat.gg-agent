@@ -59,6 +59,7 @@ func TestAgainstReferenceServer(t *testing.T) {
 		{name: "v1 chat unknown model", method: "POST", path: "/v1/chat/completions",
 			body: `{"model":"nope","messages":[{"role":"user","content":"hi"}]}`, unknownModel: true},
 		{name: "generate malformed", method: "POST", path: "/api/generate", body: `not-json`},
+		{name: "generate no model", method: "POST", path: "/api/generate", body: `{}`},
 		{name: "delete unknown", method: "DELETE", path: "/api/delete", body: `{"name":"nope:latest"}`, unknownModel: true},
 		{name: "blob bad digest", method: "HEAD", path: "/api/blobs/sha256:0000"},
 		// threat_gg-5fb: the embeddings refusal status differs by route (501/500/501) even
@@ -120,7 +121,8 @@ func TestAgainstReferenceServer(t *testing.T) {
 			// For plain-text and not-found paths the bodies should match exactly; for
 			// catalog-dependent endpoints they legitimately differ.
 			if c.unknownModel || strings.HasPrefix(c.name, "404") || strings.HasPrefix(c.name, "405") ||
-				c.name == "root" || c.name == "show no model" || c.name == "blob bad digest" {
+				c.name == "root" || c.name == "show no model" || c.name == "generate no model" ||
+				c.name == "blob bad digest" {
 				if !bytes.Equal(bytes.TrimSpace(realBody), bytes.TrimSpace(ourBody)) {
 					t.Errorf("body mismatch:\n honeypot: %s\n real:     %s", ourBody, realBody)
 				}

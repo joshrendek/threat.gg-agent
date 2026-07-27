@@ -45,7 +45,7 @@ func (h *honeypot) Start() {
 // buildHandler composes the full middleware chain (capture + cmdresp override + routing), split
 // out from Start so tests can exercise it directly — matches the ollama/vllm packages' pattern.
 func buildHandler() http.Handler {
-	return llmcore.Capture(saveLlamacppRequest)(cmdresp.MuxMiddleware("llamacpp")(newRouter()))
+	return llmcore.Capture(saveLlamacppRequest)(cmdresp.LLMMuxMiddleware("llamacpp")(newRouter()))
 }
 
 // profile: llama.cpp's server is cpp-httplib, which appends "; charset=utf-8" to JSON on its

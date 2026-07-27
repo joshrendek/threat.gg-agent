@@ -1,10 +1,13 @@
 package cmdresp
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +21,13 @@ func stub(t *testing.T, fn func(*proto.CommandRequest) (*proto.CommandResponse, 
 	orig := GetCommandResponse
 	GetCommandResponse = fn
 	t.Cleanup(func() { GetCommandResponse = orig })
+}
+
+func stubWithin(t *testing.T, fn func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error)) {
+	t.Helper()
+	original := GetCommandResponseWithin
+	GetCommandResponseWithin = fn
+	t.Cleanup(func() { GetCommandResponseWithin = original })
 }
 
 // TestLookup covers the shared gate every honeypot relies on: a Matched row returns
@@ -259,6 +269,83 @@ func TestMuxMiddlewareMarksCapturedCommandResponseSource(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("captured command response was not saved")
+	}
+}
+
+func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testing.T) {
+	t.Run("matched override", func(t *testing.T) {
+		stubWithin(t, func(in *proto.CommandRequest, timeout time.Duration) (*proto.CommandResponse, error) {
+			if timeout != LLMOverrideTimeout {
+				t.Fatalf("timeout = %v, want %v", timeout, LLMOverrideTimeout)
+			}
+			if in.CommandType != "ollama" || in.Command != "GET /api/tags" {
+				t.Fatalf("lookup = %+v", in)
+			}
+			return &proto.CommandResponse{Matched: true, Response: `{"models":[]}`}, nil
+		})
+		recorder := httptest.NewRecorder()
+		LLMMuxMiddleware("ollama")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("matched override fell through")
+		})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+		if got := recorder.Body.String(); got != `{"models":[]}` {
+			t.Fatalf("body = %q", got)
+		}
+	})
+
+	t.Run("concurrent stalled lookups", func(t *testing.T) {
+		stubWithin(t, func(_ *proto.CommandRequest, timeout time.Duration) (*proto.CommandResponse, error) {
+			<-time.After(timeout)
+			return nil, context.DeadlineExceeded
+		})
+		const callers = 16
+		var wg sync.WaitGroup
+		started := time.Now()
+		for i := 0; i < callers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				recorder := httptest.NewRecorder()
+				LLMMuxMiddleware("ollama")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusNoContent)
+				})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+				if recorder.Code != http.StatusNoContent {
+					t.Errorf("fallback status = %d, want 204", recorder.Code)
+				}
+			}()
+		}
+		wg.Wait()
+		if elapsed := time.Since(started); elapsed > 750*time.Millisecond {
+			t.Fatalf("concurrent LLM fallbacks took %v, want close to one %v deadline", elapsed, LLMOverrideTimeout)
+		}
+	})
+
+	t.Run("caches bounded misses", func(t *testing.T) {
+		calls := 0
+		stubWithin(t, func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
+			calls++
+			return &proto.CommandResponse{Matched: false}, nil
+		})
+		handler := LLMMuxMiddleware("ollama")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		for i := 0; i < 2; i++ {
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+		}
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/version", nil))
+		if calls != 2 {
+			t.Fatalf("lookup calls = %d, want one per distinct key during miss TTL", calls)
+		}
+	})
+}
+
+func TestLLMOverrideMissCacheIsBounded(t *testing.T) {
+	cache := &llmOverrideMissCache{until: make(map[string]time.Time)}
+	until := time.Now().Add(time.Minute)
+	for i := 0; i < maxLLMOverrideMissCache+100; i++ {
+		cache.remember(fmt.Sprintf("GET /attacker-path/%d", i), until)
+	}
+	if got := len(cache.until); got != maxLLMOverrideMissCache {
+		t.Fatalf("cache size = %d, want bounded at %d", got, maxLLMOverrideMissCache)
 	}
 }
 

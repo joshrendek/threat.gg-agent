@@ -2,6 +2,8 @@ package persistence
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,6 +58,11 @@ func (blockingClient) SaveComfyui(ctx context.Context, in *proto.LlmRequest, opt
 	return nil, ctx.Err()
 }
 
+func (blockingClient) GetCommandResponse(ctx context.Context, in *proto.CommandRequest, opts ...grpc.CallOption) (*proto.CommandResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 // TestAsynchronousSaveCallsAreTimeBounded ensures a stalled gRPC server cannot
 // retain fire-and-forget capture goroutines or their request buffers indefinitely.
 func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
@@ -94,5 +101,38 @@ func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 				t.Fatal("call did not return; persistence is not time-bounded")
 			}
 		})
+	}
+}
+
+func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = blockingClient{}
+
+	const callers = 16
+	var wg sync.WaitGroup
+	errorsSeen := make(chan error, callers)
+	started := time.Now()
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := GetCommandResponseWithin(&proto.CommandRequest{
+				CommandType: "ollama",
+				Command:     "GET /api/tags",
+			}, 25*time.Millisecond)
+			errorsSeen <- err
+		}()
+	}
+	wg.Wait()
+	close(errorsSeen)
+
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("%d concurrent lookups took %v, want fail-open near the shared short deadline", callers, elapsed)
+	}
+	for err := range errorsSeen {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("lookup error = %v, want context deadline exceeded", err)
+		}
 	}
 }
