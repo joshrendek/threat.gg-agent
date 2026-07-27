@@ -160,6 +160,8 @@ func ReplyFor(prompt, model string) ReplyResult {
 	}
 
 	switch normalized {
+	case "say hi in one word":
+		return ReplyResult{Text: "Hi", Kind: ReplyKindValidationFact}
 	case "name a fruit", "give me a fruit":
 		return ReplyResult{Text: "Apple.", Kind: ReplyKindValidationFact}
 	case "count to five", "count from one to five":
