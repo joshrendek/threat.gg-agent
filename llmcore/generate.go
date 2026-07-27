@@ -730,7 +730,7 @@ func OllamaGenerate(w http.ResponseWriter, r *http.Request, p Profile) {
 		keepAlive := keepAliveOf(body)
 		models.touch(model, keepAlive)
 		reason := "load"
-		if keepAlive <= 0 {
+		if keepAlive == 0 {
 			reason = "unload"
 		}
 		MarkReplyKind(r, proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_LIFECYCLE)

@@ -149,6 +149,12 @@ func TestOllamaGenerateEmptyPromptUsesLoadAndUnloadLifecycle(t *testing.T) {
 			reason:     "unload",
 			wantLoaded: false,
 		},
+		{
+			name:       "negative keep alive retains indefinitely",
+			body:       `{"model":"qwen2.5-coder:7b","prompt":null,"keep_alive":-1}`,
+			reason:     "load",
+			wantLoaded: true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

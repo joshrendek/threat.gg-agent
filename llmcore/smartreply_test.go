@@ -218,7 +218,7 @@ func TestReplyForObservedDetailedProductionPrompts(t *testing.T) {
 func TestObservedPythonValidationRepliesExecute(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
-		t.Skip("python3 is not installed")
+		t.Fatal("python3 is required to validate generated Python replies")
 	}
 	tests := []struct {
 		name       string
