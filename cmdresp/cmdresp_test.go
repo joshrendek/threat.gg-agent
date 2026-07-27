@@ -470,6 +470,30 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 		}
 	})
 
+	t.Run("recovers and retries a panicking lookup", func(t *testing.T) {
+		calls := 0
+		stubWithin(t, func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
+			calls++
+			if calls == 1 {
+				panic("broken client")
+			}
+			return &proto.CommandResponse{Matched: true, Response: "RECOVERED"}, nil
+		})
+		handler := LLMMuxMiddleware("ollama")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		first := httptest.NewRecorder()
+		handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+		if first.Code != http.StatusNoContent {
+			t.Fatalf("panic fallback status = %d, want 204", first.Code)
+		}
+		second := httptest.NewRecorder()
+		handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+		if second.Body.String() != "RECOVERED" || calls != 2 {
+			t.Fatalf("panic recovery body = %q, calls = %d", second.Body.String(), calls)
+		}
+	})
+
 	t.Run("does not cache oversized matched responses", func(t *testing.T) {
 		calls := 0
 		response := strings.Repeat("x", maxCachedLLMOverrideLen+1)

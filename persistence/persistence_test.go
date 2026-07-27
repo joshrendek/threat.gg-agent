@@ -155,6 +155,26 @@ func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
 	}
 }
 
+func TestGetCommandResponseWithinCancelsStalledRPC(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = blockingClient{}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := GetCommandResponseWithin(&proto.CommandRequest{}, 25*time.Millisecond)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("lookup error = %v, want context deadline exceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stalled lookup ignored its short context deadline")
+	}
+}
+
 func TestGetCommandResponseWithinRejectsNonPositiveDeadline(t *testing.T) {
 	originalClient := honeypotClient
 	t.Cleanup(func() { honeypotClient = originalClient })

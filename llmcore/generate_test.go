@@ -2,6 +2,7 @@ package llmcore
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -179,19 +180,38 @@ func TestOllamaGenerateEmptyPromptUsesLoadAndUnloadLifecycle(t *testing.T) {
 			if loaded != test.wantLoaded {
 				t.Fatalf("loaded = %v, want %v", loaded, test.wantLoaded)
 			}
+			if strings.Contains(test.body, `"keep_alive":-1`) {
+				if deadline := ResidentModels()[model]; deadline.Year() != 9999 {
+					t.Fatalf("indefinite residency deadline = %v, want year 9999 sentinel", deadline)
+				}
+			}
 		})
 	}
 }
 
 func TestOllamaGenerateMissingBodyIsNotLifecycleRequest(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/generate", nil)
-	rec := httptest.NewRecorder()
-	OllamaGenerate(rec, req, Profile{DefaultModel: "llama3.2:latest"})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Body.String(); got != `{"error":"missing request body"}` {
-		t.Fatalf("body = %q", got)
+	for _, test := range []struct {
+		name string
+		body func() io.Reader
+	}{
+		{name: "nil body"},
+		{name: "empty reader", body: func() io.Reader { return strings.NewReader("") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var body io.Reader
+			if test.body != nil {
+				body = test.body()
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/generate", body)
+			rec := httptest.NewRecorder()
+			OllamaGenerate(rec, req, Profile{DefaultModel: "llama3.2:latest"})
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			if got := rec.Body.String(); got != `{"error":"missing request body"}` {
+				t.Fatalf("body = %q", got)
+			}
+		})
 	}
 }
 

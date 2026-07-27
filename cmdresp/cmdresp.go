@@ -23,10 +23,9 @@ import (
 // response lookup; anything longer skips the lookup and falls back to local handlers.
 const MaxServerLookupLen = 4096
 
-// LLMOverrideTimeout is deliberately short: LLM HTTP responses are generated locally and
-// command-response overrides are optional. A control-plane outage must fail open quickly
-// instead of adding the persistence layer's three-second interactive-command deadline to
-// every catalog, health, metrics, and inference request.
+// LLMOverrideTimeout bounds the optional control-plane lookup that precedes a local LLM
+// HTTP response. An outage must fail open quickly instead of adding the persistence layer's
+// three-second interactive-command deadline to every LLM endpoint.
 const LLMOverrideTimeout = 250 * time.Millisecond
 
 const (
@@ -64,7 +63,7 @@ func Lookup(commandType, command string) (string, bool) {
 	})
 }
 
-// LookupWithin is Lookup with a caller-selected gRPC deadline.
+// LookupWithin is Lookup with a caller-selected timeout duration.
 func LookupWithin(commandType, command string, timeout time.Duration) (string, bool) {
 	result := lookupWithinResult(commandType, command, timeout)
 	return result.body, result.matched
@@ -242,7 +241,8 @@ func MuxMiddleware(commandType string) func(http.Handler) http.Handler {
 }
 
 // LLMMuxMiddleware preserves authored LLM overrides while failing open within a small,
-// fidelity-safe bound when the optional control plane is slow or unavailable.
+// fidelity-safe bound when the optional control plane is slow or unavailable. Call the
+// returned decorator once per honeypot server so all of its routes share one bounded cache.
 func LLMMuxMiddleware(commandType string) func(http.Handler) http.Handler {
 	return llmMuxMiddleware(commandType, llmOverrideCacheTTL)
 }
@@ -327,7 +327,7 @@ func (c *llmOverrideCache) lookup(key string, lookup func() llmOverrideResult) (
 	var result llmOverrideResult
 	select {
 	case llmOverrideLookupSlots <- struct{}{}:
-		result = lookup()
+		result = safeLLMOverrideLookup(lookup)
 		<-llmOverrideLookupSlots
 	default:
 		// Saturation is a fail-open condition. Do not cache it: a later request should
@@ -345,6 +345,17 @@ func (c *llmOverrideCache) lookup(key string, lookup func() llmOverrideResult) (
 	close(call.done)
 	c.mu.Unlock()
 	return call.body, call.matched
+}
+
+func safeLLMOverrideLookup(lookup func() llmOverrideResult) (result llmOverrideResult) {
+	defer func() {
+		if recover() != nil {
+			// The override control plane is optional. Convert an unexpected client
+			// panic into the same fail-open, non-cacheable result as a transport error.
+			result = llmOverrideResult{}
+		}
+	}()
+	return lookup()
 }
 
 func (c *llmOverrideCache) currentTime() time.Time {

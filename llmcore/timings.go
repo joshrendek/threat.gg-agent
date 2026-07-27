@@ -58,7 +58,7 @@ func (s *loadState) touch(model string, d time.Duration) (wasWarm bool) {
 		return wasWarm
 	}
 	if d < 0 {
-		s.residing[model] = now.Add(time.Duration(1<<63 - 1))
+		s.residing[model] = time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC)
 		return wasWarm
 	}
 	s.residing[model] = now.Add(d)
