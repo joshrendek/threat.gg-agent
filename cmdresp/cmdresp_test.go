@@ -273,6 +273,32 @@ func TestMuxMiddlewareMarksCapturedCommandResponseSource(t *testing.T) {
 	}
 }
 
+func TestLLMMuxMiddlewareMarksCapturedCommandResponseSource(t *testing.T) {
+	stubWithin(t, func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
+		return &proto.CommandResponse{Response: `{"overridden":true}`, Matched: true}, nil
+	})
+	saved := make(chan *proto.LlmRequest, 1)
+	handler := llmcore.Capture(func(request *proto.LlmRequest) error {
+		saved <- request
+		return nil
+	})(LLMMuxMiddleware("ollama")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("matched LLM command response fell through")
+	})))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/generate", nil))
+	select {
+	case request := <-saved:
+		if request.ResponseSource != proto.LlmResponseSource_LLM_RESPONSE_SOURCE_COMMAND_RESPONSE {
+			t.Fatalf("response source = %v, want command response", request.ResponseSource)
+		}
+		if request.ResponseStatus != http.StatusOK {
+			t.Fatalf("response status = %d, want 200", request.ResponseStatus)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("captured LLM command response was not saved")
+	}
+}
+
 func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testing.T) {
 	t.Run("matched override", func(t *testing.T) {
 		calls := 0

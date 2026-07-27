@@ -18,6 +18,21 @@ type blockingClient struct {
 	proto.HoneypotClient
 }
 
+type deadlineInspectingClient struct {
+	proto.HoneypotClient
+	remaining chan time.Duration
+}
+
+func (c deadlineInspectingClient) GetCommandResponse(ctx context.Context, in *proto.CommandRequest, opts ...grpc.CallOption) (*proto.CommandResponse, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		c.remaining <- time.Duration(1<<63 - 1)
+	} else {
+		c.remaining <- time.Until(deadline)
+	}
+	return nil, context.DeadlineExceeded
+}
+
 func (blockingClient) SaveMemcachedConnect(ctx context.Context, in *proto.MemcachedConnectRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -107,9 +122,10 @@ func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
 	originalClient := honeypotClient
 	t.Cleanup(func() { honeypotClient = originalClient })
-	honeypotClient = blockingClient{}
 
 	const callers = 16
+	remaining := make(chan time.Duration, callers)
+	honeypotClient = deadlineInspectingClient{remaining: remaining}
 	var wg sync.WaitGroup
 	errorsSeen := make(chan error, callers)
 	for i := 0; i < callers; i++ {
@@ -129,6 +145,12 @@ func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
 	for err := range errorsSeen {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("lookup error = %v, want context deadline exceeded", err)
+		}
+	}
+	close(remaining)
+	for duration := range remaining {
+		if duration > 100*time.Millisecond {
+			t.Fatalf("context deadline remaining = %v, want the requested 25ms bound", duration)
 		}
 	}
 }
