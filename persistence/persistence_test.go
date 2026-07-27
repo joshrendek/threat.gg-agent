@@ -136,3 +136,19 @@ func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
 		}
 	}
 }
+
+func TestGetCommandResponseWithinRejectsNonPositiveDeadline(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = blockingClient{}
+
+	for _, timeout := range []time.Duration{0, -time.Millisecond} {
+		started := time.Now()
+		if _, err := GetCommandResponseWithin(&proto.CommandRequest{}, timeout); err == nil {
+			t.Fatalf("timeout %v: expected validation error", timeout)
+		}
+		if elapsed := time.Since(started); elapsed > 50*time.Millisecond {
+			t.Fatalf("timeout %v: validation took %v, want immediate failure", timeout, elapsed)
+		}
+	}
+}

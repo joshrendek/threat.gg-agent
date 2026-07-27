@@ -32,7 +32,10 @@ const LLMOverrideTimeout = 250 * time.Millisecond
 const (
 	llmOverrideMissTTL      = 30 * time.Second
 	maxLLMOverrideMissCache = 256
+	maxConcurrentLLMLookups = 32
 )
+
+var llmOverrideLookupSlots = make(chan struct{}, maxConcurrentLLMLookups)
 
 // HTTPResponsePrefix marks an opt-in structured HTTP response stored in the existing
 // response text column. Plain rows remain body-only for backward compatibility.
@@ -116,6 +119,11 @@ func httpOverride(
 	if !ok {
 		return false
 	}
+	writeHTTPOverride(w, r, body)
+	return true
+}
+
+func writeHTTPOverride(w http.ResponseWriter, r *http.Request, body string) {
 	llmcore.MarkResponseSource(r, proto.LlmResponseSource_LLM_RESPONSE_SOURCE_COMMAND_RESPONSE)
 	if response, structured := parseHTTPResponse(body); structured {
 		for name, value := range response.Headers {
@@ -130,11 +138,10 @@ func httpOverride(
 		}
 		w.WriteHeader(status)
 		io.WriteString(w, response.Body) //nolint:errcheck
-		return true
+		return
 	}
 	defaultJSONContentType(w, body)
 	io.WriteString(w, body) //nolint:errcheck
-	return true
 }
 
 // defaultJSONContentType sets Content-Type to application/json for a JSON-looking authored
@@ -209,48 +216,92 @@ func MuxMiddleware(commandType string) func(http.Handler) http.Handler {
 // LLMMuxMiddleware preserves authored LLM overrides while failing open within a small,
 // fidelity-safe bound when the optional control plane is slow or unavailable.
 func LLMMuxMiddleware(commandType string) func(http.Handler) http.Handler {
-	misses := &llmOverrideMissCache{until: make(map[string]time.Time)}
+	return llmMuxMiddleware(commandType, llmOverrideMissTTL)
+}
+
+func llmMuxMiddleware(commandType string, missTTL time.Duration) func(http.Handler) http.Handler {
+	misses := &llmOverrideMissCache{
+		ttl:      missTTL,
+		until:    make(map[string]time.Time),
+		inFlight: make(map[string]*llmOverrideLookup),
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := r.Method + " " + r.URL.Path
-			if misses.contains(key, time.Now()) {
+			// Lookup rejects the same oversized key. Do not retain it in the negative
+			// cache, whose contents are derived from attacker-controlled request paths.
+			if len(key) > MaxServerLookupLen {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if HTTPOverrideWithin(w, r, commandType, LLMOverrideTimeout) {
+			body, matched := misses.lookup(key, func() (string, bool) {
+				return LookupWithin(commandType, key, LLMOverrideTimeout)
+			})
+			if matched {
+				writeHTTPOverride(w, r, body)
 				return
 			}
-			misses.remember(key, time.Now().Add(llmOverrideMissTTL))
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
-// llmOverrideMissCache removes the normal remote round trip from repeated requests while
-// keeping authored overrides eventually consistent. Its key space is attacker-controlled,
-// so it is deliberately bounded rather than acting as a general-purpose unbounded cache.
+// llmOverrideMissCache removes the normal remote round trip from repeated requests, coalesces
+// concurrent requests for one route, and keeps authored overrides eventually consistent.
 type llmOverrideMissCache struct {
-	mu    sync.Mutex
-	until map[string]time.Time
+	mu       sync.Mutex
+	ttl      time.Duration
+	until    map[string]time.Time
+	inFlight map[string]*llmOverrideLookup
 }
 
-func (c *llmOverrideMissCache) contains(key string, now time.Time) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	until, ok := c.until[key]
-	if !ok {
-		return false
-	}
-	if now.Before(until) {
-		return true
-	}
-	delete(c.until, key)
-	return false
+type llmOverrideLookup struct {
+	done    chan struct{}
+	body    string
+	matched bool
 }
 
-func (c *llmOverrideMissCache) remember(key string, until time.Time) {
+func (c *llmOverrideMissCache) lookup(key string, lookup func() (string, bool)) (string, bool) {
+	now := time.Now()
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	if until, ok := c.until[key]; ok {
+		if now.Before(until) {
+			c.mu.Unlock()
+			return "", false
+		}
+		delete(c.until, key)
+	}
+	if call, ok := c.inFlight[key]; ok {
+		c.mu.Unlock()
+		<-call.done
+		return call.body, call.matched
+	}
+	call := &llmOverrideLookup{done: make(chan struct{})}
+	c.inFlight[key] = call
+	c.mu.Unlock()
+
+	cacheMiss := false
+	select {
+	case llmOverrideLookupSlots <- struct{}{}:
+		call.body, call.matched = lookup()
+		<-llmOverrideLookupSlots
+		cacheMiss = !call.matched
+	default:
+		// Saturation is a fail-open condition. Do not cache it: a later request should
+		// retry once one of the globally bounded lookup slots becomes available.
+	}
+
+	c.mu.Lock()
+	if cacheMiss {
+		c.rememberLocked(key, time.Now().Add(c.ttl))
+	}
+	delete(c.inFlight, key)
+	close(call.done)
+	c.mu.Unlock()
+	return call.body, call.matched
+}
+
+func (c *llmOverrideMissCache) rememberLocked(key string, until time.Time) {
 	if len(c.until) >= maxLLMOverrideMissCache {
 		now := time.Now()
 		for cachedKey, cachedUntil := range c.until {
