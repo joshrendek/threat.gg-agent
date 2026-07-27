@@ -35,9 +35,12 @@ func (h *honeypot) Start() {
 	if port == "" {
 		port = defaultPort
 	}
-	handler := llmcore.Capture(saveLocalaiRequest)(cmdresp.MuxMiddleware("localai")(newRouter()))
 	h.logger.Info().Str("port", port).Msg("starting localai honeypot")
-	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), handler)).Msg("failed to start")
+	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), buildHandler())).Msg("failed to start")
+}
+
+func buildHandler() http.Handler {
+	return llmcore.Capture(saveLocalaiRequest)(cmdresp.LLMMuxMiddleware("localai")(newRouter()))
 }
 
 // profile: LocalAI is a Go/Fiber service, so bare application/json and no system_fingerprint.

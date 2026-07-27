@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/joshrendek/threat.gg-agent/cmdresp"
 	"github.com/joshrendek/threat.gg-agent/proto"
@@ -63,11 +64,11 @@ func TestGenerateNonStreamAndOpenAIAlias(t *testing.T) {
 // honeypot signature rather than a missing detail. The ordering guarantee is still worth
 // pinning, so the assertion now rides on the CORS header, which real Ollama does send.
 func TestCORSSurvivesCmdrespOverride(t *testing.T) {
-	orig := cmdresp.GetCommandResponse
-	cmdresp.GetCommandResponse = func(*proto.CommandRequest) (*proto.CommandResponse, error) {
+	orig := cmdresp.GetCommandResponseWithin
+	cmdresp.GetCommandResponseWithin = func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
 		return &proto.CommandResponse{Response: `{"overridden":true}`, Matched: true}, nil
 	}
-	t.Cleanup(func() { cmdresp.GetCommandResponse = orig })
+	t.Cleanup(func() { cmdresp.GetCommandResponseWithin = orig })
 	rec := httptest.NewRecorder()
 	buildHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
 	if !strings.Contains(rec.Body.String(), "overridden") {

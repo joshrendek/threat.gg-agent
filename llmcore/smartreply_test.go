@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -157,6 +158,90 @@ func TestReplyForValidationProbes(t *testing.T) {
 			got := ReplyFor(tc.prompt, "llama3.2:latest")
 			if got.Text != tc.text || got.Kind != tc.kind {
 				t.Errorf("ReplyFor(%q) = %#v, want text %q kind %q", tc.prompt, got, tc.text, tc.kind)
+			}
+		})
+	}
+}
+
+func TestReplyForObservedDetailedProductionPrompts(t *testing.T) {
+	tests := []struct {
+		name   string
+		prompt string
+		text   string
+		kind   ReplyKind
+	}{
+		{
+			name:   "reverse string code only",
+			prompt: "Write a Python function called reverse_string that takes a string and returns the reversed string. Use only built-in Python, no libraries. Give only the code.",
+			text:   reverseStringCode,
+			kind:   ReplyKindCodeValidation,
+		},
+		{
+			name:   "prime code only",
+			prompt: "Write a Python function named is_prime(n) that returns True if n is prime, else False. Respond with only the code.",
+			text:   isPrimeCode,
+			kind:   ReplyKindCodeValidation,
+		},
+		{
+			name:   "exact constrained prose",
+			prompt: "Write exactly 100 words of original prose about a lighthouse keeper who discovers a message in a bottle. Do not introduce yourself. Count your words carefully.",
+			text:   lighthouseProse,
+			kind:   ReplyKindConstrainedProse,
+		},
+		{
+			name:   "arithmetic plus nonce",
+			prompt: "What is 17*23? Answer with just the number, then write PINEAPPLE77.",
+			text:   "391 PINEAPPLE77",
+			kind:   ReplyKindArithmeticNonce,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := ReplyFor(test.prompt, "qwen2.5-coder:7b")
+			if got.Text != test.text || got.Kind != test.kind {
+				t.Fatalf("ReplyFor() = %#v, want text %q kind %q", got, test.text, test.kind)
+			}
+		})
+	}
+
+	if words := len(strings.Fields(lighthouseProse)); words != 100 {
+		t.Fatalf("lighthouse prose has %d words, want exactly 100", words)
+	}
+	if got := ReplyFor("Explain the topic without introducing yourself.", "gemma3:12b"); got.Kind == ReplyKindModelIntroEN {
+		t.Fatalf("negated introduction was classified as positive: %#v", got)
+	}
+	if got := ReplyFor("Please do not introduce yourself.", "gemma3:12b"); got.Kind == ReplyKindModelIntroEN {
+		t.Fatalf("do-not-introduce prompt was classified as positive: %#v", got)
+	}
+}
+
+func TestObservedPythonValidationRepliesExecute(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal("python3 is required to validate generated Python replies")
+	}
+	tests := []struct {
+		name       string
+		reply      string
+		assertions string
+	}{
+		{
+			name:  "reverse_string",
+			reply: reverseStringCode,
+			assertions: "\nassert reverse_string('payload') == 'daolyap'\n" +
+				"assert reverse_string('') == ''\n",
+		},
+		{
+			name:  "is_prime",
+			reply: isPrimeCode,
+			assertions: "\nassert not is_prime(-1)\nassert not is_prime(0)\n" +
+				"assert is_prime(2)\nassert is_prime(97)\nassert not is_prime(99)\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if output, err := exec.Command(python, "-c", test.reply+test.assertions).CombinedOutput(); err != nil {
+				t.Fatalf("generated code failed: %v\n%s", err, output)
 			}
 		})
 	}

@@ -32,9 +32,12 @@ func (h *honeypot) Start() {
 	if port == "" {
 		port = defaultPort
 	}
-	handler := llmcore.Capture(saveRayRequest)(cmdresp.MuxMiddleware("ray")(newRouter()))
 	h.logger.Info().Str("port", port).Msg("starting ray honeypot")
-	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), handler)).Msg("failed to start")
+	h.logger.Fatal().Err(http.ListenAndServe(fmt.Sprintf(":%s", port), buildHandler())).Msg("failed to start")
+}
+
+func buildHandler() http.Handler {
+	return llmcore.Capture(saveRayRequest)(cmdresp.LLMMuxMiddleware("ray")(newRouter()))
 }
 
 func newRouter() http.Handler {

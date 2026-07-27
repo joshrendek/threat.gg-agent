@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/joshrendek/threat.gg-agent/llmcore"
 	"github.com/joshrendek/threat.gg-agent/persistence"
@@ -20,6 +22,20 @@ import (
 // MaxServerLookupLen bounds the attacker-controlled command forwarded to the server's
 // response lookup; anything longer skips the lookup and falls back to local handlers.
 const MaxServerLookupLen = 4096
+
+// LLMOverrideTimeout bounds the optional control-plane lookup that precedes a local LLM
+// HTTP response. An outage must fail open quickly instead of adding the persistence layer's
+// three-second interactive-command deadline to every LLM endpoint.
+const LLMOverrideTimeout = 250 * time.Millisecond
+
+const (
+	llmOverrideCacheTTL     = 30 * time.Second
+	maxLLMOverrideCache     = 256
+	maxConcurrentLLMLookups = 32
+	maxCachedLLMOverrideLen = 64 << 10
+)
+
+var llmOverrideLookupSlots = make(chan struct{}, maxConcurrentLLMLookups)
 
 // HTTPResponsePrefix marks an opt-in structured HTTP response stored in the existing
 // response text column. Plain rows remain body-only for backward compatibility.
@@ -34,6 +50,7 @@ type authoredHTTPResponse struct {
 // GetCommandResponse is an injectable seam over the gRPC call so the matched/miss/error
 // paths are unit-testable without a live server.
 var GetCommandResponse = persistence.GetCommandResponse
+var GetCommandResponseWithin = persistence.GetCommandResponseWithin
 var SaveResponseLookup = persistence.SaveResponseLookup
 
 // Lookup returns the admin-authored response for (commandType, command) when a Matched row
@@ -41,14 +58,54 @@ var SaveResponseLookup = persistence.SaveResponseLookup
 // falls back to its hardcoded handler. Matched (not a non-empty Response) is the gate, so
 // an intentionally-silent authored row is honored rather than treated as a miss.
 func Lookup(commandType, command string) (string, bool) {
+	return lookup(commandType, command, func(in *proto.CommandRequest) (*proto.CommandResponse, error) {
+		return GetCommandResponse(in)
+	})
+}
+
+// LookupWithin is Lookup with a caller-selected timeout duration.
+func LookupWithin(commandType, command string, timeout time.Duration) (string, bool) {
+	result := lookupWithinResult(commandType, command, timeout)
+	return result.body, result.matched
+}
+
+func lookup(commandType, command string, get func(*proto.CommandRequest) (*proto.CommandResponse, error)) (string, bool) {
 	if len(command) > MaxServerLookupLen {
 		return "", false
 	}
-	resp, err := GetCommandResponse(&proto.CommandRequest{Command: command, CommandType: commandType})
+	resp, err := get(&proto.CommandRequest{Command: command, CommandType: commandType})
 	if err != nil || resp == nil || !resp.Matched {
 		return "", false
 	}
 	return resp.Response, true
+}
+
+type llmOverrideResult struct {
+	body      string
+	matched   bool
+	cacheable bool
+}
+
+func lookupWithinResult(commandType, command string, timeout time.Duration) llmOverrideResult {
+	if len(command) > MaxServerLookupLen {
+		return llmOverrideResult{}
+	}
+	resp, err := GetCommandResponseWithin(
+		&proto.CommandRequest{Command: command, CommandType: commandType},
+		timeout,
+	)
+	if err != nil || resp == nil {
+		// A transient control-plane failure must not become a cached route miss.
+		return llmOverrideResult{}
+	}
+	if !resp.Matched {
+		return llmOverrideResult{cacheable: true}
+	}
+	return llmOverrideResult{
+		body:      resp.Response,
+		matched:   true,
+		cacheable: len(resp.Response) <= maxCachedLLMOverrideLen,
+	}
 }
 
 // LookupAndRecord persists the exact bounded key used for response matching, then performs
@@ -69,10 +126,31 @@ func LookupAndRecord(commandType, command, guid string) (string, bool) {
 // caller's already-set Content-Type/headers are preserved; on a miss it writes nothing and
 // returns false so the caller renders its default response.
 func HTTPOverride(w http.ResponseWriter, r *http.Request, commandType string) bool {
-	body, ok := Lookup(commandType, r.Method+" "+r.URL.Path)
+	return httpOverride(w, r, commandType, Lookup)
+}
+
+// HTTPOverrideWithin is HTTPOverride with a bounded lookup deadline.
+func HTTPOverrideWithin(w http.ResponseWriter, r *http.Request, commandType string, timeout time.Duration) bool {
+	return httpOverride(w, r, commandType, func(commandType, command string) (string, bool) {
+		return LookupWithin(commandType, command, timeout)
+	})
+}
+
+func httpOverride(
+	w http.ResponseWriter,
+	r *http.Request,
+	commandType string,
+	lookup func(string, string) (string, bool),
+) bool {
+	body, ok := lookup(commandType, r.Method+" "+r.URL.Path)
 	if !ok {
 		return false
 	}
+	writeHTTPOverride(w, r, body)
+	return true
+}
+
+func writeHTTPOverride(w http.ResponseWriter, r *http.Request, body string) {
 	llmcore.MarkResponseSource(r, proto.LlmResponseSource_LLM_RESPONSE_SOURCE_COMMAND_RESPONSE)
 	if response, structured := parseHTTPResponse(body); structured {
 		for name, value := range response.Headers {
@@ -87,11 +165,10 @@ func HTTPOverride(w http.ResponseWriter, r *http.Request, commandType string) bo
 		}
 		w.WriteHeader(status)
 		io.WriteString(w, response.Body) //nolint:errcheck
-		return true
+		return
 	}
 	defaultJSONContentType(w, body)
 	io.WriteString(w, body) //nolint:errcheck
-	return true
 }
 
 // defaultJSONContentType sets Content-Type to application/json for a JSON-looking authored
@@ -161,6 +238,157 @@ func MuxMiddleware(commandType string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// LLMMuxMiddleware preserves authored LLM overrides while failing open within a small,
+// fidelity-safe bound when the optional control plane is slow or unavailable. Call the
+// returned decorator once per honeypot server so all of its routes share one bounded cache.
+func LLMMuxMiddleware(commandType string) func(http.Handler) http.Handler {
+	return llmMuxMiddleware(commandType, llmOverrideCacheTTL)
+}
+
+func llmMuxMiddleware(commandType string, cacheTTL time.Duration) func(http.Handler) http.Handler {
+	return llmMuxMiddlewareWithClock(commandType, cacheTTL, time.Now)
+}
+
+func llmMuxMiddlewareWithClock(
+	commandType string,
+	cacheTTL time.Duration,
+	now func() time.Time,
+) func(http.Handler) http.Handler {
+	cache := &llmOverrideCache{
+		ttl:      cacheTTL,
+		now:      now,
+		entries:  make(map[string]llmOverrideCacheEntry),
+		inFlight: make(map[string]*llmOverrideLookup),
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := r.Method + " " + r.URL.Path
+			// Lookup rejects the same oversized key. Do not retain it in the negative
+			// cache, whose contents are derived from attacker-controlled request paths.
+			if len(key) > MaxServerLookupLen {
+				next.ServeHTTP(w, r)
+				return
+			}
+			body, matched := cache.lookup(key, func() llmOverrideResult {
+				return lookupWithinResult(commandType, key, LLMOverrideTimeout)
+			})
+			if matched {
+				writeHTTPOverride(w, r, body)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// llmOverrideCache caches bounded matched responses and confirmed misses, while coalescing
+// concurrent requests for the same route. Errors and saturation remain immediately retryable.
+type llmOverrideCache struct {
+	mu       sync.Mutex
+	ttl      time.Duration
+	now      func() time.Time
+	entries  map[string]llmOverrideCacheEntry
+	inFlight map[string]*llmOverrideLookup
+}
+
+type llmOverrideCacheEntry struct {
+	until   time.Time
+	body    string
+	matched bool
+}
+
+type llmOverrideLookup struct {
+	done    chan struct{}
+	body    string
+	matched bool
+	waiters int
+}
+
+func (c *llmOverrideCache) lookup(key string, lookup func() llmOverrideResult) (string, bool) {
+	now := c.currentTime()
+	c.mu.Lock()
+	if entry, ok := c.entries[key]; ok {
+		if now.Before(entry.until) {
+			c.mu.Unlock()
+			return entry.body, entry.matched
+		}
+		delete(c.entries, key)
+	}
+	if call, ok := c.inFlight[key]; ok {
+		call.waiters++
+		c.mu.Unlock()
+		<-call.done
+		return call.body, call.matched
+	}
+	call := &llmOverrideLookup{done: make(chan struct{})}
+	c.inFlight[key] = call
+	c.mu.Unlock()
+
+	var result llmOverrideResult
+	select {
+	case llmOverrideLookupSlots <- struct{}{}:
+		result = safeLLMOverrideLookup(lookup)
+		<-llmOverrideLookupSlots
+	default:
+		// Saturation is a fail-open condition. Do not cache it: a later request should
+		// retry once one of the globally bounded lookup slots becomes available.
+	}
+	call.body, call.matched = result.body, result.matched
+
+	c.mu.Lock()
+	if result.cacheable {
+		c.rememberLocked(key, llmOverrideCacheEntry{
+			until: c.currentTime().Add(c.ttl), body: result.body, matched: result.matched,
+		})
+	}
+	delete(c.inFlight, key)
+	close(call.done)
+	c.mu.Unlock()
+	return call.body, call.matched
+}
+
+func safeLLMOverrideLookup(lookup func() llmOverrideResult) (result llmOverrideResult) {
+	defer func() {
+		if recover() != nil {
+			// The override control plane is optional. Convert an unexpected client
+			// panic into the same fail-open, non-cacheable result as a transport error.
+			result = llmOverrideResult{}
+		}
+	}()
+	return lookup()
+}
+
+func (c *llmOverrideCache) currentTime() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+func (c *llmOverrideCache) rememberLocked(key string, entry llmOverrideCacheEntry) {
+	if len(c.entries) >= maxLLMOverrideCache {
+		now := c.currentTime()
+		for cachedKey, cachedEntry := range c.entries {
+			if !now.Before(cachedEntry.until) {
+				delete(c.entries, cachedKey)
+			}
+		}
+		if len(c.entries) >= maxLLMOverrideCache {
+			// Keep the bounded cache useful under path churn by replacing the entry
+			// nearest expiry instead of permanently declining all new routes.
+			var oldestKey string
+			var oldestUntil time.Time
+			for cachedKey, cachedEntry := range c.entries {
+				if oldestKey == "" || cachedEntry.until.Before(oldestUntil) {
+					oldestKey, oldestUntil = cachedKey, cachedEntry.until
+				}
+			}
+			delete(c.entries, oldestKey)
+		}
+	}
+	c.entries[key] = entry
 }
 
 // rowReturningVerbs are the leading SQL keywords whose statements return a result set;

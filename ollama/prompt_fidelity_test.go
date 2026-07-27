@@ -22,6 +22,10 @@ const (
 	ollamaDescriptionPrompt = "Reply with a concise description of what an Ollama server does."
 	englishIntroPrompt      = "Hello, please briefly introduce yourself in one sentence."
 	chineseIntroPrompt      = "请用中文简要介绍一下你自己，包括你的名称、能力范围，限 100 字以内。"
+	reverseStringPrompt     = "Write a Python function called reverse_string that takes a string and returns the reversed string. Give only the code."
+	lighthousePrompt        = "Write exactly 100 words of original prose about a lighthouse keeper who discovers a message in a bottle. Do not introduce yourself. Count your words carefully."
+	arithmeticNoncePrompt   = "What is 17*23? Answer with just the number, then write PINEAPPLE77."
+	isPrimePrompt           = "Write a Python function named is_prime(n) that returns True if n is prime, else False. Respond with only the code."
 )
 
 func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
@@ -106,6 +110,58 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 				}
 				assertEnglishIntroduction(t, response.Message.Content, model)
 			})
+
+			for _, detailed := range []struct {
+				name   string
+				path   string
+				prompt string
+				want   string
+			}{
+				{"reverse string", "/api/chat", reverseStringPrompt, "def reverse_string(text):\n    return text[::-1]"},
+				{"lighthouse prose", "/api/chat", lighthousePrompt, ""},
+				{"arithmetic nonce", "/api/chat", arithmeticNoncePrompt, "391 PINEAPPLE77"},
+				{"prime function", "/api/generate", isPrimePrompt, "def is_prime(n):"},
+			} {
+				detailed := detailed
+				t.Run("detailed "+detailed.name, func(t *testing.T) {
+					var body string
+					if detailed.path == "/api/chat" {
+						body = fmt.Sprintf(
+							`{"model":%q,"messages":[{"role":"user","content":%q}],"stream":false}`,
+							model, detailed.prompt)
+					} else {
+						body = fmt.Sprintf(
+							`{"model":%q,"prompt":%q,"stream":false}`,
+							model, detailed.prompt)
+					}
+					rec := do(t, http.MethodPost, detailed.path, body)
+					var response struct {
+						Response string `json:"response"`
+						Message  struct {
+							Content string `json:"content"`
+						} `json:"message"`
+					}
+					mustDecodeJSON(t, rec.Code, rec.Body.Bytes(), &response)
+					text := response.Response
+					if detailed.path == "/api/chat" {
+						text = response.Message.Content
+					}
+					if detailed.name == "lighthouse prose" {
+						if words := len(strings.Fields(text)); words != 100 {
+							t.Fatalf("lighthouse response has %d words, want 100: %q", words, text)
+						}
+						if strings.Contains(text, "I'm "+model) {
+							t.Fatalf("negated introduction misclassified: %q", text)
+						}
+					} else if detailed.name == "prime function" {
+						if !strings.HasPrefix(text, detailed.want) || !strings.Contains(text, "return True") {
+							t.Fatalf("prime response = %q", text)
+						}
+					} else if text != detailed.want {
+						t.Fatalf("response = %q, want %q", text, detailed.want)
+					}
+				})
+			}
 
 			t.Run("chat English stream", func(t *testing.T) {
 				rec := do(t, http.MethodPost, "/api/chat", fmt.Sprintf(

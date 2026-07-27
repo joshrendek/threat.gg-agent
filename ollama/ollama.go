@@ -69,7 +69,7 @@ func (h *honeypot) Start() {
 // there is deliberately no Server header: real Ollama sends none, so stamping one would be a
 // positive honeypot signature rather than a missing detail.
 func buildHandler() http.Handler {
-	return llmcore.Capture(saveOllamaRequest)(corsHeaders(cmdresp.MuxMiddleware("ollama")(newRouter())))
+	return llmcore.Capture(saveOllamaRequest)(corsHeaders(cmdresp.LLMMuxMiddleware("ollama")(newRouter())))
 }
 
 // corsAllowHeaders is the exact allow-list a modern Ollama echoes on a preflight, including the

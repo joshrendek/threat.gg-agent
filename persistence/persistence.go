@@ -373,15 +373,26 @@ func SaveMemcachedCommand(in *proto.MemcachedCommandRequest) error {
 	return err
 }
 
+// GetCommandResponse performs the default three-second interactive-command lookup.
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
+	return GetCommandResponseWithin(in, 3*time.Second)
+}
+
+// GetCommandResponseWithin performs the same lookup with a caller-selected deadline.
+// HTTP honeypots use a much shorter fail-open bound than interactive shell protocols:
+// a missing optional override must not make a static local endpoint look unavailable.
+func GetCommandResponseWithin(in *proto.CommandRequest, timeout time.Duration) (*proto.CommandResponse, error) {
 	// Guard against an uninitialized client (e.g. before Connect, or in unit tests) so
 	// callers get a clean error and fall back to their local behavior instead of panicking.
 	if honeypotClient == nil {
 		return nil, errors.New("honeypot client not connected")
 	}
-	// Bound the call so a slow or stalled server can't hang the interactive honeypot
-	// session (this runs on the per-command hot path for ssh and telnet).
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if timeout <= 0 {
+		return nil, errors.New("command response timeout must be positive")
+	}
+	// Bound both interactive command lookups and HTTP override lookups so a slow
+	// control plane cannot hang their request paths.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	return honeypotClient.GetCommandResponse(ctx, in)

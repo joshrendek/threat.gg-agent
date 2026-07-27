@@ -59,6 +59,9 @@ func TestAgainstReferenceServer(t *testing.T) {
 		{name: "v1 chat unknown model", method: "POST", path: "/v1/chat/completions",
 			body: `{"model":"nope","messages":[{"role":"user","content":"hi"}]}`, unknownModel: true},
 		{name: "generate malformed", method: "POST", path: "/api/generate", body: `not-json`},
+		{name: "generate no model", method: "POST", path: "/api/generate", body: `{}`},
+		{name: "generate invalid prompt", method: "POST", path: "/api/generate",
+			body: `{"model":"qwen2.5-coder:7b","prompt":{}}`},
 		{name: "delete unknown", method: "DELETE", path: "/api/delete", body: `{"name":"nope:latest"}`, unknownModel: true},
 		{name: "blob bad digest", method: "HEAD", path: "/api/blobs/sha256:0000"},
 		// threat_gg-5fb: the embeddings refusal status differs by route (501/500/501) even
@@ -117,10 +120,11 @@ func TestAgainstReferenceServer(t *testing.T) {
 			if r, o := realResp.Header.Get("Allow"), ourResp.Header.Get("Allow"); r != o {
 				t.Errorf("Allow header: honeypot %q, real %q", o, r)
 			}
-			// For plain-text and not-found paths the bodies should match exactly; for
-			// catalog-dependent endpoints they legitimately differ.
+			// Compare exact bodies for stable root/error responses. Catalog and generated
+			// response bodies legitimately depend on local models, timestamps, or output.
 			if c.unknownModel || strings.HasPrefix(c.name, "404") || strings.HasPrefix(c.name, "405") ||
-				c.name == "root" || c.name == "show no model" || c.name == "blob bad digest" {
+				c.name == "root" || c.name == "show no model" || c.name == "generate no model" ||
+				c.name == "generate invalid prompt" || c.name == "blob bad digest" {
 				if !bytes.Equal(bytes.TrimSpace(realBody), bytes.TrimSpace(ourBody)) {
 					t.Errorf("body mismatch:\n honeypot: %s\n real:     %s", ourBody, realBody)
 				}

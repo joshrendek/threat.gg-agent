@@ -51,7 +51,7 @@ func (h *honeypot) Start() {
 // override so the Server header is stamped even when an admin-authored response
 // short-circuits the router (matches the jenkins honeypot's override-safe ordering).
 func buildHandler() http.Handler {
-	return llmcore.Capture(saveVllmRequest)(identityHeaders(cmdresp.MuxMiddleware("vllm")(newRouter())))
+	return llmcore.Capture(saveVllmRequest)(identityHeaders(cmdresp.LLMMuxMiddleware("vllm")(newRouter())))
 }
 
 // identityHeaders stamps the vLLM server identity on every response.

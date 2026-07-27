@@ -2,6 +2,8 @@ package persistence
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +16,21 @@ import (
 // embedded nil interface.
 type blockingClient struct {
 	proto.HoneypotClient
+}
+
+type deadlineInspectingClient struct {
+	proto.HoneypotClient
+	remaining chan time.Duration
+}
+
+func (c deadlineInspectingClient) GetCommandResponse(ctx context.Context, in *proto.CommandRequest, opts ...grpc.CallOption) (*proto.CommandResponse, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		c.remaining <- time.Duration(1<<63 - 1)
+	} else {
+		c.remaining <- time.Until(deadline)
+	}
+	return nil, context.DeadlineExceeded
 }
 
 func (blockingClient) SaveMemcachedConnect(ctx context.Context, in *proto.MemcachedConnectRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
@@ -56,6 +73,11 @@ func (blockingClient) SaveComfyui(ctx context.Context, in *proto.LlmRequest, opt
 	return nil, ctx.Err()
 }
 
+func (blockingClient) GetCommandResponse(ctx context.Context, in *proto.CommandRequest, opts ...grpc.CallOption) (*proto.CommandResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 // TestAsynchronousSaveCallsAreTimeBounded ensures a stalled gRPC server cannot
 // retain fire-and-forget capture goroutines or their request buffers indefinitely.
 func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
@@ -94,5 +116,73 @@ func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 				t.Fatal("call did not return; persistence is not time-bounded")
 			}
 		})
+	}
+}
+
+func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+
+	const callers = 16
+	remaining := make(chan time.Duration, callers)
+	honeypotClient = deadlineInspectingClient{remaining: remaining}
+	var wg sync.WaitGroup
+	errorsSeen := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := GetCommandResponseWithin(&proto.CommandRequest{
+				CommandType: "ollama",
+				Command:     "GET /api/tags",
+			}, 25*time.Millisecond)
+			errorsSeen <- err
+		}()
+	}
+	wg.Wait()
+	close(errorsSeen)
+
+	for err := range errorsSeen {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("lookup error = %v, want context deadline exceeded", err)
+		}
+	}
+	close(remaining)
+	for duration := range remaining {
+		if duration > 100*time.Millisecond {
+			t.Fatalf("context deadline remaining = %v, want the requested 25ms bound", duration)
+		}
+	}
+}
+
+func TestGetCommandResponseWithinCancelsStalledRPC(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = blockingClient{}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := GetCommandResponseWithin(&proto.CommandRequest{}, 25*time.Millisecond)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("lookup error = %v, want context deadline exceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stalled lookup ignored its short context deadline")
+	}
+}
+
+func TestGetCommandResponseWithinRejectsNonPositiveDeadline(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = blockingClient{}
+
+	for _, timeout := range []time.Duration{0, -time.Millisecond} {
+		if _, err := GetCommandResponseWithin(&proto.CommandRequest{}, timeout); err == nil {
+			t.Fatalf("timeout %v: expected validation error", timeout)
+		}
 	}
 }

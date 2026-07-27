@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/joshrendek/threat.gg-agent/proto"
 )
 
 // Model is one entry in an OpenAI /v1/models listing.
@@ -47,6 +49,9 @@ const (
 	ReplyKindLiteralEcho       ReplyKind = "literal_echo"
 	ReplyKindValidationFact    ReplyKind = "validation_fact"
 	ReplyKindGenericSafe       ReplyKind = "generic_safe"
+	ReplyKindCodeValidation    ReplyKind = "code_validation"
+	ReplyKindConstrainedProse  ReplyKind = "constrained_prose"
+	ReplyKindArithmeticNonce   ReplyKind = "arithmetic_nonce"
 )
 
 // ReplyResult carries the safe response and its bounded classification.
@@ -72,6 +77,18 @@ var (
 	arithRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s*([-+*/xX])\s*(\d{1,6})\s*=?\s*\??\s*$`)
 	// wordArithRe covers natural-language probes seen in production, such as "2 plus 2".
 	wordArithRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s+(plus|minus|times|multiplied\s+by|divided\s+by)\s+(\d{1,6})\s*=?\s*\??\s*$`)
+	// arithNonceRe covers validators that require both a computed value and a bounded nonce.
+	// The nonce grammar intentionally matches cleanLiteralEcho's safe literal subset.
+	arithNonceRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s*([-+*/xX])\s*(\d{1,6})\s*\?\s*(?:answer|respond)\s+with\s+just\s+the\s+number,?\s+then\s+(?:write|output)\s+([[:alnum:]_.-]{1,24})[.!]?\s*$`)
+)
+
+const (
+	// reverseStringCode and isPrimeCode are fixed code-only answers for the two
+	// observed function validators; they are executed by regression tests.
+	reverseStringCode = "def reverse_string(text):\n    return text[::-1]"
+	isPrimeCode       = "def is_prime(n):\n    if n < 2:\n        return False\n    if n % 2 == 0:\n        return n == 2\n    divisor = 3\n    while divisor * divisor <= n:\n        if n % divisor == 0:\n            return False\n        divisor += 2\n    return True"
+	// lighthouseProse is intentionally exactly 100 whitespace-delimited words.
+	lighthouseProse = "Each dawn, Mara climbed the lighthouse stairs before the gulls began calling. One stormy morning, a green bottle knocked against the rocks below. Inside, she found a faded message: Keep the lamp dark tonight. Mara read it twice, then watched an unfamiliar ship waiting beyond the reef. At sunset, she covered the lens and held her breath. The ship slipped safely past hidden mines revealed by the falling tide. By midnight, another bottle arrived. Its message contained only three words: Thank you, sister. Mara smiled, relit the lamp, and finally understood why her lost brother had never returned safely home."
 )
 
 // ReplyFor returns a bounded, deterministic response tuned to the liveness and validation
@@ -110,11 +127,25 @@ func ReplyFor(prompt, model string) ReplyResult {
 			Kind: ReplyKindModelIntroZH,
 		}
 	}
-	if strings.Contains(normalized, "introduce yourself") ||
-		normalized == "who are you" {
+	if code, ok := observedCodeValidation(normalized); ok {
+		return ReplyResult{Text: code, Kind: ReplyKindCodeValidation}
+	}
+	if strings.Contains(normalized, "exactly 100 words") &&
+		strings.Contains(normalized, "lighthouse keeper") &&
+		strings.Contains(normalized, "message in a bottle") {
+		return ReplyResult{Text: lighthouseProse, Kind: ReplyKindConstrainedProse}
+	}
+	if asksForEnglishIntroduction(normalized) {
 		return ReplyResult{
 			Text: fmt.Sprintf("I'm %s, an AI model that can help with questions, writing, summarization, and coding.", displayModel(model)),
 			Kind: ReplyKindModelIntroEN,
+		}
+	}
+	if m := arithNonceRe.FindStringSubmatch(p); m != nil {
+		if s, ok := computeArith(m[1], m[2], m[3]); ok {
+			if nonce := cleanLiteralEcho(m[4]); nonce != "" {
+				return ReplyResult{Text: s + " " + nonce, Kind: ReplyKindArithmeticNonce}
+			}
 		}
 	}
 	if m := arithRe.FindStringSubmatch(p); m != nil {
@@ -158,6 +189,42 @@ func smartReply(prompt string) string { return ReplyFor(prompt, "").Text }
 
 func genericReply(prompt, model string) ReplyResult {
 	return ReplyResult{Text: pickReplyFor(prompt, model), Kind: ReplyKindGenericSafe}
+}
+
+func observedCodeValidation(normalized string) (string, bool) {
+	if !strings.Contains(normalized, "python function") {
+		return "", false
+	}
+	if strings.Contains(normalized, "reverse_string") &&
+		strings.Contains(normalized, "reversed string") {
+		return reverseStringCode, true
+	}
+	if strings.Contains(normalized, "is_prime") &&
+		strings.Contains(normalized, "returns true") &&
+		strings.Contains(normalized, "prime") {
+		return isPrimeCode, true
+	}
+	return "", false
+}
+
+func asksForEnglishIntroduction(normalized string) bool {
+	if normalized == "who are you" {
+		return true
+	}
+	if !strings.Contains(normalized, "introduce yourself") {
+		return false
+	}
+	for _, negated := range []string{
+		"do not introduce yourself",
+		"don't introduce yourself",
+		"dont introduce yourself",
+		"without introducing yourself",
+	} {
+		if strings.Contains(normalized, negated) {
+			return false
+		}
+	}
+	return true
 }
 
 func displayModel(model string) string {
@@ -571,6 +638,14 @@ type ollamaGenerateFinal struct {
 	EvalDuration       int64  `json:"eval_duration"`
 }
 
+type ollamaGenerateLifecycle struct {
+	Model      string `json:"model"`
+	CreatedAt  string `json:"created_at"`
+	Response   string `json:"response"`
+	Done       bool   `json:"done"`
+	DoneReason string `json:"done_reason"`
+}
+
 type ollamaChatChunk struct {
 	Model     string      `json:"model"`
 	CreatedAt string      `json:"created_at"`
@@ -633,8 +708,26 @@ func ndjsonWriter(w http.ResponseWriter) func(any) {
 // collapses to a single object.
 func OllamaGenerate(w http.ResponseWriter, r *http.Request, p Profile) {
 	body := readBody(r)
+	if len(strings.TrimSpace(string(body))) == 0 {
+		WriteOllamaError(w, p, http.StatusBadRequest, "missing request body")
+		return
+	}
 	if msg, ok := ValidJSONBody(body); !ok {
 		WriteOllamaError(w, p, http.StatusBadRequest, msg)
+		return
+	}
+	// Use Ollama's upstream request type name so encoding/json produces the same
+	// type-error text for object, number, array, and boolean prompt values.
+	type GenerateRequest struct {
+		Prompt string `json:"prompt"`
+	}
+	var generateRequest GenerateRequest
+	if err := json.Unmarshal(body, &generateRequest); err != nil {
+		WriteOllamaError(w, p, http.StatusBadRequest, err.Error())
+		return
+	}
+	if ParseModel(body) == "" {
+		WriteModelNotFoundAPI(w, p, "")
 		return
 	}
 	model, known := p.resolveModel(r, body)
@@ -642,7 +735,20 @@ func OllamaGenerate(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteModelNotFoundAPI(w, p, model)
 		return
 	}
-	prompt := promptText(body)
+	prompt := generateRequest.Prompt
+	if prompt == "" {
+		keepAlive := keepAliveOf(body)
+		models.touch(model, keepAlive)
+		reason := "load"
+		if keepAlive == 0 {
+			reason = "unload"
+		}
+		MarkReplyKind(r, proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_LIFECYCLE)
+		WriteJSONCT(w, http.StatusOK, p.ct(), ollamaGenerateLifecycle{
+			Model: model, CreatedAt: nowNano(), Response: "", Done: true, DoneReason: reason,
+		})
+		return
+	}
 	reply, chunks, finish := capReply(classifiedReply(r, prompt, model).Text, maxTokensOf(body))
 	pt := promptTokensFor(prompt)
 	t := newTimings(model, keepAliveOf(body), pt, len(chunks))

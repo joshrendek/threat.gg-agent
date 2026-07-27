@@ -46,15 +46,19 @@ type loadState struct {
 var models = &loadState{residing: map[string]time.Time{}}
 
 // touch marks model resident for d and reports whether it was already resident beforehand.
-// A d of zero unloads immediately, mirroring "keep_alive": 0.
+// Zero unloads immediately; a negative duration keeps the model resident indefinitely.
 func (s *loadState) touch(model string, d time.Duration) (wasWarm bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
 	deadline, ok := s.residing[model]
 	wasWarm = ok && now.Before(deadline)
-	if d <= 0 {
+	if d == 0 {
 		delete(s.residing, model)
+		return wasWarm
+	}
+	if d < 0 {
+		s.residing[model] = time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC)
 		return wasWarm
 	}
 	s.residing[model] = now.Add(d)
