@@ -303,6 +303,7 @@ type llmOverrideLookup struct {
 	done    chan struct{}
 	body    string
 	matched bool
+	waiters int
 }
 
 func (c *llmOverrideCache) lookup(key string, lookup func() llmOverrideResult) (string, bool) {
@@ -316,6 +317,7 @@ func (c *llmOverrideCache) lookup(key string, lookup func() llmOverrideResult) (
 		delete(c.entries, key)
 	}
 	if call, ok := c.inFlight[key]; ok {
+		call.waiters++
 		c.mu.Unlock()
 		<-call.done
 		return call.body, call.matched

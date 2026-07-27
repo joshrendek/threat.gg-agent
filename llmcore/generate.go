@@ -716,6 +716,16 @@ func OllamaGenerate(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteOllamaError(w, p, http.StatusBadRequest, msg)
 		return
 	}
+	// Use Ollama's upstream request type name so encoding/json produces the same
+	// type-error text for object, number, array, and boolean prompt values.
+	type GenerateRequest struct {
+		Prompt string `json:"prompt"`
+	}
+	var generateRequest GenerateRequest
+	if err := json.Unmarshal(body, &generateRequest); err != nil {
+		WriteOllamaError(w, p, http.StatusBadRequest, err.Error())
+		return
+	}
 	if ParseModel(body) == "" {
 		WriteModelNotFoundAPI(w, p, "")
 		return
@@ -725,7 +735,7 @@ func OllamaGenerate(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteModelNotFoundAPI(w, p, model)
 		return
 	}
-	prompt := promptText(body)
+	prompt := generateRequest.Prompt
 	if prompt == "" {
 		keepAlive := keepAliveOf(body)
 		models.touch(model, keepAlive)

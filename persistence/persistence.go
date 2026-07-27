@@ -373,6 +373,7 @@ func SaveMemcachedCommand(in *proto.MemcachedCommandRequest) error {
 	return err
 }
 
+// GetCommandResponse performs the default three-second interactive-command lookup.
 func GetCommandResponse(in *proto.CommandRequest) (*proto.CommandResponse, error) {
 	return GetCommandResponseWithin(in, 3*time.Second)
 }

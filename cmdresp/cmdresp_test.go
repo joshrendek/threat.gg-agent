@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -329,27 +330,51 @@ func TestLLMMuxMiddlewarePreservesFastOverridesAndFailsOpenConcurrently(t *testi
 
 	t.Run("concurrent stalled lookups", func(t *testing.T) {
 		var calls atomic.Int32
-		stubWithin(t, func(_ *proto.CommandRequest, timeout time.Duration) (*proto.CommandResponse, error) {
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		lookup := func() llmOverrideResult {
 			calls.Add(1)
-			<-time.After(timeout)
-			return nil, context.DeadlineExceeded
-		})
+			close(entered)
+			<-release
+			return llmOverrideResult{cacheable: true}
+		}
+		cache := &llmOverrideCache{
+			ttl:      time.Minute,
+			now:      time.Now,
+			entries:  make(map[string]llmOverrideCacheEntry),
+			inFlight: make(map[string]*llmOverrideLookup),
+		}
+		const key = "GET /api/tags"
 		const callers = 16
 		var wg sync.WaitGroup
-		handler := LLMMuxMiddleware("ollama")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusNoContent)
-		}))
-		for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cache.lookup(key, lookup)
+		}()
+		<-entered
+		for i := 1; i < callers; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				recorder := httptest.NewRecorder()
-				handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
-				if recorder.Code != http.StatusNoContent {
-					t.Errorf("fallback status = %d, want 204", recorder.Code)
-				}
+				cache.lookup(key, lookup)
 			}()
 		}
+
+		joinDeadline := time.Now().Add(2 * time.Second)
+		for {
+			cache.mu.Lock()
+			joined := cache.inFlight[key].waiters
+			cache.mu.Unlock()
+			if joined == callers-1 {
+				break
+			}
+			if time.Now().After(joinDeadline) {
+				t.Fatalf("coalesced waiters = %d, want %d", joined, callers-1)
+			}
+			runtime.Gosched()
+		}
+		close(release)
 		wg.Wait()
 		if got := calls.Load(); got != 1 {
 			t.Fatalf("control-plane lookups = %d, want one coalesced lookup", got)

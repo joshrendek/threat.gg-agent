@@ -228,3 +228,30 @@ func TestOllamaGenerateLifecycleRequiresModel(t *testing.T) {
 		}
 	}
 }
+
+func TestOllamaGenerateRejectsNonStringPrompts(t *testing.T) {
+	tests := []struct {
+		prompt, value string
+	}{
+		{prompt: `{}`, value: "object"},
+		{prompt: `123`, value: "number"},
+		{prompt: `["hi"]`, value: "array"},
+		{prompt: `true`, value: "bool"},
+	}
+	for _, test := range tests {
+		t.Run(test.value, func(t *testing.T) {
+			body := `{"model":"qwen2.5-coder:7b","prompt":` + test.prompt + `}`
+			req := httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(body))
+			rec := httptest.NewRecorder()
+			OllamaGenerate(rec, req, Profile{DefaultModel: "llama3.2:latest"})
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			want := `{"error":"json: cannot unmarshal ` + test.value +
+				` into Go struct field GenerateRequest.prompt of type string"}`
+			if got := rec.Body.String(); got != want {
+				t.Fatalf("body = %q, want %q", got, want)
+			}
+		})
+	}
+}
