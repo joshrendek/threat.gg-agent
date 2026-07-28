@@ -1,6 +1,7 @@
 package vllm
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -89,7 +90,7 @@ func TestObservedSeedValidators(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 			buildHandler().ServeHTTP(rec, req)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
