@@ -59,6 +59,7 @@ func TestChatCompletionRouteIsDynamic(t *testing.T) {
 	}
 }
 
+// TestObservedSeedValidators covers the exact vLLM gates captured in production.
 func TestObservedSeedValidators(t *testing.T) {
 	tests := []struct {
 		name   string

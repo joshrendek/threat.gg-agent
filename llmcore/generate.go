@@ -70,8 +70,8 @@ func pickReplyFor(prompt, model string) string {
 
 var (
 	// echoRe matches the liveness/echo probes scanners use to confirm an endpoint really runs
-	// a model before abusing it. Its captured value is separately constrained to a short,
-	// literal token so instruction tails and attacker-controlled prose are never reflected.
+	// a model before abusing it, including "Reply with exactly: value". Its captured value is
+	// separately constrained to a short literal so instruction tails and prose are never reflected.
 	echoRe = regexp.MustCompile(`(?i)^\s*(?:say|repeat(?:\s+after\s+me)?|reply(?:\s+with)?|respond(?:\s+with)?|output|print|echo)\b[:,\s]+(?:exactly\s*:\s*)?(.+)$`)
 	// arithRe matches trivial arithmetic liveness checks: "what is 2+2", "10 * 3".
 	arithRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s*([-+*/xX])\s*(\d{1,6})\s*=?\s*\??\s*$`)
@@ -84,7 +84,7 @@ var (
 
 const (
 	// These fixed code-only answers cover the observed function and one-liner
-	// validators; all four are executed by regression tests.
+	// validators; each code response is executed by regression tests.
 	reverseStringCode = "def reverse_string(text):\n    return text[::-1]"
 	isPrimeCode       = "def is_prime(n):\n    if n < 2:\n        return False\n    if n % 2 == 0:\n        return n == 2\n    divisor = 3\n    while divisor * divisor <= n:\n        if n % divisor == 0:\n            return False\n        divisor += 2\n    return True"
 	// fizzBuzzCode is the fixed executable answer for the observed 1-to-20 validator.
