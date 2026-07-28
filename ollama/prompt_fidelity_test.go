@@ -27,6 +27,16 @@ const (
 	arithmeticNoncePrompt   = "What is 17*23? Answer with just the number, then write PINEAPPLE77."
 	isPrimePrompt           = "Write a Python function named is_prime(n) that returns True if n is prime, else False. Respond with only the code."
 	oneWordGreetingPrompt   = "Say hi in one word"
+	// These prompts are exact seed validators captured in production on 2026-07-28.
+	fizzBuzzPrompt        = "Write a Python function called fizzbuzz that prints numbers 1 to 20. For multiples of 3 print Fizz, multiples of 5 print Buzz, both print FizzBuzz. Give only the code, no explanation."
+	dictSortPrompt        = "Write a Python one-liner to sort a dictionary by its values in descending order. Give only the code."
+	oceanPoemPrompt       = "Write a 4-line poem about the ocean. Rhyming. No introduction."
+	rainProsePrompt       = "Write exactly 50 words of prose about someone walking home in the rain. No introduction, just the prose."
+	chineseGreetingPrompt = "你好"
+	// Expected responses pin complete integration output, not merely its outer constraints.
+	expectedFizzBuzzCode    = "def fizzbuzz():\n    for number in range(1, 21):\n        if number % 15 == 0:\n            print(\"FizzBuzz\")\n        elif number % 3 == 0:\n            print(\"Fizz\")\n        elif number % 5 == 0:\n            print(\"Buzz\")\n        else:\n            print(number)"
+	expectedLighthouseProse = "Each dawn, Mara climbed the lighthouse stairs before the gulls began calling. One stormy morning, a green bottle knocked against the rocks below. Inside, she found a faded message: Keep the lamp dark tonight. Mara read it twice, then watched an unfamiliar ship waiting beyond the reef. At sunset, she covered the lens and held her breath. The ship slipped safely past hidden mines revealed by the falling tide. By midnight, another bottle arrived. Its message contained only three words: Thank you, sister. Mara smiled, relit the lamp, and finally understood why her lost brother had never returned safely home."
+	expectedRainProse       = "Rain followed Maya along the empty streets as she walked home, soaking her coat and blurring every streetlight. She kept one hand over the letter in her pocket. At last, her porch appeared through the silver curtain, and she hurried toward its warm, waiting glow with relief and smiled softly."
 )
 
 func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
@@ -119,10 +129,14 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 				want   string
 			}{
 				{"reverse string", "/api/chat", reverseStringPrompt, "def reverse_string(text):\n    return text[::-1]"},
-				{"lighthouse prose", "/api/chat", lighthousePrompt, ""},
+				{"lighthouse prose", "/api/chat", lighthousePrompt, expectedLighthouseProse},
 				{"arithmetic nonce", "/api/chat", arithmeticNoncePrompt, "391 PINEAPPLE77"},
 				{"prime function", "/api/generate", isPrimePrompt, "def is_prime(n):"},
 				{"one-word greeting", "/api/chat", oneWordGreetingPrompt, "Hi"},
+				{"FizzBuzz function", "/api/chat", fizzBuzzPrompt, expectedFizzBuzzCode},
+				{"dictionary sort", "/api/chat", dictSortPrompt, "dict(sorted(my_dict.items(), key=lambda item: item[1], reverse=True))"},
+				{"ocean poem", "/api/chat", oceanPoemPrompt, "Moonlit waves roll softly to the shore,\nThey turn beneath the stars and rise once more.\nThe salt wind sings across the silver sea,\nThe distant tides roll homeward, wild and free."},
+				{"rain prose", "/api/chat", rainProsePrompt, expectedRainProse},
 			} {
 				detailed := detailed
 				t.Run("detailed "+detailed.name, func(t *testing.T) {
@@ -149,21 +163,72 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 						text = response.Message.Content
 					}
 					if detailed.name == "lighthouse prose" {
+						if text != detailed.want {
+							t.Fatalf("lighthouse response = %q, want %q", text, detailed.want)
+						}
 						if words := len(strings.Fields(text)); words != 100 {
 							t.Fatalf("lighthouse response has %d words, want 100: %q", words, text)
 						}
 						if strings.Contains(text, "I'm "+model) {
 							t.Fatalf("negated introduction misclassified: %q", text)
 						}
+					} else if detailed.name == "rain prose" {
+						if text != detailed.want {
+							t.Fatalf("rain response = %q, want %q", text, detailed.want)
+						}
+						if words := len(strings.Fields(text)); words != 50 {
+							t.Fatalf("rain response has %d words, want 50: %q", words, text)
+						}
+						if strings.Contains(text, "I'm "+model) {
+							t.Fatalf("no-introduction prose misclassified: %q", text)
+						}
 					} else if detailed.name == "prime function" {
 						if !strings.HasPrefix(text, detailed.want) || !strings.Contains(text, "return True") {
 							t.Fatalf("prime response = %q", text)
+						}
+					} else if detailed.name == "FizzBuzz function" {
+						if text != detailed.want {
+							t.Fatalf("FizzBuzz response = %q, want %q", text, detailed.want)
 						}
 					} else if text != detailed.want {
 						t.Fatalf("response = %q, want %q", text, detailed.want)
 					}
 				})
 			}
+
+			t.Run("rain prose chat stream", func(t *testing.T) {
+				rec := do(t, http.MethodPost, "/api/chat", fmt.Sprintf(
+					`{"model":%q,"messages":[{"role":"user","content":%q}],"stream":true,"options":{"num_predict":300}}`,
+					model, rainProsePrompt))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+				}
+				var text strings.Builder
+				var finalDone bool
+				for _, line := range strings.Split(strings.TrimSpace(rec.Body.String()), "\n") {
+					var chunk struct {
+						Message struct {
+							Content string `json:"content"`
+						} `json:"message"`
+						Done bool `json:"done"`
+					}
+					if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+						t.Fatalf("invalid chat NDJSON %q: %v", line, err)
+					}
+					text.WriteString(chunk.Message.Content)
+					finalDone = chunk.Done
+				}
+				responseText := text.String()
+				if responseText != expectedRainProse {
+					t.Fatalf("rain response = %q, want %q", responseText, expectedRainProse)
+				}
+				if words := len(strings.Fields(responseText)); words != 50 {
+					t.Fatalf("rain response has %d words, want 50: %q", words, responseText)
+				}
+				if !finalDone {
+					t.Error("chat stream terminal object has done:false")
+				}
+			})
 
 			t.Run("one-word greeting generate stream", func(t *testing.T) {
 				rec := do(t, http.MethodPost, "/api/generate", fmt.Sprintf(
@@ -240,6 +305,26 @@ func TestObservedPromptsAcrossOpenAICompatibleSurfaces(t *testing.T) {
 					t.Fatalf("choices = %d, want 1", len(response.Choices))
 				}
 				assertEnglishIntroduction(t, response.Choices[0].Message.Content, model)
+			})
+
+			t.Run("Chinese greeting seed", func(t *testing.T) {
+				rec := do(t, http.MethodPost, "/v1/chat/completions", fmt.Sprintf(
+					`{"model":%q,"messages":[{"role":"user","content":%q}],"stream":false,"max_tokens":32}`,
+					model, chineseGreetingPrompt))
+				var response struct {
+					Choices []struct {
+						Message struct {
+							Content string `json:"content"`
+						} `json:"message"`
+					} `json:"choices"`
+				}
+				mustDecodeJSON(t, rec.Code, rec.Body.Bytes(), &response)
+				if len(response.Choices) != 1 {
+					t.Fatalf("choices = %d, want 1", len(response.Choices))
+				}
+				if got := response.Choices[0].Message.Content; got != "你好！有什么我可以帮助你的吗？" {
+					t.Fatalf("response = %q, want a natural Chinese greeting", got)
+				}
 			})
 
 			t.Run("legacy completion", func(t *testing.T) {
