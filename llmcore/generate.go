@@ -91,6 +91,9 @@ const (
 	fizzBuzzCode = "def fizzbuzz():\n    for number in range(1, 21):\n        if number % 15 == 0:\n            print(\"FizzBuzz\")\n        elif number % 3 == 0:\n            print(\"Fizz\")\n        elif number % 5 == 0:\n            print(\"Buzz\")\n        else:\n            print(number)"
 	// dictSortCode is the fixed one-line expression for the observed descending-value sort.
 	dictSortCode = "dict(sorted(my_dict.items(), key=lambda item: item[1], reverse=True))"
+)
+
+const (
 	// lighthouseProse is intentionally exactly 100 whitespace-delimited words.
 	lighthouseProse = "Each dawn, Mara climbed the lighthouse stairs before the gulls began calling. One stormy morning, a green bottle knocked against the rocks below. Inside, she found a faded message: Keep the lamp dark tonight. Mara read it twice, then watched an unfamiliar ship waiting beyond the reef. At sunset, she covered the lens and held her breath. The ship slipped safely past hidden mines revealed by the falling tide. By midnight, another bottle arrived. Its message contained only three words: Thank you, sister. Mara smiled, relit the lamp, and finally understood why her lost brother had never returned safely home."
 	// rainProse's exact 50-word constraint is enforced with strings.Fields in regression tests.
@@ -281,7 +284,7 @@ func cleanLiteralEcho(s string) string {
 	lower := strings.ToLower(s)
 	for _, blocked := range []string{
 		"system prompt", "instruction", "password", "secret", "api key", "token",
-		"select ", "drop ", "delete ", "insert ", "update ",
+		"select ", "drop ", "delete ", "insert ", "update ", " then ",
 	} {
 		if strings.Contains(lower, blocked) {
 			return ""
@@ -316,6 +319,9 @@ func computeArith(a, op, b string) (string, bool) {
 	case "/", "divided by":
 		if y == 0 {
 			return "", false
+		}
+		if x%y != 0 {
+			return strconv.FormatFloat(float64(x)/float64(y), 'f', -1, 64), true
 		}
 		r = x / y
 	default:

@@ -203,7 +203,7 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 				if rec.Code != http.StatusOK {
 					t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 				}
-				var text string
+				var text strings.Builder
 				var finalDone bool
 				for _, line := range strings.Split(strings.TrimSpace(rec.Body.String()), "\n") {
 					var chunk struct {
@@ -215,14 +215,15 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 					if err := json.Unmarshal([]byte(line), &chunk); err != nil {
 						t.Fatalf("invalid chat NDJSON %q: %v", line, err)
 					}
-					text += chunk.Message.Content
+					text.WriteString(chunk.Message.Content)
 					finalDone = chunk.Done
 				}
-				if text != expectedRainProse {
-					t.Fatalf("rain response = %q, want %q", text, expectedRainProse)
+				responseText := text.String()
+				if responseText != expectedRainProse {
+					t.Fatalf("rain response = %q, want %q", responseText, expectedRainProse)
 				}
-				if words := len(strings.Fields(text)); words != 50 {
-					t.Fatalf("rain response has %d words, want 50: %q", words, text)
+				if words := len(strings.Fields(responseText)); words != 50 {
+					t.Fatalf("rain response has %d words, want 50: %q", words, responseText)
 				}
 				if !finalDone {
 					t.Error("chat stream terminal object has done:false")

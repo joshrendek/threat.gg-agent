@@ -25,6 +25,7 @@ func TestSmartReply(t *testing.T) {
 		{"what is 10 * 3", "30"},
 		{"what's 9-4", "5"},
 		{"what is 8 / 2", "4"},
+		{"what is 5 / 2", "2.5"},
 		{"Calculate 17 multiplied by 23. Return only the number.", "391"},
 	}
 	for _, tc := range cases {
@@ -155,6 +156,7 @@ func TestReplyForValidationProbes(t *testing.T) {
 		{"Calculate 9 minus 4. Return only the number.", "5", ReplyKindArithmetic},
 		{"Calculate 7 times 6. Return only the number.", "42", ReplyKindArithmetic},
 		{"Calculate 8 divided by 2. Return only the number.", "4", ReplyKindArithmetic},
+		{"Calculate 5 divided by 2. Return only the number.", "2.5", ReplyKindArithmetic},
 		{"Reply with exactly: hello world", "hello world", ReplyKindLiteralEcho},
 		{"你好", "你好！有什么我可以帮助你的吗？", ReplyKindValidationFact},
 		{"Say hi in one word", "Hi", ReplyKindValidationFact},
@@ -342,6 +344,7 @@ func TestReplyForRestrictsEchoAndDeterministicallyDeflectsHostilePrompts(t *test
 		"say abcdefghijklmnopqrstuvwxy",
 		"say one two three four",
 		"Reply with exactly: one two three four",
+		"Reply with exactly: OK then explain",
 		"say payload;",
 	} {
 		got := ReplyFor(prompt, "mistral:latest")
