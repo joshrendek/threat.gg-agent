@@ -27,11 +27,14 @@ const (
 	arithmeticNoncePrompt   = "What is 17*23? Answer with just the number, then write PINEAPPLE77."
 	isPrimePrompt           = "Write a Python function named is_prime(n) that returns True if n is prime, else False. Respond with only the code."
 	oneWordGreetingPrompt   = "Say hi in one word"
-	fizzBuzzPrompt          = "Write a Python function called fizzbuzz that prints numbers 1 to 20. For multiples of 3 print Fizz, multiples of 5 print Buzz, both print FizzBuzz. Give only the code, no explanation."
-	dictSortPrompt          = "Write a Python one-liner to sort a dictionary by its values in descending order. Give only the code."
-	oceanPoemPrompt         = "Write a 4-line poem about the ocean. Rhyming. No introduction."
-	rainProsePrompt         = "Write exactly 50 words of prose about someone walking home in the rain. No introduction, just the prose."
-	chineseGreetingPrompt   = "你好"
+	// These prompts are exact seed validators captured in production on 2026-07-28.
+	fizzBuzzPrompt        = "Write a Python function called fizzbuzz that prints numbers 1 to 20. For multiples of 3 print Fizz, multiples of 5 print Buzz, both print FizzBuzz. Give only the code, no explanation."
+	dictSortPrompt        = "Write a Python one-liner to sort a dictionary by its values in descending order. Give only the code."
+	oceanPoemPrompt       = "Write a 4-line poem about the ocean. Rhyming. No introduction."
+	rainProsePrompt       = "Write exactly 50 words of prose about someone walking home in the rain. No introduction, just the prose."
+	chineseGreetingPrompt = "你好"
+	// Expected responses pin complete integration output, not merely its outer constraints.
+	expectedFizzBuzzCode    = "def fizzbuzz():\n    for number in range(1, 21):\n        if number % 15 == 0:\n            print(\"FizzBuzz\")\n        elif number % 3 == 0:\n            print(\"Fizz\")\n        elif number % 5 == 0:\n            print(\"Buzz\")\n        else:\n            print(number)"
 	expectedLighthouseProse = "Each dawn, Mara climbed the lighthouse stairs before the gulls began calling. One stormy morning, a green bottle knocked against the rocks below. Inside, she found a faded message: Keep the lamp dark tonight. Mara read it twice, then watched an unfamiliar ship waiting beyond the reef. At sunset, she covered the lens and held her breath. The ship slipped safely past hidden mines revealed by the falling tide. By midnight, another bottle arrived. Its message contained only three words: Thank you, sister. Mara smiled, relit the lamp, and finally understood why her lost brother had never returned safely home."
 	expectedRainProse       = "Rain followed Maya along the empty streets as she walked home, soaking her coat and blurring every streetlight. She kept one hand over the letter in her pocket. At last, her porch appeared through the silver curtain, and she hurried toward its warm, waiting glow with relief and smiled softly."
 )
@@ -130,7 +133,7 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 				{"arithmetic nonce", "/api/chat", arithmeticNoncePrompt, "391 PINEAPPLE77"},
 				{"prime function", "/api/generate", isPrimePrompt, "def is_prime(n):"},
 				{"one-word greeting", "/api/chat", oneWordGreetingPrompt, "Hi"},
-				{"FizzBuzz function", "/api/chat", fizzBuzzPrompt, "def fizzbuzz():"},
+				{"FizzBuzz function", "/api/chat", fizzBuzzPrompt, expectedFizzBuzzCode},
 				{"dictionary sort", "/api/chat", dictSortPrompt, "dict(sorted(my_dict.items(), key=lambda item: item[1], reverse=True))"},
 				{"ocean poem", "/api/chat", oceanPoemPrompt, "Moonlit waves roll softly to the shore,\nThey turn beneath the stars and rise once more.\nThe salt wind sings across the silver sea,\nThe distant tides roll homeward, wild and free."},
 				{"rain prose", "/api/chat", rainProsePrompt, expectedRainProse},
@@ -184,9 +187,8 @@ func TestObservedPromptsAcrossNativeSurfacesAndAdvertisedModels(t *testing.T) {
 							t.Fatalf("prime response = %q", text)
 						}
 					} else if detailed.name == "FizzBuzz function" {
-						if !strings.HasPrefix(text, detailed.want) ||
-							!strings.Contains(text, `print("FizzBuzz")`) {
-							t.Fatalf("FizzBuzz response = %q", text)
+						if text != detailed.want {
+							t.Fatalf("FizzBuzz response = %q, want %q", text, detailed.want)
 						}
 					} else if text != detailed.want {
 						t.Fatalf("response = %q, want %q", text, detailed.want)
