@@ -58,6 +58,63 @@ func TestChatCompletionRouteIsDynamic(t *testing.T) {
 	}
 }
 
+func TestObservedSeedValidators(t *testing.T) {
+	tests := []struct {
+		name   string
+		model  string
+		prompt string
+		want   string
+	}{
+		{
+			name:   "exact hello-world echo",
+			model:  "qwen3.6:27b",
+			prompt: "Reply with exactly: hello world",
+			want:   "hello world",
+		},
+		{
+			name:   "natural-language multiplication",
+			model:  defaultModel,
+			prompt: "Calculate 17 multiplied by 23. Return only the number.",
+			want:   "391",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{
+				"model":      test.model,
+				"messages":   []map[string]string{{"role": "user", "content": test.prompt}},
+				"max_tokens": 50,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+			buildHandler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+			}
+			var response struct {
+				Model   string `json:"model"`
+				Choices []struct {
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+				} `json:"choices"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("invalid JSON: %v", err)
+			}
+			if response.Model != test.model {
+				t.Errorf("model = %q, want %q", response.Model, test.model)
+			}
+			if len(response.Choices) != 1 || response.Choices[0].Message.Content != test.want {
+				t.Fatalf("response = %s, want content %q", rec.Body.String(), test.want)
+			}
+		})
+	}
+}
+
 func TestHealthOK(t *testing.T) {
 	rec := httptest.NewRecorder()
 	buildHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))

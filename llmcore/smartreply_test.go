@@ -17,6 +17,7 @@ func TestSmartReply(t *testing.T) {
 		{"Say hi in one word", "Hi"},
 		{"reply with OK.", "OK"},
 		{"Reply with OK", "OK"},
+		{"Reply with exactly: hello world", "hello world"},
 		{"repeat after me: hello world", "hello world"},
 		{`say "ping"`, "ping"},
 		{"what is 2+2", "4"},
@@ -24,6 +25,7 @@ func TestSmartReply(t *testing.T) {
 		{"what is 10 * 3", "30"},
 		{"what's 9-4", "5"},
 		{"what is 8 / 2", "4"},
+		{"Calculate 17 multiplied by 23. Return only the number.", "391"},
 	}
 	for _, tc := range cases {
 		if got := smartReply(tc.prompt); got != tc.want {
@@ -149,6 +151,9 @@ func TestReplyForValidationProbes(t *testing.T) {
 	}{
 		{"What is 2 plus 2?", "4", ReplyKindArithmetic},
 		{"WHAT IS 2 PLUS 2?", "4", ReplyKindArithmetic},
+		{"Calculate 17 multiplied by 23. Return only the number.", "391", ReplyKindArithmetic},
+		{"Reply with exactly: hello world", "hello world", ReplyKindLiteralEcho},
+		{"你好", "你好！有什么我可以帮助你的吗？", ReplyKindValidationFact},
 		{"Say hi in one word", "Hi", ReplyKindValidationFact},
 		{"Name a fruit.", "Apple.", ReplyKindValidationFact},
 		{"Count to five.", "One, two, three, four, five.", ReplyKindValidationFact},
@@ -196,6 +201,30 @@ func TestReplyForObservedDetailedProductionPrompts(t *testing.T) {
 			text:   "391 PINEAPPLE77",
 			kind:   ReplyKindArithmeticNonce,
 		},
+		{
+			name:   "FizzBuzz code only",
+			prompt: "Write a Python function called fizzbuzz that prints numbers 1 to 20. For multiples of 3 print Fizz, multiples of 5 print Buzz, both print FizzBuzz. Give only the code, no explanation.",
+			text:   fizzBuzzCode,
+			kind:   ReplyKindCodeValidation,
+		},
+		{
+			name:   "dictionary sort one-liner",
+			prompt: "Write a Python one-liner to sort a dictionary by its values in descending order. Give only the code.",
+			text:   dictSortCode,
+			kind:   ReplyKindCodeValidation,
+		},
+		{
+			name:   "four-line rhyming ocean poem",
+			prompt: "Write a 4-line poem about the ocean. Rhyming. No introduction.",
+			text:   oceanPoem,
+			kind:   ReplyKindConstrainedProse,
+		},
+		{
+			name:   "exactly 50 words of rain prose",
+			prompt: "Write exactly 50 words of prose about someone walking home in the rain. No introduction, just the prose.",
+			text:   rainProse,
+			kind:   ReplyKindConstrainedProse,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -208,6 +237,18 @@ func TestReplyForObservedDetailedProductionPrompts(t *testing.T) {
 
 	if words := len(strings.Fields(lighthouseProse)); words != 100 {
 		t.Fatalf("lighthouse prose has %d words, want exactly 100", words)
+	}
+	if words := len(strings.Fields(rainProse)); words != 50 {
+		t.Fatalf("rain prose has %d words, want exactly 50", words)
+	}
+	poemLines := strings.Split(oceanPoem, "\n")
+	if len(poemLines) != 4 {
+		t.Fatalf("ocean poem has %d lines, want exactly 4", len(poemLines))
+	}
+	for line, ending := range []string{"shore,", "more.", "sea,", "free."} {
+		if !strings.HasSuffix(poemLines[line], ending) {
+			t.Errorf("ocean poem line %d = %q, want ending %q", line+1, poemLines[line], ending)
+		}
 	}
 	if got := ReplyFor("Explain the topic without introducing yourself.", "gemma3:12b"); got.Kind == ReplyKindModelIntroEN {
 		t.Fatalf("negated introduction was classified as positive: %#v", got)
@@ -238,6 +279,18 @@ func TestObservedPythonValidationRepliesExecute(t *testing.T) {
 			reply: isPrimeCode,
 			assertions: "\nassert not is_prime(-1)\nassert not is_prime(0)\n" +
 				"assert is_prime(2)\nassert is_prime(97)\nassert not is_prime(99)\n",
+		},
+		{
+			name:  "fizzbuzz",
+			reply: fizzBuzzCode,
+			assertions: "\nimport contextlib, io\n_output = io.StringIO()\n" +
+				"with contextlib.redirect_stdout(_output):\n    fizzbuzz()\n" +
+				"assert _output.getvalue().splitlines() == ['1', '2', 'Fizz', '4', 'Buzz', 'Fizz', '7', '8', 'Fizz', 'Buzz', '11', 'Fizz', '13', '14', 'FizzBuzz', '16', '17', 'Fizz', '19', 'Buzz']\n",
+		},
+		{
+			name:       "dictionary sort",
+			reply:      "my_dict = {'low': 1, 'high': 3, 'middle': 2}\nsorted_dict = " + dictSortCode,
+			assertions: "\nassert list(sorted_dict.items()) == [('high', 3), ('middle', 2), ('low', 1)]\n",
 		},
 	}
 	for _, test := range tests {
@@ -271,7 +324,7 @@ func TestReplyForRestrictsEchoAndDeterministicallyDeflectsHostilePrompts(t *test
 		}
 	}
 
-	for _, prompt := range []string{"Reply with OK.", "say pong", "repeat after me: probe-8f21"} {
+	for _, prompt := range []string{"Reply with OK.", "Reply with exactly: hello world", "say pong", "repeat after me: probe-8f21"} {
 		if got := ReplyFor(prompt, "mistral:latest"); got.Kind != ReplyKindLiteralEcho {
 			t.Errorf("ReplyFor(%q) kind = %q, want literal_echo", prompt, got.Kind)
 		}
@@ -282,6 +335,7 @@ func TestReplyForRestrictsEchoAndDeterministicallyDeflectsHostilePrompts(t *test
 		"say drop table",
 		"say abcdefghijklmnopqrstuvwxy",
 		"say one two three four",
+		"Reply with exactly: one two three four",
 		"say payload;",
 	} {
 		got := ReplyFor(prompt, "mistral:latest")

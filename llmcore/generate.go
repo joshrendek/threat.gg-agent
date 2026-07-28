@@ -72,11 +72,11 @@ var (
 	// echoRe matches the liveness/echo probes scanners use to confirm an endpoint really runs
 	// a model before abusing it. Its captured value is separately constrained to a short,
 	// literal token so instruction tails and attacker-controlled prose are never reflected.
-	echoRe = regexp.MustCompile(`(?i)^\s*(?:say|repeat(?:\s+after\s+me)?|reply(?:\s+with)?|respond(?:\s+with)?|output|print|echo)\b[:,\s]+(.+)$`)
+	echoRe = regexp.MustCompile(`(?i)^\s*(?:say|repeat(?:\s+after\s+me)?|reply(?:\s+with)?|respond(?:\s+with)?|output|print|echo)\b[:,\s]+(?:exactly\s*:\s*)?(.+)$`)
 	// arithRe matches trivial arithmetic liveness checks: "what is 2+2", "10 * 3".
 	arithRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s*([-+*/xX])\s*(\d{1,6})\s*=?\s*\??\s*$`)
 	// wordArithRe covers natural-language probes seen in production, such as "2 plus 2".
-	wordArithRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s+(plus|minus|times|multiplied\s+by|divided\s+by)\s+(\d{1,6})\s*=?\s*\??\s*$`)
+	wordArithRe = regexp.MustCompile(`(?i)^\s*(?:(?:what(?:'s| is)\s+)|calculate\s+)?(\d{1,6})\s+(plus|minus|times|multiplied\s+by|divided\s+by)\s+(\d{1,6})\s*=?\s*[?.]?\s*(?:return\s+only\s+the\s+number\.?)?\s*$`)
 	// arithNonceRe covers validators that require both a computed value and a bounded nonce.
 	// The nonce grammar intentionally matches cleanLiteralEcho's safe literal subset.
 	arithNonceRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s*([-+*/xX])\s*(\d{1,6})\s*\?\s*(?:answer|respond)\s+with\s+just\s+the\s+number,?\s+then\s+(?:write|output)\s+([[:alnum:]_.-]{1,24})[.!]?\s*$`)
@@ -87,8 +87,14 @@ const (
 	// observed function validators; they are executed by regression tests.
 	reverseStringCode = "def reverse_string(text):\n    return text[::-1]"
 	isPrimeCode       = "def is_prime(n):\n    if n < 2:\n        return False\n    if n % 2 == 0:\n        return n == 2\n    divisor = 3\n    while divisor * divisor <= n:\n        if n % divisor == 0:\n            return False\n        divisor += 2\n    return True"
+	fizzBuzzCode      = "def fizzbuzz():\n    for number in range(1, 21):\n        if number % 15 == 0:\n            print(\"FizzBuzz\")\n        elif number % 3 == 0:\n            print(\"Fizz\")\n        elif number % 5 == 0:\n            print(\"Buzz\")\n        else:\n            print(number)"
+	dictSortCode      = "dict(sorted(my_dict.items(), key=lambda item: item[1], reverse=True))"
 	// lighthouseProse is intentionally exactly 100 whitespace-delimited words.
 	lighthouseProse = "Each dawn, Mara climbed the lighthouse stairs before the gulls began calling. One stormy morning, a green bottle knocked against the rocks below. Inside, she found a faded message: Keep the lamp dark tonight. Mara read it twice, then watched an unfamiliar ship waiting beyond the reef. At sunset, she covered the lens and held her breath. The ship slipped safely past hidden mines revealed by the falling tide. By midnight, another bottle arrived. Its message contained only three words: Thank you, sister. Mara smiled, relit the lamp, and finally understood why her lost brother had never returned safely home."
+	// rainProse is intentionally exactly 50 whitespace-delimited words.
+	rainProse = "Rain followed Maya along the empty streets as she walked home, soaking her coat and blurring every streetlight. She kept one hand over the letter in her pocket. At last, her porch appeared through the silver curtain, and she hurried toward its warm, waiting glow with relief and smiled softly."
+	// oceanPoem is intentionally four newline-delimited rhyming lines.
+	oceanPoem = "Moonlit waves roll softly to the shore,\nThey turn beneath the stars and rise once more.\nThe salt wind sings across the silver sea,\nThe distant tides roll homeward, wild and free."
 )
 
 // ReplyFor returns a bounded, deterministic response tuned to the liveness and validation
@@ -135,6 +141,16 @@ func ReplyFor(prompt, model string) ReplyResult {
 		strings.Contains(normalized, "message in a bottle") {
 		return ReplyResult{Text: lighthouseProse, Kind: ReplyKindConstrainedProse}
 	}
+	if strings.Contains(normalized, "exactly 50 words") &&
+		strings.Contains(normalized, "walking home") &&
+		strings.Contains(normalized, "rain") {
+		return ReplyResult{Text: rainProse, Kind: ReplyKindConstrainedProse}
+	}
+	if strings.Contains(normalized, "4-line poem") &&
+		strings.Contains(normalized, "ocean") &&
+		strings.Contains(normalized, "rhyming") {
+		return ReplyResult{Text: oceanPoem, Kind: ReplyKindConstrainedProse}
+	}
 	if asksForEnglishIntroduction(normalized) {
 		return ReplyResult{
 			Text: fmt.Sprintf("I'm %s, an AI model that can help with questions, writing, summarization, and coding.", displayModel(model)),
@@ -160,6 +176,8 @@ func ReplyFor(prompt, model string) ReplyResult {
 	}
 
 	switch normalized {
+	case "你好":
+		return ReplyResult{Text: "你好！有什么我可以帮助你的吗？", Kind: ReplyKindValidationFact}
 	case "say hi in one word":
 		return ReplyResult{Text: "Hi", Kind: ReplyKindValidationFact}
 	case "name a fruit", "give me a fruit":
@@ -194,17 +212,28 @@ func genericReply(prompt, model string) ReplyResult {
 }
 
 func observedCodeValidation(normalized string) (string, bool) {
-	if !strings.Contains(normalized, "python function") {
-		return "", false
+	if strings.Contains(normalized, "python function") {
+		if strings.Contains(normalized, "reverse_string") &&
+			strings.Contains(normalized, "reversed string") {
+			return reverseStringCode, true
+		}
+		if strings.Contains(normalized, "is_prime") &&
+			strings.Contains(normalized, "returns true") &&
+			strings.Contains(normalized, "prime") {
+			return isPrimeCode, true
+		}
+		if strings.Contains(normalized, "fizzbuzz") &&
+			strings.Contains(normalized, "numbers 1 to 20") &&
+			strings.Contains(normalized, "multiples of 3") &&
+			strings.Contains(normalized, "multiples of 5") {
+			return fizzBuzzCode, true
+		}
 	}
-	if strings.Contains(normalized, "reverse_string") &&
-		strings.Contains(normalized, "reversed string") {
-		return reverseStringCode, true
-	}
-	if strings.Contains(normalized, "is_prime") &&
-		strings.Contains(normalized, "returns true") &&
-		strings.Contains(normalized, "prime") {
-		return isPrimeCode, true
+	if strings.Contains(normalized, "python one-liner") &&
+		strings.Contains(normalized, "sort a dictionary") &&
+		strings.Contains(normalized, "values") &&
+		strings.Contains(normalized, "descending order") {
+		return dictSortCode, true
 	}
 	return "", false
 }
