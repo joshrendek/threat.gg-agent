@@ -83,12 +83,14 @@ var (
 )
 
 const (
-	// reverseStringCode and isPrimeCode are fixed code-only answers for the two
-	// observed function validators; they are executed by regression tests.
+	// reverseStringCode and isPrimeCode are fixed code-only answers for observed
+	// function validators; they are executed by regression tests.
 	reverseStringCode = "def reverse_string(text):\n    return text[::-1]"
 	isPrimeCode       = "def is_prime(n):\n    if n < 2:\n        return False\n    if n % 2 == 0:\n        return n == 2\n    divisor = 3\n    while divisor * divisor <= n:\n        if n % divisor == 0:\n            return False\n        divisor += 2\n    return True"
-	fizzBuzzCode      = "def fizzbuzz():\n    for number in range(1, 21):\n        if number % 15 == 0:\n            print(\"FizzBuzz\")\n        elif number % 3 == 0:\n            print(\"Fizz\")\n        elif number % 5 == 0:\n            print(\"Buzz\")\n        else:\n            print(number)"
-	dictSortCode      = "dict(sorted(my_dict.items(), key=lambda item: item[1], reverse=True))"
+	// fizzBuzzCode is the fixed executable answer for the observed 1-to-20 validator.
+	fizzBuzzCode = "def fizzbuzz():\n    for number in range(1, 21):\n        if number % 15 == 0:\n            print(\"FizzBuzz\")\n        elif number % 3 == 0:\n            print(\"Fizz\")\n        elif number % 5 == 0:\n            print(\"Buzz\")\n        else:\n            print(number)"
+	// dictSortCode is the fixed one-line expression for the observed descending-value sort.
+	dictSortCode = "dict(sorted(my_dict.items(), key=lambda item: item[1], reverse=True))"
 	// lighthouseProse is intentionally exactly 100 whitespace-delimited words.
 	lighthouseProse = "Each dawn, Mara climbed the lighthouse stairs before the gulls began calling. One stormy morning, a green bottle knocked against the rocks below. Inside, she found a faded message: Keep the lamp dark tonight. Mara read it twice, then watched an unfamiliar ship waiting beyond the reef. At sunset, she covered the lens and held her breath. The ship slipped safely past hidden mines revealed by the falling tide. By midnight, another bottle arrived. Its message contained only three words: Thank you, sister. Mara smiled, relit the lamp, and finally understood why her lost brother had never returned safely home."
 	// rainProse is intentionally exactly 50 whitespace-delimited words.

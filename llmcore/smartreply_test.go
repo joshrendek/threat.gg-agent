@@ -152,6 +152,9 @@ func TestReplyForValidationProbes(t *testing.T) {
 		{"What is 2 plus 2?", "4", ReplyKindArithmetic},
 		{"WHAT IS 2 PLUS 2?", "4", ReplyKindArithmetic},
 		{"Calculate 17 multiplied by 23. Return only the number.", "391", ReplyKindArithmetic},
+		{"Calculate 9 minus 4. Return only the number.", "5", ReplyKindArithmetic},
+		{"Calculate 7 times 6. Return only the number.", "42", ReplyKindArithmetic},
+		{"Calculate 8 divided by 2. Return only the number.", "4", ReplyKindArithmetic},
 		{"Reply with exactly: hello world", "hello world", ReplyKindLiteralEcho},
 		{"你好", "你好！有什么我可以帮助你的吗？", ReplyKindValidationFact},
 		{"Say hi in one word", "Hi", ReplyKindValidationFact},
@@ -167,6 +170,9 @@ func TestReplyForValidationProbes(t *testing.T) {
 				t.Errorf("ReplyFor(%q) = %#v, want text %q kind %q", tc.prompt, got, tc.text, tc.kind)
 			}
 		})
+	}
+	if got := ReplyFor("Calculate 5 divided by 0. Return only the number.", "llama3.2:latest"); got.Kind != ReplyKindGenericSafe {
+		t.Errorf("natural-language division by zero kind = %q, want generic_safe", got.Kind)
 	}
 }
 
