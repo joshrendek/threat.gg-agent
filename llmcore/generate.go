@@ -28,12 +28,51 @@ type Model struct {
 // replyPool holds benign, plausible assistant completions. They look like a real model
 // reply but never actually help the attacker; the value is capturing the request, not
 // producing useful output.
+// A small pool is itself a fingerprint: a scanner that sends a handful of varied prompts and
+// gets the same few sentences back knows it is not talking to a model.
 var replyPool = []string{
 	"Hello! I'm here to help. Could you tell me a bit more about what you're trying to do?",
 	"Sure — I can help with that. Let me know the specifics and I'll walk you through it.",
 	"That's an interesting question. Here's a high-level overview to get you started.",
 	"I understand what you're asking. Let me break this down step by step.",
 	"Happy to help! Here are a few things to consider before we begin.",
+	"Good question. The short answer is that it depends on the context you're working in.",
+	"There are a couple of ways to approach this. I'll start with the most common one.",
+	"Let me make sure I've got this right before I answer in detail.",
+	"I can outline the general idea, and we can go deeper wherever it's useful.",
+	"From what you've described, the usual starting point is to narrow down the scope.",
+	"That's a broad topic, so let's focus on the part that matters most to you.",
+	"Here's how I'd think about it, along with the trade-offs involved.",
+	"I'd approach that in stages rather than all at once — it's easier to verify that way.",
+	"Sure thing. A quick summary first, then the details if you want them.",
+	"I've seen this come up a lot. The answer usually hinges on one or two details.",
+	"Let's work through it together. What's the outcome you're aiming for?",
+	"It's worth separating the general principle from the specific case here.",
+	"Absolutely — here's a straightforward explanation without too much jargon.",
+	"I can give you a practical answer, though the exact details vary by setup.",
+	"That depends on a few factors, so let me cover the main ones.",
+	"Interesting — I'll explain the reasoning rather than just the conclusion.",
+	"Happy to dig into that. Here's the essential background first.",
+	"Let me summarise what's involved, then you can tell me where to expand.",
+	"There's a simple version of this answer and a more complete one. Here's the simple version.",
+}
+
+// refusalPool answers prompt-injection and jailbreak attempts. A real assistant refuses; handing
+// back cheerful helper prose to "ignore all previous instructions" is a tell on its own.
+//
+// These stay on ReplyKindGenericSafe: separating refusals in telemetry needs a new proto enum
+// value, which is deliberately out of scope for this change.
+var refusalPool = []string{
+	"I can't help with that. Is there something else I can do for you?",
+	"Sorry, I can't share the internal configuration I run under.",
+	"I'm not able to do that. Happy to help with something else, though.",
+	"That's not something I can provide. Let me know if there's another way I can help.",
+	"I can't override the guidelines I operate under, but I'm glad to help with a normal request.",
+	"I won't be able to do that one. Ask me something else and I'll do my best.",
+	"Sorry — I cannot reveal internal details about how I'm set up.",
+	"I'm unable to comply with that request. Is there another topic I can help with?",
+	"I can't act on instructions that ask me to disregard my own guidelines.",
+	"I cannot take that on, though I'm happy to answer an ordinary question.",
 }
 
 // ReplyKind is a bounded description of why a response was selected. The values deliberately
@@ -60,27 +99,70 @@ type ReplyResult struct {
 	Kind ReplyKind
 }
 
-func pickReplyFor(prompt, model string) string {
+func pickFrom(pool []string, prompt, model string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(prompt))
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write([]byte(model))
-	return replyPool[int(h.Sum32())%len(replyPool)]
+	return pool[int(h.Sum32())%len(pool)]
 }
 
+func pickReplyFor(prompt, model string) string { return pickFrom(replyPool, prompt, model) }
+
 var (
-	// echoRe matches the liveness/echo probes scanners use to confirm an endpoint really runs
-	// a model before abusing it, including "Reply with exactly: value". Its captured value is
-	// separately constrained to a short literal so instruction tails and prose are never reflected.
-	echoRe = regexp.MustCompile(`(?i)^\s*(?:say|repeat(?:\s+after\s+me)?|reply(?:\s+with)?|respond(?:\s+with)?|output|print|echo)\b[:,\s]+(?:exactly\s*:\s*)?(.+)$`)
-	// arithRe matches trivial arithmetic liveness checks: "what is 2+2", "10 * 3".
-	arithRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s*([-+*/xX])\s*(\d{1,6})\s*=?\s*\??\s*$`)
+	// echoRe gates the echo rule: the liveness probes scanners use to confirm an endpoint really
+	// runs a model open with an instruction verb. Only the verb is matched here — the token the
+	// scanner actually wants is extracted from the tail by echoTarget, because the surrounding
+	// filler ("with exactly one word:", "exactly this text and nothing else:") is composed too
+	// freely to enumerate as literal phrasings.
+	echoRe = regexp.MustCompile(`(?i)^\s*(?:say|repeat|reply|respond|answer|return|output|print|echo` +
+		`|responde|contesta|escribe|repite|devuelve|imprime|di)\b[:,\s]+(.+)$`)
+	// arithRe locates a trivial arithmetic liveness check ("what is 2+2", "10 * 3") anywhere in
+	// the prompt. Anchoring it to the whole prompt missed every probe that wrapped the
+	// expression in instruction text or spread it over lines. Operand width is bounded by the
+	// caller, not the pattern, so an over-wide operand is rejected rather than partially matched.
+	arithRe = regexp.MustCompile(`(\d+)\s*([-+*/])\s*(\d+)`)
+	// crossArithRe treats "x" as multiplication only when it is spaced: "1024x768" is a screen
+	// resolution, not a probe.
+	crossArithRe = regexp.MustCompile(`(\d+)\s+([xX])\s+(\d+)`)
 	// wordArithRe covers natural-language probes seen in production, such as "2 plus 2".
-	wordArithRe = regexp.MustCompile(`(?i)^\s*(?:(?:what(?:'s| is)\s+)|calculate\s+)?(\d{1,6})\s+(plus|minus|times|multiplied\s+by|divided\s+by)\s+(\d{1,6})\s*=?\s*[?.]?\s*(?:return\s+only\s+the\s+number\.?)?\s*$`)
+	wordArithRe = regexp.MustCompile(`(?i)(\d+)\s+(plus|minus|times|multiplied\s+by|divided\s+by)\s+(\d+)`)
 	// arithNonceRe covers validators that require both a computed value and a bounded nonce.
 	// The nonce grammar intentionally matches cleanLiteralEcho's safe literal subset.
 	arithNonceRe = regexp.MustCompile(`(?i)^\s*(?:what(?:'s| is)\s+)?(\d{1,6})\s*([-+*/xX])\s*(\d{1,6})\s*\?\s*(?:answer|respond)\s+with\s+just\s+the\s+number,?\s+then\s+(?:write|output)\s+([[:alnum:]_.-]{1,24})[.!]?\s*$`)
+
+	// leadingFillerRe matches one instruction-filler clause at the head of an echo tail. They are
+	// stripped iteratively so any composition of them reduces to the operative token.
+	leadingFillerRe = regexp.MustCompile(`(?i)^(?:` + strings.Join([]string{
+		`please`, `kindly`, `por favor`,
+		`say`, `reply`, `respond`, `answer`, `return`, `output`, `print`, `echo`, `repeat`,
+		`responde`, `contesta`, `escribe`, `repite`, `devuelve`, `imprime`,
+		`after me`, `back`, `to me`, `with`, `using`, `con`,
+		`only`, `just`, `exactly`, `simply`, `literally`, `verbatim`,
+		`solo`, `solamente`, `únicamente`, `unicamente`, `exactamente`,
+		`this text`, `the text`, `the following`, `lo siguiente`, `la siguiente`,
+		`(?:the|a|an|one|this|that)(?:\s+single)?\s+(?:word|words|number|line|text|string|token|value|character)`,
+		`la palabra`, `una palabra`, `el número`, `el numero`,
+		`and nothing else`, `nothing else`, `no explanation`, `no other text`,
+		`y nada más`, `y nada mas`, `nada más`, `nada mas`,
+	}, `|`) + `)\b`)
+	// trailingConstraintRe matches the length/format constraint scanners append after the value
+	// they want back ("... in 5 words or less", "... and nothing else").
+	trailingConstraintRe = regexp.MustCompile(`(?i)[\s,;.]*\b(?:` + strings.Join([]string{
+		`in (?:exactly )?(?:\d{1,3}|one|two|three|four|five) words?(?: or (?:less|fewer))?`,
+		`en (?:una|dos|tres) palabras?`,
+		`or (?:less|fewer)`, `and nothing else`, `nothing else`,
+		`with no explanation`, `without explanation`, `no explanation`, `no other text`,
+		`only`, `exactly`, `please`, `y nada m[áa]s`, `nada m[áa]s`,
+	}, `|`) + `)[\s,;.!]*$`)
+	// phraseFragmentRe rejects a stripped target that is only the tail of a noun phrase — "Return
+	// only the number of planets" reduces to "of planets", and echoing that is a confidently
+	// wrong answer where a real model would answer the question.
+	phraseFragmentRe = regexp.MustCompile(`(?i)^(?:of|in|on|for|about|from|that|which|with|to|as|and|or|by|de|del|sobre)\b`)
 )
+
+// maxArithDigits keeps the arithmetic rules on the trivial expressions validators actually send.
+const maxArithDigits = 6
 
 const (
 	// These fixed code-only answers cover the observed function and one-liner
@@ -119,7 +201,7 @@ func ReplyFor(prompt, model string) ReplyResult {
 		"hidden instruction", "reveal your instruction", "jailbreak",
 	} {
 		if strings.Contains(normalized, unsafe) {
-			return genericReply(p, model)
+			return refusalReply(p, model)
 		}
 	}
 
@@ -156,6 +238,13 @@ func ReplyFor(prompt, model string) ReplyResult {
 		strings.Contains(normalized, "rhyming") {
 		return ReplyResult{Text: oceanPoem, Kind: ReplyKindConstrainedProse}
 	}
+	if asksForSpanishIntroduction(normalized) {
+		return ReplyResult{
+			Text: fmt.Sprintf("Soy %s, un modelo de IA que puede ayudarte con preguntas, redacción, resúmenes y programación.", displayModel(model)),
+			// Spanish introductions reuse the EN intro kind; a distinct value needs a proto change.
+			Kind: ReplyKindModelIntroEN,
+		}
+	}
 	if asksForEnglishIntroduction(normalized) {
 		return ReplyResult{
 			Text: fmt.Sprintf("I'm %s, an AI model that can help with questions, writing, summarization, and coding.", displayModel(model)),
@@ -169,15 +258,8 @@ func ReplyFor(prompt, model string) ReplyResult {
 			}
 		}
 	}
-	if m := arithRe.FindStringSubmatch(p); m != nil {
-		if s, ok := computeArith(m[1], m[2], m[3]); ok {
-			return ReplyResult{Text: s, Kind: ReplyKindArithmetic}
-		}
-	}
-	if m := wordArithRe.FindStringSubmatch(p); m != nil {
-		if s, ok := computeArith(m[1], m[2], m[3]); ok {
-			return ReplyResult{Text: s, Kind: ReplyKindArithmetic}
-		}
+	if s, ok := findArithmetic(p); ok {
+		return ReplyResult{Text: s, Kind: ReplyKindArithmetic}
 	}
 
 	switch normalized {
@@ -198,10 +280,20 @@ func ReplyFor(prompt, model string) ReplyResult {
 		}
 	case "hi", "hello", "hey", "yo", "greetings":
 		return ReplyResult{Text: "Hello! How can I help you today?", Kind: ReplyKindValidationFact}
+	case "hola", "buenos días", "buenos dias", "buenas tardes":
+		return ReplyResult{Text: "¡Hola! ¿En qué puedo ayudarte hoy?", Kind: ReplyKindValidationFact}
 	}
 
-	if m := echoRe.FindStringSubmatch(p); m != nil {
-		if s := cleanLiteralEcho(m[1]); s != "" {
+	for _, clause := range promptClauses(p) {
+		m := echoRe.FindStringSubmatch(clause)
+		if m == nil {
+			continue
+		}
+		target := echoTarget(m[1])
+		if namesTheModel(target) {
+			return ReplyResult{Text: displayModel(model), Kind: ReplyKindModelIntroEN}
+		}
+		if s := cleanLiteralEcho(target); s != "" {
 			return ReplyResult{Text: s, Kind: ReplyKindLiteralEcho}
 		}
 	}
@@ -214,6 +306,106 @@ func smartReply(prompt string) string { return ReplyFor(prompt, "").Text }
 
 func genericReply(prompt, model string) ReplyResult {
 	return ReplyResult{Text: pickReplyFor(prompt, model), Kind: ReplyKindGenericSafe}
+}
+
+func refusalReply(prompt, model string) ReplyResult {
+	return ReplyResult{Text: pickFrom(refusalPool, prompt, model), Kind: ReplyKindGenericSafe}
+}
+
+// promptClauses splits a prompt into the lines an echo instruction can occupy. Multi-line probes
+// put the instruction on one line and the question on another, which a whole-prompt match missed
+// entirely because "." never crosses a newline.
+func promptClauses(prompt string) []string {
+	if !strings.ContainsAny(prompt, "\n\r") {
+		return []string{prompt}
+	}
+	var out []string
+	for _, line := range strings.FieldsFunc(prompt, func(r rune) bool { return r == '\n' || r == '\r' }) {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// echoTarget reduces an echo instruction's tail to the token the scanner actually wants back,
+// so "with exactly one word: blue" yields "blue" rather than the whole instruction tail.
+func echoTarget(tail string) string {
+	const maxStripRounds = 12
+	const separators = " \t\r\n:,;"
+	s := tail
+	for i := 0; i < maxStripRounds; i++ {
+		s = strings.TrimLeft(s, separators)
+		loc := leadingFillerRe.FindStringIndex(s)
+		if loc == nil {
+			break
+		}
+		s = s[loc[1]:]
+	}
+	for i := 0; i < maxStripRounds; i++ {
+		loc := trailingConstraintRe.FindStringIndex(s)
+		if loc == nil {
+			break
+		}
+		s = s[:loc[0]]
+	}
+	s = strings.TrimSpace(s)
+	if phraseFragmentRe.MatchString(s) {
+		return ""
+	}
+	return s
+}
+
+// namesTheModel reports whether an echo target asks for the model's own name. Reflecting the
+// literal words "your model name" is a deterministic wrong answer, and so a fingerprint.
+func namesTheModel(target string) bool {
+	switch strings.ToLower(strings.Trim(strings.TrimSpace(target), `"'.?!`)) {
+	case "your model name", "your model", "your name", "the model name", "model name",
+		"your model id", "tu nombre", "tu modelo":
+		return true
+	}
+	return false
+}
+
+// findArithmetic evaluates the first trivial expression embedded anywhere in the prompt.
+func findArithmetic(prompt string) (string, bool) {
+	for _, re := range []*regexp.Regexp{arithRe, crossArithRe, wordArithRe} {
+		for _, loc := range re.FindAllStringSubmatchIndex(prompt, -1) {
+			if arithmeticIsGlued(prompt, loc[0], loc[1]) {
+				continue
+			}
+			a, op, b := prompt[loc[2]:loc[3]], prompt[loc[4]:loc[5]], prompt[loc[6]:loc[7]]
+			if len(a) > maxArithDigits || len(b) > maxArithDigits {
+				continue
+			}
+			if s, ok := computeArith(a, op, b); ok {
+				return s, true
+			}
+		}
+	}
+	return "", false
+}
+
+// arithmeticIsGlued reports whether a match is really a slice of a longer literal — a version,
+// date or identifier such as "2026-07-29" or "v1.2-3" — rather than a standalone expression.
+func arithmeticIsGlued(s string, start, end int) bool {
+	if start > 0 {
+		switch prev := s[start-1]; {
+		case prev >= '0' && prev <= '9', prev == '.', prev == '-', prev == '/', prev == ':':
+			return true
+		case prev >= 'a' && prev <= 'z', prev >= 'A' && prev <= 'Z':
+			return true
+		}
+	}
+	if end < len(s) {
+		switch next := s[end]; {
+		case next >= '0' && next <= '9':
+			return true
+		case next == '.', next == '-', next == '/', next == ':':
+			return end+1 < len(s) && s[end+1] >= '0' && s[end+1] <= '9'
+		}
+	}
+	return false
 }
 
 func observedCodeValidation(normalized string) (string, bool) {
@@ -244,23 +436,46 @@ func observedCodeValidation(normalized string) (string, bool) {
 }
 
 func asksForEnglishIntroduction(normalized string) bool {
-	if normalized == "who are you" {
-		return true
-	}
-	if !strings.Contains(normalized, "introduce yourself") {
-		return false
-	}
+	// The negation guard runs before every trigger, not just "introduce yourself": constrained
+	// prose probes carry "Do not introduce yourself" and must keep getting the prose.
 	for _, negated := range []string{
 		"do not introduce yourself",
 		"don't introduce yourself",
 		"dont introduce yourself",
 		"without introducing yourself",
+		"no introduction",
 	} {
 		if strings.Contains(normalized, negated) {
 			return false
 		}
 	}
-	return true
+	for _, phrase := range []string{
+		"introduce yourself", "identify yourself", "tell me about yourself",
+		"who are you", "who built you", "who made you", "who created you",
+		"who developed you", "who trained you",
+		"what model are you", "which model are you", "what model is this",
+		"what is your model name", "what's your model name", "whats your model name",
+		"what is your name", "what's your name", "whats your name",
+		"what are you",
+	} {
+		if strings.Contains(normalized, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func asksForSpanishIntroduction(normalized string) bool {
+	for _, phrase := range []string{
+		"quién eres", "quien eres", "qué modelo eres", "que modelo eres",
+		"cómo te llamas", "como te llamas", "preséntate", "presentate",
+		"quién te creó", "quien te creo",
+	} {
+		if strings.Contains(normalized, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func displayModel(model string) string {
@@ -284,6 +499,7 @@ func cleanLiteralEcho(s string) string {
 	lower := strings.ToLower(s)
 	for _, blocked := range []string{
 		"system prompt", "instruction", "password", "secret", "api key", "token",
+		"contraseña", "contrasena", "secreto", "clave",
 		"select ", "drop ", "delete ", "insert ", "update ", " then ",
 	} {
 		if strings.Contains(lower, blocked) {
@@ -435,6 +651,16 @@ func promptTextParts(body []byte, depth int) []string {
 		values = append(values, promptTextParts(part.Content, depth+1)...)
 	}
 	return values
+}
+
+// chatMessageList reads the raw message list without introducing a decode-error path: a type
+// error raised here would name llmcore's own types, which real Ollama's error text never does.
+func chatMessageList(body []byte) []json.RawMessage {
+	var m struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	_ = json.Unmarshal(body, &m)
+	return m.Messages
 }
 
 func promptText(body []byte) string {
@@ -685,6 +911,14 @@ type ollamaGenerateLifecycle struct {
 	DoneReason string `json:"done_reason"`
 }
 
+type ollamaChatLifecycle struct {
+	Model      string      `json:"model"`
+	CreatedAt  string      `json:"created_at"`
+	Message    chatMessage `json:"message"`
+	Done       bool        `json:"done"`
+	DoneReason string      `json:"done_reason"`
+}
+
 type ollamaChatChunk struct {
 	Model     string      `json:"model"`
 	CreatedAt string      `json:"created_at"`
@@ -823,13 +1057,37 @@ func OllamaGenerate(w http.ResponseWriter, r *http.Request, p Profile) {
 // stream is false; NDJSON otherwise).
 func OllamaChat(w http.ResponseWriter, r *http.Request, p Profile) {
 	body := readBody(r)
+	if len(strings.TrimSpace(string(body))) == 0 {
+		WriteOllamaError(w, p, http.StatusBadRequest, "missing request body")
+		return
+	}
 	if msg, ok := ValidJSONBody(body); !ok {
 		WriteOllamaError(w, p, http.StatusBadRequest, msg)
+		return
+	}
+	if ParseModel(body) == "" {
+		WriteModelNotFoundAPI(w, p, "")
 		return
 	}
 	model, known := p.resolveModel(r, body)
 	if !known {
 		WriteModelNotFoundAPI(w, p, model)
+		return
+	}
+	// An empty message list is Ollama's model-lifecycle request, the /api/chat counterpart of
+	// /api/generate's empty prompt.
+	if len(chatMessageList(body)) == 0 {
+		keepAlive := keepAliveOf(body)
+		models.touch(model, keepAlive)
+		reason := "load"
+		if keepAlive == 0 {
+			reason = "unload"
+		}
+		MarkReplyKind(r, proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_LIFECYCLE)
+		WriteJSONCT(w, http.StatusOK, p.ct(), ollamaChatLifecycle{
+			Model: model, CreatedAt: nowNano(),
+			Message: chatMessage{Role: "assistant"}, Done: true, DoneReason: reason,
+		})
 		return
 	}
 	prompt := promptText(body)
