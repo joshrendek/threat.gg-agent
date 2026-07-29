@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -64,37 +65,77 @@ func identityHeaders(next http.Handler) http.Handler {
 
 // profile is vLLM's OpenAI surface: bare application/json (FastAPI adds no charset), no
 // system_fingerprint (vLLM omits the field entirely, unlike Ollama), long opaque completion ids,
-// and no model catalog — vLLM serves whatever single model it was launched with, so it does not
-// have Ollama's notion of a model that could be absent.
+// and a single-model catalog. vLLM serves exactly the one model it was launched with and
+// _check_model 404s every other name, so KnownModel is the backstop that stops the shared
+// generators completing for a model this box does not have. The wire-level rejection is owned by
+// requireKnownModel, which writes vLLM's flat error envelope; llmcore's WriteModelNotFoundV1
+// would write OpenAI's nested one.
 var profile = llmcore.Profile{
 	DefaultModel: defaultModel,
 	ContentType:  llmcore.CTJSON,
+	KnownModel:   func(_ *http.Request, m string) bool { return m == defaultModel },
+}
+
+// route is one FastAPI path operation. methods nil means "any method", which is how a mounted
+// ASGI sub-app behaves; otherwise the list doubles as the Allow header for a 405.
+type route struct {
+	path    string
+	methods []string
+	handler http.HandlerFunc
+}
+
+// getMethods is what Starlette records for an @router.get route: it adds HEAD implicitly
+// whenever GET is present.
+var getMethods = []string{http.MethodGet, http.MethodHead}
+
+var postMethods = []string{http.MethodPost}
+
+func routes() []route {
+	return []route{
+		{"/v1/models", getMethods, handleModels},
+		{"/v1/chat/completions", postMethods, requireKnownModel(func(w http.ResponseWriter, req *http.Request) {
+			llmcore.ChatCompletion(w, req, profile)
+		})},
+		{"/v1/completions", postMethods, requireKnownModel(func(w http.ResponseWriter, req *http.Request) {
+			llmcore.Completion(w, req, profile)
+		})},
+		// Deliberately not gated on the model: on a generation-only server vLLM answers
+		// /v1/embeddings before it ever validates the model — the "no embeddings" branch sits
+		// above _check_model in both the 0.6.x serving_embedding path and the later
+		// api_server handler-is-None path — so an unknown model here still gets the 400.
+		{"/v1/embeddings", postMethods, handleEmbeddings},
+		{"/health", getMethods, handleHealth},
+		{"/ping", getMethods, handleHealth},
+		{"/version", getMethods, handleVersion},
+		// The endpoint Xpanse and friends actually scrape. vLLM appends it as a Mount of
+		// prometheus_client's ASGI app rather than a path operation, and that app ignores the
+		// request method, so this route accepts any verb instead of 405ing non-GET.
+		{"/metrics", nil, handleMetrics},
+		{"/tokenize", postMethods, requireKnownModel(handleTokenize)},
+		{"/detokenize", postMethods, requireKnownModel(handleDetokenize)},
+		// FastAPI mounts interactive docs by default; their absence on a box that is otherwise
+		// obviously FastAPI is itself a discrepancy.
+		{"/openapi.json", getMethods, handleOpenAPI},
+		{"/docs", getMethods, handleDocs},
+	}
 }
 
 func newRouter() http.Handler {
 	r := mux.NewRouter()
-	get := []string{http.MethodGet, http.MethodHead}
-
-	r.HandleFunc("/v1/models", handleModels).Methods(get...)
-	r.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, req *http.Request) {
-		llmcore.ChatCompletion(w, req, profile)
-	}).Methods("POST")
-	r.HandleFunc("/v1/completions", func(w http.ResponseWriter, req *http.Request) {
-		llmcore.Completion(w, req, profile)
-	}).Methods("POST")
-	r.HandleFunc("/v1/embeddings", handleEmbeddings).Methods("POST")
-	r.HandleFunc("/health", handleHealth).Methods(get...)
-	r.HandleFunc("/ping", handleHealth).Methods(get...)
-	r.HandleFunc("/version", handleVersion).Methods(get...)
-	// The endpoint Xpanse and friends actually scrape.
-	r.HandleFunc("/metrics", handleMetrics).Methods(get...)
-	r.HandleFunc("/tokenize", handleTokenize).Methods("POST")
-	r.HandleFunc("/detokenize", handleDetokenize).Methods("POST")
-	// FastAPI mounts interactive docs by default; their absence on a box that is otherwise
-	// obviously FastAPI is itself a discrepancy.
-	r.HandleFunc("/openapi.json", handleOpenAPI).Methods(get...)
-	r.HandleFunc("/docs", handleDocs).Methods(get...)
-	r.PathPrefix("/").HandlerFunc(handleCatchAll)
+	allow := map[string]string{}
+	for _, rt := range routes() {
+		registered := r.HandleFunc(rt.path, rt.handler)
+		if rt.methods != nil {
+			registered.Methods(rt.methods...)
+			allow[rt.path] = strings.Join(rt.methods, ", ")
+		}
+	}
+	// A registered path reached with the wrong verb is a 405, not a 404. Both handlers have to
+	// be hung off the router rather than expressed as a PathPrefix("/") catch-all route: a
+	// catch-all matches the method-mismatch case too, which is exactly how GET
+	// /v1/chat/completions used to come back as FastAPI's 404.
+	r.MethodNotAllowedHandler = methodNotAllowedHandler(allow)
+	r.NotFoundHandler = http.HandlerFunc(handleNotFound)
 	return r
 }
 
@@ -147,8 +188,7 @@ func handleVersion(w http.ResponseWriter, r *http.Request) {
 
 func handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	// A generative model served by vLLM has no embedding task, and this is the error it gives.
-	llmcore.WriteOpenAIError(w, profile, http.StatusBadRequest,
-		"The model does not support Embeddings API", "BadRequestError")
+	writeError(w, http.StatusBadRequest, "The model does not support Embeddings API", "BadRequestError")
 }
 
 type tokenizeResponse struct {
@@ -184,11 +224,31 @@ func handleDocs(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, swaggerHTML)
 }
 
-// handleCatchAll reproduces FastAPI's default 404 body. The previous OpenAI-style error envelope
-// was wrong for every unrouted path: FastAPI answers {"detail":"Not Found"}, and vLLM does not
-// customise it.
-func handleCatchAll(w http.ResponseWriter, r *http.Request) {
+// handleNotFound reproduces FastAPI's default 404 body for a path that is not routed at all.
+// The previous OpenAI-style error envelope was wrong for every unrouted path: FastAPI answers
+// {"detail":"Not Found"}, and vLLM does not customise it.
+func handleNotFound(w http.ResponseWriter, r *http.Request) {
 	llmcore.WriteJSONCT(w, http.StatusNotFound, llmcore.CTJSON, detailResponse{Detail: "Not Found"})
+}
+
+// methodNotAllowedHandler reproduces what Starlette does for a routed path reached with an
+// unregistered verb: Route.handle raises HTTPException(405, headers={"Allow": …}), which
+// FastAPI's default handler renders as {"detail":"Method Not Allowed"}. Both the status and the
+// Allow header distinguish this from the unrouted 404 above, and a scanner that probes GET on a
+// POST-only endpoint reads a 404 there as "this path does not exist".
+func methodNotAllowedHandler(allow map[string]string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods, ok := allow[r.URL.Path]
+		if !ok {
+			// mux only routes here after a path matched a method-restricted route, so this is
+			// unreachable; answer as unrouted rather than invent an Allow header.
+			handleNotFound(w, r)
+			return
+		}
+		w.Header().Set("Allow", methods)
+		llmcore.WriteJSONCT(w, http.StatusMethodNotAllowed, llmcore.CTJSON,
+			detailResponse{Detail: "Method Not Allowed"})
+	})
 }
 
 type detailResponse struct {

@@ -40,10 +40,12 @@ func TestModelsListShape(t *testing.T) {
 	}
 }
 
+// The model echoed back is the served one. This used to be asserted with model "x", which only
+// passed because the surface accepted any name at all (threat_gg-tye); a real vLLM 404s "x".
 func TestChatCompletionRouteIsDynamic(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
-		strings.NewReader(`{"model":"x","messages":[{"role":"user","content":"hi"}]}`))
+		strings.NewReader(`{"model":"`+defaultModel+`","messages":[{"role":"user","content":"hi"}]}`))
 	buildHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"chat.completion"`) {
 		t.Fatalf("chat route not dynamic: %d %s", rec.Code, rec.Body.String())
@@ -54,12 +56,14 @@ func TestChatCompletionRouteIsDynamic(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if resp.Model != "x" {
-		t.Fatalf("model not echoed: got %q, want %q (body: %s)", resp.Model, "x", rec.Body.String())
+	if resp.Model != defaultModel {
+		t.Fatalf("model not echoed: got %q, want %q (body: %s)", resp.Model, defaultModel, rec.Body.String())
 	}
 }
 
-// TestObservedSeedValidators covers the exact vLLM gates captured in production.
+// TestObservedSeedValidators covers the exact vLLM gates captured in production. The prompts are
+// the observed ones; the model is the served one, because the captured probes named models this
+// box does not serve (qwen3.6:27b among them) and those now 404 — see TestUnknownModelIsRejected.
 func TestObservedSeedValidators(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -69,7 +73,7 @@ func TestObservedSeedValidators(t *testing.T) {
 	}{
 		{
 			name:   "exact hello-world echo",
-			model:  "qwen3.6:27b",
+			model:  defaultModel,
 			prompt: "Reply with exactly: hello world",
 			want:   "hello world",
 		},
