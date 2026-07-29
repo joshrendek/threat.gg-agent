@@ -156,6 +156,10 @@ enum LlmReplyKind {
   LLM_REPLY_KIND_CONSTRAINED_PROSE = 11;
   LLM_REPLY_KIND_ARITHMETIC_NONCE = 12;
   LLM_REPLY_KIND_MODEL_LIFECYCLE = 13;
+  // Emitted when the agent's unsafe-prompt branch answers with refusal language.
+  // Previously these were folded into GENERIC_SAFE, which made a jailbreak attempt
+  // indistinguishable from a prompt we simply did not recognize.
+  LLM_REPLY_KIND_SAFETY_REFUSAL = 14;
 }
 
 message McpRequest {

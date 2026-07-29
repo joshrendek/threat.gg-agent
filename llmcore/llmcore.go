@@ -184,7 +184,7 @@ func MarkResponseSource(r *http.Request, source proto.LlmResponseSource) {
 // It is metadata-only: callers must never pass or retain generated response text.
 func MarkReplyKind(r *http.Request, kind proto.LlmReplyKind) {
 	if r == nil || kind <= proto.LlmReplyKind_LLM_REPLY_KIND_UNSPECIFIED ||
-		kind > proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_LIFECYCLE {
+		kind > proto.LlmReplyKind_LLM_REPLY_KIND_SAFETY_REFUSAL {
 		return
 	}
 	metadata, _ := r.Context().Value(responseMetadataKey{}).(*responseMetadata)
@@ -221,6 +221,8 @@ func classifiedReply(r *http.Request, prompt, model string) ReplyResult {
 		kind = proto.LlmReplyKind_LLM_REPLY_KIND_CODE_VALIDATION
 	case ReplyKindConstrainedProse:
 		kind = proto.LlmReplyKind_LLM_REPLY_KIND_CONSTRAINED_PROSE
+	case ReplyKindSafetyRefusal:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_SAFETY_REFUSAL
 	case ReplyKindArithmeticNonce:
 		kind = proto.LlmReplyKind_LLM_REPLY_KIND_ARITHMETIC_NONCE
 	}

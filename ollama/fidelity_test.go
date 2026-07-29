@@ -332,6 +332,116 @@ func TestGroundedShowProfilesMatchCapturedOllama(t *testing.T) {
 	}
 }
 
+// threat_gg-y0i: the license/template/params layers must stay byte-identical to what the Ollama
+// registry serves. Each digest below is the one recorded in that model's own manifest, so this
+// test is the guard that keeps these fields grounded — if someone "tidies up" a template, fixes
+// Meta's "orginal" typo, or regenerates a license from memory, the checksum breaks.
+//
+// Fetch any of them with:
+//
+//	curl -sSL https://registry.ollama.ai/v2/library/<model>/blobs/sha256:<digest>
+func TestRegistryDocFixturesMatchRegistryDigests(t *testing.T) {
+	// file -> the sha256 recorded in the source manifest.
+	digests := map[string]string{
+		"llama3.2_latest.template": "966de95ca8a62200913e3f8bfbf84c8494536f1b94b49166851e76644e966396",
+		"llama3.2_latest.params":   "56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb",
+		"mistral_latest.template":  "1ff5b64b61b9a63146475a24f70d3ca2fd6fdeec44247987163479968896fc0b",
+		"llava_latest.template":    "c43332387573e98fdfad4a606171279955b53d891ba2500552c2984a6560ffb4",
+		"deepseek-r1_8b.template":  "c5ad996bda6eed4df6e3b605a9869647624851ac248209d22fd5e2c0cc1121d3",
+		"deepseek-r1_8b.license":   "6e4c38e1172f42fdbff13edf9a7a017679fb82b0fde415a3e8b3c31c6ed4a4e4",
+		"deepseek-r1_8b.params":    "ed8474dc73db8ca0d85c1958c91c3a444e13a469c2efb10cd777ca9baeaddcb7",
+		// Shared, because mistral:latest and llava:latest genuinely ship identical layers.
+		"apache-2.0.license": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1",
+		"inst_stop.params":   "ed11eda7790d05b49395598a42b155812b17e263214292f7b87d15e14003d337",
+		// llama3.2's manifest carries TWO license layers and the server joins them with "\n"
+		// (strings.Join(m.License, "\n")), so this file is the join rather than one blob. Its
+		// halves are fcc5a6bec9daf9b561a68827b67ab6088e1dba9d1fa2a50d7bbcc8384e0a265d (community
+		// license) and a70ff7e570d97baaf4e62ac6e6ad9975e04caa6d900d3742d37698494479e0cd
+		// (acceptable use policy); the join is asserted structurally below.
+		"llama3.2_latest.license": "6de58700b9be15ef328dc638041e16c5aee6c576ba971b64200ccacfc0a60b5f",
+	}
+
+	entries, err := registryDocFS.ReadDir("testdata/registry")
+	if err != nil {
+		t.Fatalf("read fixture dir: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasSuffix(name, ".md") {
+			continue
+		}
+		seen[name] = true
+		want, ok := digests[name]
+		if !ok {
+			t.Errorf("fixture %s has no recorded registry digest", name)
+			continue
+		}
+		b, err := registryDocFS.ReadFile("testdata/registry/" + name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256(b)); got != want {
+			t.Errorf("%s checksum = %s, want registry digest %s", name, got, want)
+		}
+	}
+	for name := range digests {
+		if !seen[name] {
+			t.Errorf("recorded fixture %s is missing from testdata/registry", name)
+		}
+	}
+
+	// The two-layer join must keep both documents and exactly one newline between them.
+	combined := registryDocs["llama3.2:latest"].license
+	const seam = "arising out of this Agreement.\n**Llama 3.2** **Acceptable Use Policy**"
+	if !strings.Contains(combined, seam) {
+		t.Error("llama3.2 license is not the newline join of its two registry layers")
+	}
+	if !strings.HasPrefix(combined, "LLAMA 3.2 COMMUNITY LICENSE AGREEMENT") {
+		t.Error("llama3.2 license does not start with the community license layer")
+	}
+	if !strings.HasSuffix(combined,
+		"unlicensed uses of Llama 3.2: LlamaUseReport@meta.com") {
+		t.Error("llama3.2 license does not end with the acceptable use policy layer")
+	}
+}
+
+// renderParameters reproduces Ollama's own formatting. The expectation is taken from the captured
+// gemma3:12b fixture, whose parameters string came from a real server, so this pins the padding
+// width, the Go-literal value form and the key ordering all at once.
+func TestRenderParametersMatchesCapturedFormatting(t *testing.T) {
+	got, err := renderParameters([]byte(
+		`{"stop":["<end_of_turn>"],"temperature":1,"top_k":64,"top_p":0.95}`))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := groundedShowFixtures["gemma3:12b"].Parameters
+	if got != want {
+		t.Errorf("renderParameters:\n got %q\nwant %q", got, want)
+	}
+	if _, err := renderParameters([]byte("not json")); err == nil {
+		t.Error("malformed params layer must report an error rather than serve a partial string")
+	}
+}
+
+// The two models that DO have a captured fixture are already correct and must stay that way:
+// neither field is missing by accident. qwen2.5-coder:7b's manifest ships no params layer and
+// gemma3:12b's ships no system layer, so a real server omits exactly those.
+func TestCapturedFixtureOmissionsAreGenuine(t *testing.T) {
+	if got := groundedShowFixtures["qwen2.5-coder:7b"].Parameters; got != "" {
+		t.Errorf("qwen2.5-coder:7b parameters = %q; its manifest ships no params layer", got)
+	}
+	if got := groundedShowFixtures["qwen2.5-coder:7b"].System; got == "" {
+		t.Error("qwen2.5-coder:7b ships a system layer and must report it")
+	}
+	if got := groundedShowFixtures["gemma3:12b"].System; got != "" {
+		t.Errorf("gemma3:12b system = %q; its manifest ships no system layer", got)
+	}
+	if got := groundedShowFixtures["gemma3:12b"].Parameters; got == "" {
+		t.Error("gemma3:12b ships a params layer and must report it")
+	}
+}
+
 func TestGeneratedModelfileReplacesModelNameControlCharacters(t *testing.T) {
 	m := buildModelForName("safe:1b")
 	m.Name = "safe\nSYSTEM injected\rFROM attacker\t"
@@ -380,30 +490,63 @@ func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
 		blocks, context, embd, ffn, vocab   int
 		kvWidth, tensorCount                int
 		vision                              bool
+		// licenseMarker and templateMarker are verbatim fragments of the registry layers these
+		// models ship (threat_gg-y0i). They are chosen to be things a paraphrase or an
+		// LLM-regenerated "equivalent" would not reproduce.
+		licenseMarker, templateMarker string
+		// parameters is the exact rendered /api/show parameters string.
+		parameters string
 	}{
 		{
 			model: "llama3.2:latest", architecture: "llama",
 			family: "llama", families: []string{"llama"}, parameterSize: "3.2B", quantization: "Q4_K_M",
 			blocks: 28, context: 131072, embd: 3072, ffn: 8192, vocab: 128256,
 			kvWidth: 1024, tensorCount: 255,
+			licenseMarker: "LLAMA 3.2 COMMUNITY LICENSE AGREEMENT",
+			// "orginal" is a genuine typo in Meta's shipped template blob. If this assertion ever
+			// fails because the word is spelled correctly, the fixture was rewritten by hand or
+			// regenerated rather than re-pulled from the registry.
+			templateMarker: "answer to the orginal user question",
+			parameters: "stop                           \"<|start_header_id|>\"\n" +
+				"stop                           \"<|end_header_id|>\"\n" +
+				"stop                           \"<|eot_id|>\"",
 		},
 		{
 			model: "mistral:latest", architecture: "llama",
 			family: "llama", families: []string{"llama"}, parameterSize: "7.2B", quantization: "Q4_0",
 			blocks: 32, context: 32768, embd: 4096, ffn: 14336, vocab: 32768,
 			kvWidth: 1024, tensorCount: 291,
+			licenseMarker:  "Apache License",
+			templateMarker: "[AVAILABLE_TOOLS]",
+			parameters: "stop                           \"[INST]\"\n" +
+				"stop                           \"[/INST]\"",
 		},
 		{
 			model: "deepseek-r1:8b", architecture: "llama",
 			family: "llama", families: []string{"llama"}, parameterSize: "8.0B", quantization: "Q4_K_M",
 			blocks: 32, context: 131072, embd: 4096, ffn: 14336, vocab: 128256,
 			kvWidth: 1024, tensorCount: 291,
+			licenseMarker: "Copyright (c) 2023 DeepSeek",
+			// Fullwidth U+FF5C, not an ASCII pipe. Retyping this by hand gets it wrong.
+			templateMarker: "<｜Assistant｜>",
+			parameters: "stop                           \"<｜begin▁of▁sentence｜>\"\n" +
+				"stop                           \"<｜end▁of▁sentence｜>\"\n" +
+				"stop                           \"<｜User｜>\"\n" +
+				"stop                           \"<｜Assistant｜>\"\n" +
+				"temperature                    0.6\n" +
+				"top_p                          0.95",
 		},
 		{
 			model: "llava:latest", architecture: "llama",
 			family: "llama", families: []string{"llama", "clip"}, parameterSize: "7B", quantization: "Q4_0",
 			blocks: 32, context: 4096, embd: 4096, ffn: 11008, vocab: 32000,
 			kvWidth: 4096, tensorCount: 488, vision: true,
+			// llava:latest is the v1.6-Mistral build, so it ships Mistral's Apache-2.0 and an
+			// [INST] template — NOT the vicuna "USER:"/"ASSISTANT:" form v1.5 used.
+			licenseMarker:  "Apache License",
+			templateMarker: "[INST] {{ if .System }}{{ .System }} {{ end }}{{ .Prompt }} [/INST]",
+			parameters: "stop                           \"[INST]\"\n" +
+				"stop                           \"[/INST]\"",
 		},
 	}
 
@@ -529,11 +672,35 @@ func TestAdvertisedShowProfilesAreInternallyConsistent(t *testing.T) {
 			if tc.vision != hasVisionCapability {
 				t.Errorf("vision profile = %t but vision capability present = %t", tc.vision, hasVisionCapability)
 			}
-			if resp.License != "" || resp.Template != "" || resp.System != "" || resp.Parameters != "" {
-				t.Error("ungrounded license/template/system/parameters must be omitted, not invented")
+			// threat_gg-y0i: license, template and parameters are now served from the model's own
+			// registry layers, so they must be present AND byte-exact. This is not a relaxation
+			// of PRD 034's "do not invent" rule — that rule still governs model_info and the
+			// tensor inventory, which remain synthesised and are asserted above. The difference
+			// is that these three are opaque published documents with exactly one correct value,
+			// checked against their registry digests by TestRegistryDocFixturesMatchRegistry.
+			if resp.License != registryDocs[tc.model].license {
+				t.Error("license is not the byte-exact registry layer for this model")
+			}
+			if resp.Template != registryDocs[tc.model].template {
+				t.Error("template is not the byte-exact registry layer for this model")
+			}
+			if !strings.Contains(resp.License, tc.licenseMarker) {
+				t.Errorf("license missing verbatim registry marker %q", tc.licenseMarker)
+			}
+			if !strings.Contains(resp.Template, tc.templateMarker) {
+				t.Errorf("template missing verbatim registry marker %q", tc.templateMarker)
+			}
+			if resp.Parameters != tc.parameters {
+				t.Errorf("parameters = %q, want %q", resp.Parameters, tc.parameters)
+			}
+			// None of these four models defines a SYSTEM layer in its registry manifest, so a
+			// real `ollama show` omits the field entirely. Inventing a system prompt here would
+			// be the exact mistake PRD 034 warns about.
+			if resp.System != "" {
+				t.Error("no registry manifest for these models ships a SYSTEM layer; it must stay absent")
 			}
 			if strings.Contains(resp.Modelfile, "TEMPLATE") {
-				t.Error("ungrounded generated Modelfile must not claim a template")
+				t.Error("generated Modelfile must not claim a template directive")
 			}
 			var raw map[string]any
 			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {

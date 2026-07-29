@@ -60,8 +60,9 @@ var replyPool = []string{
 // refusalPool answers prompt-injection and jailbreak attempts. A real assistant refuses; handing
 // back cheerful helper prose to "ignore all previous instructions" is a tell on its own.
 //
-// These stay on ReplyKindGenericSafe: separating refusals in telemetry needs a new proto enum
-// value, which is deliberately out of scope for this change.
+// They report ReplyKindSafetyRefusal so jailbreak volume is measurable separately from prompts
+// we simply did not recognize. The server must know the value first: shapeLlmResponse validates
+// reply_kind against an allowlist and silently drops anything unlisted.
 var refusalPool = []string{
 	"I can't help with that. Is there something else I can do for you?",
 	"Sorry, I can't share the internal configuration I run under.",
@@ -88,6 +89,7 @@ const (
 	ReplyKindLiteralEcho       ReplyKind = "literal_echo"
 	ReplyKindValidationFact    ReplyKind = "validation_fact"
 	ReplyKindGenericSafe       ReplyKind = "generic_safe"
+	ReplyKindSafetyRefusal     ReplyKind = "safety_refusal"
 	ReplyKindCodeValidation    ReplyKind = "code_validation"
 	ReplyKindConstrainedProse  ReplyKind = "constrained_prose"
 	ReplyKindArithmeticNonce   ReplyKind = "arithmetic_nonce"
@@ -309,7 +311,7 @@ func genericReply(prompt, model string) ReplyResult {
 }
 
 func refusalReply(prompt, model string) ReplyResult {
-	return ReplyResult{Text: pickFrom(refusalPool, prompt, model), Kind: ReplyKindGenericSafe}
+	return ReplyResult{Text: pickFrom(refusalPool, prompt, model), Kind: ReplyKindSafetyRefusal}
 }
 
 // promptClauses splits a prompt into the lines an echo instruction can occupy. Multi-line probes

@@ -250,7 +250,9 @@ func handlePs(w http.ResponseWriter, r *http.Request) {
 	out := []psModel{}
 	for name, expires := range llmcore.ResidentModels() {
 		m, ok := models.get(r, name)
-		if !ok {
+		// Cloud inference is proxied upstream and never occupies local VRAM, so a
+		// cloud model can never appear resident on a real host.
+		if !ok || m.isCloud() {
 			continue
 		}
 		out = append(out, psModel{
