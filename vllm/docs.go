@@ -76,9 +76,12 @@ func openAPISchema() map[string]any {
 	return map[string]any{
 		"openapi": "3.1.0",
 		"info":    map[string]any{"title": "vLLM API", "version": vllmVersion},
+		// The path set has to be the router's path set: FastAPI generates this from the same
+		// route table it serves, so a documented endpoint that 404s (or vice versa) is a
+		// contradiction a scanner gets for free. /ping is absent because vLLM 0.6.3 has no such
+		// route — it arrives in 0.7.0. See routes().
 		"paths": map[string]any{
 			"/health":              get("health_health_get", "Health"),
-			"/ping":                get("ping_ping_get", "Ping"),
 			"/version":             get("show_version_version_get", "Show Version"),
 			"/tokenize":            post("tokenize_tokenize_post", "Tokenize"),
 			"/detokenize":          post("detokenize_detokenize_post", "Detokenize"),

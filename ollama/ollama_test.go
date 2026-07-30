@@ -70,7 +70,10 @@ func TestCORSSurvivesCmdrespOverride(t *testing.T) {
 	}
 	t.Cleanup(func() { cmdresp.GetCommandResponseWithin = orig })
 	rec := httptest.NewRecorder()
-	buildHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+	req := httptest.NewRequest(http.MethodGet, "/api/tags", nil)
+	// Cross-origin, because CORS headers are only emitted for a real CORS request.
+	req.Header.Set("Origin", "http://evil.test")
+	buildHandler().ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), "overridden") {
 		t.Fatalf("expected override body, got %s", rec.Body.String())
 	}

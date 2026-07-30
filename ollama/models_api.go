@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"net/http"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,15 +53,21 @@ func (m modelRequest) model() string {
 // -- /api/show
 
 // showResponse is the wire shape returned by Ollama's /api/show endpoint.
+//
+// modelfile and tensors are omitempty because api.ShowResponse declares them that way and a cloud
+// model has neither: its /api/show is proxied from ollama.com, which knows nothing about any
+// local blob. Emitting "modelfile":"" and "tensors":null for a cloud model would be a tell.
+// model_info deliberately has no omitempty — the real struct omits it too, so it is present even
+// when sparse.
 type showResponse struct {
 	License      string         `json:"license,omitempty"`
-	Modelfile    string         `json:"modelfile"`
+	Modelfile    string         `json:"modelfile,omitempty"`
 	Parameters   string         `json:"parameters,omitempty"`
 	Template     string         `json:"template,omitempty"`
 	System       string         `json:"system,omitempty"`
 	Details      showDetails    `json:"details"`
 	ModelInfo    map[string]any `json:"model_info"`
-	Tensors      []tensor       `json:"tensors"`
+	Tensors      []tensor       `json:"tensors,omitempty"`
 	Capabilities []string       `json:"capabilities"`
 	ModifiedAt   string         `json:"modified_at"`
 }
@@ -111,6 +119,97 @@ func loadGroundedShowFixtures() map[string]showResponse {
 		out[model] = resp
 	}
 	return out
+}
+
+// registryDocFS embeds the license, template and parameter layers Ollama's registry ships for the
+// advertised models that have no full captured /api/show fixture.
+//
+//go:embed testdata/registry
+var registryDocFS embed.FS
+
+// registryDoc names the layer files backing one model's documentary /api/show fields.
+type registryDoc struct{ license, template, params string }
+
+// registryDocSources maps a model to its registry layers (threat_gg-y0i). Before this, the four
+// models without a captured fixture returned no license, template or parameters at all, while a
+// real `ollama show llama3.2` returns all three — and /api/show is actively probed.
+//
+// PRD 034 concluded that hand-authored model_info and tensor blobs are *more* fingerprintable
+// than a missing field, because they drift into self-contradiction. These three fields are a
+// different kind of thing: they are opaque published strings with exactly one correct value, and
+// every byte here was pulled from registry.ollama.ai and checksum-verified against the digest in
+// the model's own manifest. Nothing is paraphrased, reflowed or reconstructed — including the
+// "orginal" typo in Llama 3.2's template and the fullwidth U+FF5C delimiters in DeepSeek's, both
+// of which are genuinely in the shipped blobs.
+//
+// mistral:latest and llava:latest share the license and params files because they genuinely ship
+// byte-identical layers (llava:latest is the v1.6-Mistral build, so it inherits Mistral's
+// Apache-2.0 and its [INST] stop tokens). testdata/registry/README.md records every digest.
+var registryDocSources = map[string]registryDoc{
+	"llama3.2:latest": {"llama3.2_latest.license", "llama3.2_latest.template", "llama3.2_latest.params"},
+	"mistral:latest":  {"apache-2.0.license", "mistral_latest.template", "inst_stop.params"},
+	"deepseek-r1:8b":  {"deepseek-r1_8b.license", "deepseek-r1_8b.template", "deepseek-r1_8b.params"},
+	"llava:latest":    {"apache-2.0.license", "llava_latest.template", "inst_stop.params"},
+}
+
+// modelDocs holds the rendered documentary fields for one model.
+type modelDocs struct{ license, template, parameters string }
+
+var registryDocs = loadRegistryDocs()
+
+func loadRegistryDocs() map[string]modelDocs {
+	read := func(name string) []byte {
+		b, err := registryDocFS.ReadFile("testdata/registry/" + name)
+		if err != nil {
+			panic(fmt.Sprintf("read Ollama registry layer %s: %v", name, err))
+		}
+		return b
+	}
+	out := make(map[string]modelDocs, len(registryDocSources))
+	for model, src := range registryDocSources {
+		params, err := renderParameters(read(src.params))
+		if err != nil {
+			panic(fmt.Sprintf("render Ollama params layer %s: %v", src.params, err))
+		}
+		out[model] = modelDocs{
+			license:    string(read(src.license)),
+			template:   string(read(src.template)),
+			parameters: params,
+		}
+	}
+	return out
+}
+
+// renderParameters reproduces how Ollama turns a model's raw params layer into the flat string
+// /api/show reports. The real server formats each value as fmt.Sprintf("%-*s %#v", 30, key, value)
+// and joins with newlines, so a key is left-padded to 30 columns, then one space, then the Go
+// literal form of the value — which is why strings come back quoted and numbers do not. A list
+// value (stop tokens) expands to one line per element, in slice order.
+//
+// Keys are emitted in sorted order. Ollama itself ranges over a map here, so upstream ordering is
+// formally unspecified, but the captured gemma3:12b fixture came back alphabetical and this
+// honeypot's response caches depend on a byte-stable body anyway.
+func renderParameters(raw []byte) (string, error) {
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", err
+	}
+	keys := make([]string, 0, len(parsed))
+	for k := range parsed {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var lines []string
+	for _, k := range keys {
+		values := []any{parsed[k]}
+		if list, ok := parsed[k].([]any); ok {
+			values = list
+		}
+		for _, v := range values {
+			lines = append(lines, fmt.Sprintf("%-*s %#v", 30, k, v))
+		}
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 type architectureProfile struct {
@@ -199,6 +298,88 @@ func profileFor(m CatalogModel) architectureProfile {
 		headCount: heads, headCountKV: max(1, heads/4), ropeDimension: 128,
 		ropeFreqBase: 10000, tokenizerModel: "llama", tokenizerPre: "default",
 		bosTokenID: 1, eosTokenID: 2,
+	}
+}
+
+// cloudShowProfile holds what /api/show reports for a cloud model beyond what its /api/tags entry
+// already carries. A real server does not read the local stub to answer this — it proxies
+// ollama.com — so these are the upstream registry's own values, captured from that endpoint.
+type cloudShowProfile struct {
+	// architecture is the vendor's architecture slug, which upstream reports as details.family.
+	architecture string
+	// parameterCount is the exact upstream count. details.parameter_size is its decimal string.
+	parameterCount int64
+	// modifiedAt is the upstream publication timestamp, deliberately not the local manifest mtime
+	// that /api/tags reports for the same model. On a real box those two genuinely disagree.
+	modifiedAt string
+}
+
+var cloudShowProfiles = map[string]cloudShowProfile{
+	"gpt-oss:120b-cloud":    {architecture: "gptoss", parameterCount: 116829156672, modifiedAt: "2025-08-05T00:00:00Z"},
+	"deepseek-v4-pro:cloud": {architecture: "deepseek4", parameterCount: 1600000000000, modifiedAt: "2026-04-24T00:00:00Z"},
+	"glm-5.2:cloud":         {architecture: "glm5.2", parameterCount: 756162687872, modifiedAt: "2026-06-16T08:00:00-07:00"},
+	"kimi-k2.6:cloud":       {architecture: "kimi-k2", parameterCount: 1042000000000, modifiedAt: "2026-03-31T00:00:00Z"},
+	"minimax-m2.7:cloud":    {architecture: "minimax-m2", parameterCount: 229000000000, modifiedAt: "2026-03-18T00:00:00Z"},
+}
+
+// parseParameterCount converts a vendor parameter label ("117B", "1.6T", "0") into an approximate
+// count. Only reached for a cloud stub we do not advertise, where the label is all there is.
+func parseParameterCount(label string) int64 {
+	if label == "" {
+		return 0
+	}
+	mult := float64(1)
+	digits := label
+	switch strings.ToUpper(label[len(label)-1:]) {
+	case "M":
+		mult, digits = 1e6, label[:len(label)-1]
+	case "B":
+		mult, digits = 1e9, label[:len(label)-1]
+	case "T":
+		mult, digits = 1e12, label[:len(label)-1]
+	}
+	n, err := strconv.ParseFloat(digits, 64)
+	if err != nil {
+		return 0
+	}
+	return int64(n * mult)
+}
+
+// buildCloudShow answers /api/show for a cloud model the way a real server does: by relaying what
+// ollama.com says, which is a far thinner document than a local model's. There is no modelfile,
+// license, template, parameters or tensor inventory, because the box holds no blob for it — only
+// a four-key model_info, the details block and the capability list.
+//
+// details also disagrees with the same model's /api/tags entry in three ways, and it disagrees on
+// a real server too, so reproducing the disagreement matters: parent_model is populated with the
+// upstream name, family carries the architecture slug instead of being empty, and parameter_size
+// is the raw integer as a string rather than the vendor's rounded label ("116829156672", not
+// "117B"). context_length and embedding_length move out of details and into model_info.
+func buildCloudShow(m CatalogModel) showResponse {
+	p, grounded := cloudShowProfiles[showProfileName(m)]
+	if !grounded {
+		p = cloudShowProfile{
+			architecture:   strings.SplitN(m.RemoteModel, ":", 2)[0],
+			parameterCount: parseParameterCount(m.Details.ParameterSize),
+			modifiedAt:     m.ModifiedAt,
+		}
+	}
+	arch := p.architecture
+	return showResponse{
+		Details: showDetails{
+			ParentModel:       m.RemoteModel,
+			Family:            arch,
+			ParameterSize:     strconv.FormatInt(p.parameterCount, 10),
+			QuantizationLevel: m.Details.QuantizationLevel,
+		},
+		ModelInfo: map[string]any{
+			"general.architecture":     arch,
+			"general.parameter_count":  p.parameterCount,
+			arch + ".context_length":   m.Details.ContextLength,
+			arch + ".embedding_length": m.Details.EmbeddingLength,
+		},
+		Capabilities: m.Capabilities,
+		ModifiedAt:   p.modifiedAt,
 	}
 }
 
@@ -315,6 +496,9 @@ func safeModelfileName(name string) string {
 
 // buildShow selects a captured response by source identity or builds a consistent fallback.
 func buildShow(m CatalogModel) showResponse {
+	if m.isCloud() {
+		return buildCloudShow(m)
+	}
 	profileName := showProfileName(m)
 	if grounded, ok := groundedShowFixtures[profileName]; ok && isSeedModel(m) {
 		if m.Name != profileName {
@@ -324,7 +508,7 @@ func buildShow(m CatalogModel) showResponse {
 		return grounded
 	}
 	safeName := safeModelfileName(m.Name)
-	return showResponse{
+	resp := showResponse{
 		Modelfile: fmt.Sprintf("# Modelfile generated by \"ollama show\"\n"+
 			"# To build a new Modelfile based on this, replace FROM with:\n"+
 			"# FROM %s\n\nFROM /root/.ollama/models/blobs/sha256-%s",
@@ -335,6 +519,17 @@ func buildShow(m CatalogModel) showResponse {
 		Capabilities: m.Capabilities,
 		ModifiedAt:   m.ModifiedAt,
 	}
+	// Attach the registry's own license, template and parameter layers for advertised models
+	// (threat_gg-y0i). Gated on isSeedModel for the same reason the grounded fixtures are: these
+	// documents belong to a specific registry model, so they may only be served for an entry that
+	// still carries that model's digest. A copy inherits them, which is correct — a copied model
+	// really does keep the source's template and license.
+	if docs, ok := registryDocs[showProfileName(m)]; ok && isSeedModel(m) {
+		resp.License = docs.license
+		resp.Template = docs.template
+		resp.Parameters = docs.parameters
+	}
+	return resp
 }
 
 var seedModelDigests = func() map[string]string {
@@ -393,8 +588,12 @@ func buildShowPayload(m CatalogModel) showPayload {
 	key := showCacheKey{name: m.Name, digest: m.Digest, modifiedAt: m.ModifiedAt}
 	response := buildShow(m)
 	// Grounded fixtures retain their captured content, but use the stable timestamp belonging to
-	// the catalog entry currently being served.
-	response.ModifiedAt = m.ModifiedAt
+	// the catalog entry currently being served. Cloud models are the exception: their /api/show
+	// timestamp comes from ollama.com and is genuinely different from the local manifest mtime
+	// that /api/tags reports, so overwriting it here would erase a real divergence.
+	if !m.isCloud() {
+		response.ModifiedAt = m.ModifiedAt
+	}
 	body, err := json.Marshal(response)
 	if err != nil {
 		// showResponse contains only JSON-native fixture/profile values. A marshal failure is a

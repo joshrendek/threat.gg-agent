@@ -20,6 +20,10 @@ func TestIsSignalPath(t *testing.T) {
 		"/completion", "/tokenize", "/detokenize", "/slots", "/system_stats", "/object_info",
 		"/queue", "/prompt", "/history", "/history/abc-123-uuid",
 		"/nodes", "/v1/models/", // trailing slash tolerated
+		// Upstream endpoints the honeypots do not route: the probe 404s, but knowing the
+		// product-specific path is itself the signal (threat_gg-vb7).
+		"/apply-template", "/lora-adapters", "/embeddings", "/extensions",
+		"/view", "/upload/image", "/free", "/tts", "/backend/monitor",
 	}
 	for _, p := range signal {
 		if !isSignalPath(p) {
@@ -31,6 +35,9 @@ func TestIsSignalPath(t *testing.T) {
 		"/nice ports,/Trinity.txt.bak", "*", "/mcp", "/sse", "/api", "/app", "/_next",
 		"/_next/server", "/api/route", "/../../../../etc/passwd", "/HNAP1", "/webui",
 		"/.well-known/security.txt", "/evox/about", "/sdk",
+		// Deliberately still noise: generic enough to draw ordinary scan traffic, and this
+		// table is shared with the high-volume ollama honeypot (threat_gg-vb7).
+		"/logs", "/ws", "/upload",
 	}
 	for _, p := range noise {
 		if isSignalPath(p) {

@@ -53,6 +53,14 @@ service Honeypot {
   rpc SaveComfyui(LlmRequest) returns (SaveReply) {}
   rpc SaveFile(FileUploadRequest) returns (SaveReply) {}
   rpc SaveMcp(McpRequest) returns (SaveReply) {}
+  // GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
+  // Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
+  // bundle behind an atomic.Pointer and matches locally, so nothing on the
+  // inference request path touches the network. known_version is the ETag; an
+  // unchanged pull answers unchanged=true with no rules. Rides this service
+  // (rather than a new HTTP surface) because the agent already holds an
+  // authenticated TLS channel with API_KEY in metadata.
+  rpc GetLlmBundle (LlmBundleRequest) returns (LlmBundleReply) {}
 }
 
 message SaveReply {
@@ -123,6 +131,11 @@ message LlmRequest {
   LlmResponseSource response_source = 12;
   LlmStreamOutcome stream_outcome = 13;
   LlmReplyKind reply_kind = 14;
+  // rule_id is set ONLY when an admin-authored corpus rule (PRD 034) produced
+  // the reply, and carries that llm_prompt_rules row's uuid. The server parses
+  // it as a UUID and drops anything else, exactly like allowLlmLabel bounds the
+  // enum labels -- this field must never become a free-text sink.
+  string rule_id = 15;
 }
 
 // These enums deliberately keep response telemetry bounded. The agent must
@@ -156,6 +169,66 @@ enum LlmReplyKind {
   LLM_REPLY_KIND_CONSTRAINED_PROSE = 11;
   LLM_REPLY_KIND_ARITHMETIC_NONCE = 12;
   LLM_REPLY_KIND_MODEL_LIFECYCLE = 13;
+  // Emitted when the agent's unsafe-prompt branch answers with refusal language.
+  // Previously these were folded into GENERIC_SAFE, which made a jailbreak attempt
+  // indistinguishable from a prompt we simply did not recognize.
+  LLM_REPLY_KIND_SAFETY_REFUSAL = 14;
+  // Emitted when an admin-authored corpus rule (PRD 034) answered. A rule may
+  // instead declare a more specific telemetry_kind from the values above -- a
+  // corpus rule answering an arithmetic probe still reports ARITHMETIC -- so the
+  // historical per-kind series stays comparable across the corpus rollout.
+  LLM_REPLY_KIND_CORPUS_RULE = 15;
+}
+
+// --- PRD 034: server-pushed LLM prompt-rules bundle ---
+
+message LlmBundleRequest {
+  // known_version is the ETag: the bundle version the caller already holds.
+  // Empty means "I have nothing"; a match means the server answers
+  // unchanged=true and sends no rules.
+  string known_version = 1;
+}
+
+message LlmBundleReply {
+  string version = 1;   // sha256 over the ordered enabled ruleset
+  bool unchanged = 2;   // true ⇒ rules is empty, keep the bundle you have
+  repeated LlmPromptRule rules = 3;
+  // catalog is RESERVED for Phase 2 (server-pushed model catalog identity) and
+  // is always empty in Phase 1. Reserved now so populating it later is not a
+  // breaking wire change.
+  repeated LlmCatalogModel catalog = 4;
+}
+
+// LlmPromptRule is one llm_prompt_rules row, minus the columns the fleet has no
+// business seeing: `enabled` (the bundle only ever carries enabled rules) and
+// `note` (an operator's campaign notes, which must not ship to 28 honeypots).
+message LlmPromptRule {
+  string id = 1;              // llm_prompt_rules.id, echoed back as LlmRequest.rule_id
+  string match_kind = 2;      // contains|prefix|exact|regex|builtin_disable
+  string pattern = 3;         // matched against the NORMALIZED prompt; for builtin_disable, names a builtin_id
+  string reply_kind = 4;      // static|engine:echo_literal|engine:arithmetic
+  string reply_text = 5;      // literal reply, served verbatim -- never interpolated (safety invariant 2)
+  string telemetry_kind = 6;  // LlmReplyKind label to report for captures this rule answers
+  string stage = 7;           // pre_builtin|post_builtin
+  int32 priority = 8;         // lower evaluates first within a stage
+  string language = 9;        // informational BCP-47-ish tag
+}
+
+// LlmCatalogModel carries model IDENTITY only -- never /api/show payloads, which
+// stay byte-grounded in the agent binary next to their fixtures (PRD 034, "Should
+// the model catalog ride the same bundle?"). Phase 2; never populated in Phase 1.
+message LlmCatalogModel {
+  string name = 1;
+  int64 size = 2;
+  string digest_seed = 3;
+  string family = 4;
+  string parameter_size = 5;
+  string quantization_level = 6;
+  int64 context_length = 7;
+  int64 embedding_length = 8;
+  repeated string capabilities = 9;
+  string architecture = 10;
+  int64 block_count = 11;
 }
 
 message McpRequest {

@@ -170,6 +170,7 @@ const (
 	Honeypot_SaveComfyui_FullMethodName          = "/honeypot.Honeypot/SaveComfyui"
 	Honeypot_SaveFile_FullMethodName             = "/honeypot.Honeypot/SaveFile"
 	Honeypot_SaveMcp_FullMethodName              = "/honeypot.Honeypot/SaveMcp"
+	Honeypot_GetLlmBundle_FullMethodName         = "/honeypot.Honeypot/GetLlmBundle"
 )
 
 // HoneypotClient is the client API for Honeypot service.
@@ -219,6 +220,14 @@ type HoneypotClient interface {
 	SaveComfyui(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveFile(ctx context.Context, in *FileUploadRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveMcp(ctx context.Context, in *McpRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
+	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
+	// bundle behind an atomic.Pointer and matches locally, so nothing on the
+	// inference request path touches the network. known_version is the ETag; an
+	// unchanged pull answers unchanged=true with no rules. Rides this service
+	// (rather than a new HTTP surface) because the agent already holds an
+	// authenticated TLS channel with API_KEY in metadata.
+	GetLlmBundle(ctx context.Context, in *LlmBundleRequest, opts ...grpc.CallOption) (*LlmBundleReply, error)
 }
 
 type honeypotClient struct {
@@ -659,6 +668,16 @@ func (c *honeypotClient) SaveMcp(ctx context.Context, in *McpRequest, opts ...gr
 	return out, nil
 }
 
+func (c *honeypotClient) GetLlmBundle(ctx context.Context, in *LlmBundleRequest, opts ...grpc.CallOption) (*LlmBundleReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LlmBundleReply)
+	err := c.cc.Invoke(ctx, Honeypot_GetLlmBundle_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoneypotServer is the server API for Honeypot service.
 // All implementations must embed UnimplementedHoneypotServer
 // for forward compatibility.
@@ -706,6 +725,14 @@ type HoneypotServer interface {
 	SaveComfyui(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveFile(context.Context, *FileUploadRequest) (*SaveReply, error)
 	SaveMcp(context.Context, *McpRequest) (*SaveReply, error)
+	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
+	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
+	// bundle behind an atomic.Pointer and matches locally, so nothing on the
+	// inference request path touches the network. known_version is the ETag; an
+	// unchanged pull answers unchanged=true with no rules. Rides this service
+	// (rather than a new HTTP surface) because the agent already holds an
+	// authenticated TLS channel with API_KEY in metadata.
+	GetLlmBundle(context.Context, *LlmBundleRequest) (*LlmBundleReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
 
@@ -844,6 +871,9 @@ func (UnimplementedHoneypotServer) SaveFile(context.Context, *FileUploadRequest)
 }
 func (UnimplementedHoneypotServer) SaveMcp(context.Context, *McpRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveMcp not implemented")
+}
+func (UnimplementedHoneypotServer) GetLlmBundle(context.Context, *LlmBundleRequest) (*LlmBundleReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetLlmBundle not implemented")
 }
 func (UnimplementedHoneypotServer) mustEmbedUnimplementedHoneypotServer() {}
 func (UnimplementedHoneypotServer) testEmbeddedByValue()                  {}
@@ -1640,6 +1670,24 @@ func _Honeypot_SaveMcp_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_GetLlmBundle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LlmBundleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).GetLlmBundle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_GetLlmBundle_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).GetLlmBundle(ctx, req.(*LlmBundleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Honeypot_ServiceDesc is the grpc.ServiceDesc for Honeypot service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1818,6 +1866,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveMcp",
 			Handler:    _Honeypot_SaveMcp_Handler,
+		},
+		{
+			MethodName: "GetLlmBundle",
+			Handler:    _Honeypot_GetLlmBundle_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -156,6 +156,17 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			continue
 		}
 
+		// The COMMAND family is derived from the compiled command table, which also has to
+		// come before the server-authored lookup: COMMAND COUNT must equal the number of
+		// entries bare COMMAND returns, and only the binary knows that number. See
+		// commandTableResponse.
+		if handled, tableErr := commandTableResponse(args, conn); handled {
+			if tableErr != nil {
+				break
+			}
+			continue
+		}
+
 		// Server-authored response override (admin-editable command_responses, scoped to
 		// command_type="redis"). On a Matched row we write it verbatim and skip the
 		// hardcoded switch; on miss/error we fall through so behavior never regresses if
@@ -174,7 +185,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		case "AUTH":
 			cmdErr = handleAuth(args, conn, sess)
 		case "INFO":
-			cmdErr = handleInfo(args, conn)
+			cmdErr = handleInfo(args, conn, sess)
 		case "CONFIG":
 			if len(args) > 1 {
 				sub := strings.ToUpper(args[1])
@@ -201,8 +212,6 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			cmdErr = handleDbsize(conn)
 		case "SELECT":
 			cmdErr = handleSelect(conn)
-		case "COMMAND":
-			cmdErr = handleCommand(args, conn)
 		case "CLIENT":
 			cmdErr = handleClient(args, conn)
 		case "SLAVEOF", "REPLICAOF":

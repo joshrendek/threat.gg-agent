@@ -2,6 +2,7 @@ package ollama
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"net"
 	"net/http"
@@ -25,9 +26,16 @@ type Details struct {
 }
 
 // CatalogModel is one locally-present model.
+//
+// RemoteModel and RemoteHost are populated only for cloud models and are omitted otherwise,
+// matching api.ListModelResponse. Their field position between Model and ModifiedAt is the real
+// struct order: encoding/json emits struct fields in declaration order, so moving them would
+// reorder every /api/tags entry against a real server.
 type CatalogModel struct {
 	Name         string   `json:"name"`
 	Model        string   `json:"model"`
+	RemoteModel  string   `json:"remote_model,omitempty"`
+	RemoteHost   string   `json:"remote_host,omitempty"`
 	ModifiedAt   string   `json:"modified_at"`
 	Size         int64    `json:"size"`
 	Digest       string   `json:"digest"`
@@ -52,6 +60,21 @@ type CatalogModel struct {
 // validation loop that is already working. The other four widen the surface: since off-catalog
 // models now get a faithful 404 (a real box only serves what its owner pulled), the way to keep
 // probes landing is to stock a bigger shelf, not to answer for models we do not list.
+//
+// The last five entries are Ollama *cloud* models (threat_gg-1to). A cloud model is a thin local
+// stub that turns the box into an authenticated proxy to Ollama's hosted inference, so an exposed
+// one is free frontier-model access — which is why a scanner campaign is enumerating them (~60
+// probes across 20+ names on 2026-07-29, all of which we used to 404). Advertising them in
+// /api/tags is the whole point: captured traffic shows this campaign reads /api/tags first and
+// then probes the names it finds there, so a cloud model that existed but was only reachable by
+// name would never be discovered. It is also what a real box does — cloud stubs are ordinary
+// /api/tags entries — so hiding them would itself be the divergence.
+//
+// Only names that genuinely resolve in the registry are listed. The campaign's list is a mix of
+// real and invented names (`glm-5:cloud`, `gpt-oss:cloud`, `qwen3-coder:cloud` and
+// `minimax-m2.1:cloud` all 404 upstream today), and advertising a model that does not exist
+// upstream is a tell in the other direction. Five is also a plausible number for one operator to
+// have pulled; mirroring all nineteen would not be.
 var seedModels = []CatalogModel{
 	{
 		Name: "llama3.2:latest", Model: "llama3.2:latest",
@@ -125,6 +148,79 @@ var seedModels = []CatalogModel{
 		Capabilities: []string{"completion", "vision"},
 		arch:         "llama", blocks: 32,
 	},
+
+	// Cloud stubs. Every value below is taken from the model's real registry manifest
+	// (`registry.ollama.ai/v2/library/<name>/manifests/cloud`), not estimated:
+	//
+	//   - Size is the manifest's config-blob size, which is the entire "model" — cloud manifests
+	//     carry zero layers, so a few hundred bytes is the real footprint. A multi-GB size here
+	//     would be the giveaway, since the weights are not local.
+	//   - Digest is sha256 of the raw 264-byte manifest document, matching how Ollama rehashes
+	//     the manifest file it wrote. These were computed from the registry bytes and then
+	//     confirmed against a live Ollama 0.30.11 that had actually pulled the model.
+	//   - Details.Format is "" and Families is nil, NOT "gguf"/["llama"]. There is no local GGUF
+	//     to describe. Claiming gguf is the single strongest tell an entry is fabricated.
+	//   - ParameterSize/QuantizationLevel are the vendor's own strings from the config blob,
+	//     including the empty quantization real stubs sometimes carry.
+	//   - Capabilities order is verbatim from the manifest; it is not sorted, and it differs per
+	//     vendor (gpt-oss leads with "completion", glm with "thinking", kimi with "vision").
+	{
+		Name: "gpt-oss:120b-cloud", Model: "gpt-oss:120b-cloud",
+		RemoteModel: "gpt-oss:120b", RemoteHost: cloudHost,
+		Size:   307,
+		Digest: "ac7f7a1e778577c4418f6a25e46e0b45dced6746c75422d4b343aa1495a022ed",
+		Details: Details{
+			ParameterSize: "117B", QuantizationLevel: "MXFP4",
+			ContextLength: 131072, EmbeddingLength: 2880,
+		},
+		Capabilities: []string{"completion", "tools", "thinking"},
+	},
+	{
+		Name: "deepseek-v4-pro:cloud", Model: "deepseek-v4-pro:cloud",
+		RemoteModel: "deepseek-v4-pro", RemoteHost: cloudHost,
+		Size:   311,
+		Digest: "8f16fc83d742accf2cd66fc41113f1f8d1352b056a956de1a6bf7618b6dcd760",
+		Details: Details{
+			ParameterSize: "1.6T", QuantizationLevel: "FP8",
+			ContextLength: 524288, EmbeddingLength: 4096,
+		},
+		Capabilities: []string{"completion", "tools", "thinking"},
+	},
+	{
+		Name: "glm-5.2:cloud", Model: "glm-5.2:cloud",
+		RemoteModel: "glm-5.2", RemoteHost: cloudHost,
+		Size:   290,
+		Digest: "7e916d58b3256274892e4dc7ef6723ab2528d797da47907c1887899020ec035b",
+		Details: Details{
+			// Quantization is genuinely empty on this stub, and embedding_length is genuinely 0
+			// (so it drops out via omitempty, exactly as it does upstream).
+			ParameterSize: "756B", QuantizationLevel: "",
+			ContextLength: 1000000,
+		},
+		Capabilities: []string{"thinking", "completion", "tools"},
+	},
+	{
+		Name: "kimi-k2.6:cloud", Model: "kimi-k2.6:cloud",
+		RemoteModel: "kimi-k2.6", RemoteHost: cloudHost,
+		Size:   310,
+		Digest: "0d3854574c71904ea116a2de680f0d35d4bad047a5503b6eeb0601679c2c15c3",
+		Details: Details{
+			ParameterSize: "1.04T", QuantizationLevel: "INT4",
+			ContextLength: 262144, EmbeddingLength: 2048,
+		},
+		Capabilities: []string{"vision", "thinking", "completion", "tools"},
+	},
+	{
+		Name: "minimax-m2.7:cloud", Model: "minimax-m2.7:cloud",
+		RemoteModel: "minimax-m2.7", RemoteHost: cloudHost,
+		Size:   302,
+		Digest: "709d8858c35ebed0532b37308801ff9b64d3df2c0aab54367e7d2baa70136206",
+		Details: Details{
+			ParameterSize: "229B", QuantizationLevel: "",
+			ContextLength: 196608, EmbeddingLength: 3072,
+		},
+		Capabilities: []string{"completion", "tools", "thinking"},
+	},
 }
 
 // catalog holds an immutable base model list plus per-source-IP overlays.
@@ -195,6 +291,97 @@ func newCatalog() *catalog {
 			Format(time.RFC3339Nano)
 	}
 	return c
+}
+
+// -- cloud models
+
+const (
+	// cloudHost is the remote_host a cloud stub reports. Older stubs carry the ":443" form, but
+	// the current registry writes the bare origin, which is what a freshly pulled stub has.
+	cloudHost = "https://ollama.com"
+	// cloudTag is the tag on a bare cloud reference ("glm-5.2:cloud"). Sized references use the
+	// "<size>-cloud" suffix instead ("gpt-oss:120b-cloud"). Both forms exist upstream.
+	cloudTag       = "cloud"
+	cloudTagSuffix = "-" + cloudTag
+	// cloudStubMinSize and cloudStubSizeSpread bound the synthesised footprint of a cloud stub we
+	// do not host. Every cloud config blob in the registry lands between 290 and 390 bytes: the
+	// blob is a fixed set of JSON keys whose only variable-length values are the model name and
+	// the vendor's own strings.
+	cloudStubMinSize    = 290
+	cloudStubSizeSpread = 101
+	// cloudFallbackContext is the modal context length across the live cloud catalog, used for a
+	// stub whose real context length we cannot know.
+	cloudFallbackContext = 262144
+)
+
+// isCloud reports whether this entry is a cloud stub rather than a local GGUF. RemoteHost is the
+// same discriminator the real server keys on.
+func (m CatalogModel) isCloud() bool { return m.RemoteHost != "" }
+
+// splitCloudName recognises the two cloud reference forms and reports the upstream model name
+// (what Ollama stores as remote_model) plus the size token, if any:
+//
+//	"glm-5.2:cloud"      -> remote "glm-5.2",      size ""      , ok
+//	"gpt-oss:120b-cloud" -> remote "gpt-oss:120b", size "120b"  , ok
+//	"llama3.2:latest"    -> ok == false
+//
+// The upstream name is the reference with the cloud marker stripped, which is exactly how the
+// registry populates remote_model.
+func splitCloudName(n string) (remote, size string, ok bool) {
+	i := strings.LastIndex(n, ":")
+	if i <= 0 {
+		return "", "", false
+	}
+	base, tag := n[:i], strings.ToLower(n[i+1:])
+	switch {
+	case tag == cloudTag:
+		return base, "", true
+	case strings.HasSuffix(tag, cloudTagSuffix):
+		size = strings.TrimSuffix(tag, cloudTagSuffix)
+		if size == "" {
+			return "", "", false
+		}
+		return base + ":" + size, size, true
+	}
+	return "", "", false
+}
+
+// cloudModelForName builds a plausible cloud stub for a cloud reference the honeypot does not
+// advertise, so an attacker who pulls one still finds it in /api/tags and goes on to use it.
+//
+// Unknowable fields take the shape a real stub uses rather than a local-model shape: no gguf
+// format, no families, no quantization, and a few-hundred-byte footprint instead of gigabytes.
+// Where a sized reference names its own parameter count that token is used — it is what the
+// attacker asked for, even though the registry's own figure is often slightly different
+// (gpt-oss:120b-cloud really reports "117B"). A bare ":cloud" reference carries no size
+// information at all, and "0" is what the registry itself serves when a vendor leaves model_type
+// unset, as minimax-m3:cloud does today.
+func cloudModelForName(n, remote, size string) CatalogModel {
+	params := "0"
+	if size != "" {
+		params = strings.ToUpper(size)
+	}
+	return CatalogModel{
+		Name: n, Model: n,
+		RemoteModel: remote, RemoteHost: cloudHost,
+		ModifiedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Size:       cloudStubSize(n),
+		Digest:     pseudoDigest(n),
+		Details: Details{
+			ParameterSize: params,
+			ContextLength: cloudFallbackContext,
+		},
+		Capabilities: []string{"completion", "tools", "thinking"},
+		showProfile:  n,
+	}
+}
+
+// cloudStubSize derives a stable footprint inside the range real cloud manifests occupy. The
+// exact byte count for a model we do not host is unknowable, so it is derived from the name:
+// stable across polls, which is the property a scanner can actually check.
+func cloudStubSize(n string) int64 {
+	sum := sha256.Sum256([]byte("cloud-stub-size/" + n))
+	return cloudStubMinSize + int64(binary.BigEndian.Uint32(sum[:4])%cloudStubSizeSpread)
 }
 
 // normalize applies Ollama's implicit ":latest" tag so "llama3.2" and "llama3.2:latest" resolve
@@ -518,6 +705,12 @@ func buildModelForName(name string) CatalogModel {
 			seeded.ModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			return seeded
 		}
+	}
+	// A cloud reference describes a model with no local weights at all, so it must never reach
+	// the size table below: that table describes a local GGUF, and letting "gpt-oss:120b-cloud"
+	// fall through to the defaults reported it as a 7B llama with a 4 GB local footprint.
+	if remote, size, ok := splitCloudName(n); ok {
+		return cloudModelForName(n, remote, size)
 	}
 	tag := ""
 	if i := strings.LastIndex(n, ":"); i >= 0 {
