@@ -51,7 +51,7 @@ func TestHandleAuthWithUsername(t *testing.T) {
 
 func TestHandleInfo(t *testing.T) {
 	var buf bytes.Buffer
-	handleInfo([]string{"INFO"}, &buf)
+	handleInfo([]string{"INFO"}, &buf, &session{})
 	result := buf.String()
 	if !strings.Contains(result, "redis_version:7.2.4") {
 		t.Fatalf("expected redis version in INFO response, got %q", result)
@@ -66,7 +66,7 @@ func TestHandleInfo(t *testing.T) {
 
 func TestHandleInfoSection(t *testing.T) {
 	var buf bytes.Buffer
-	handleInfo([]string{"INFO", "server"}, &buf)
+	handleInfo([]string{"INFO", "server"}, &buf, &session{})
 	result := buf.String()
 	if !strings.Contains(result, "# Server") {
 		t.Fatalf("expected Server section")

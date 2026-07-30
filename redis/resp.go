@@ -117,3 +117,26 @@ func writeArray(w io.Writer, items []string) error {
 	}
 	return nil
 }
+
+// writeSimpleStringArray emits an array of RESP simple strings. Some replies (COMMAND HELP,
+// and the flags inside the command table) use simple strings where an array of bulk strings
+// would be the obvious guess; the distinction is visible on the wire.
+func writeSimpleStringArray(w io.Writer, items []string) error {
+	if _, err := fmt.Fprintf(w, "*%d\r\n", len(items)); err != nil {
+		return err
+	}
+	for _, item := range items {
+		if err := writeSimpleString(w, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeRawFrame writes an already-encoded RESP frame. Used only for frames captured from a
+// real redis or sliced out of one, never for anything assembled here — the point is that
+// their length prefixes were produced by redis itself and are copied, not recomputed.
+func writeRawFrame(w io.Writer, frame []byte) error {
+	_, err := w.Write(frame)
+	return err
+}

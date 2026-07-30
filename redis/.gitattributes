@@ -1,0 +1,4 @@
+# The .resp fixtures are captured RESP2 frames whose $<len> prefixes count the CRLFs in the
+# payload. A checkout that normalised CRLF to LF (core.autocrlf=input/true) would silently
+# invalidate every length prefix in them, so they are never treated as text.
+*.resp -text
