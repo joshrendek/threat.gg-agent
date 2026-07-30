@@ -21,6 +21,19 @@ jobs:
       - name: Install dependencies
         run: |
           go mod tidy
+      # PRD 034 makes -race load-bearing rather than optional: llmcore/promptrules'
+      # atomic.Pointer bundle is the first shared mutable state on the LLM request
+      # path, read without a lock by every honeypot goroutine while the poller swaps
+      # it. A torn read there is invisible in a normal run and shows up in production
+      # as a honeypot answering from half a corpus.
+      #
+      # This step runs on PRs and on master, and it runs BEFORE Build so a red test
+      # stops the release below -- the fleet's auto-updater installs whatever master
+      # publishes, so "tests fail but it shipped anyway" is not a state worth having.
+      - name: Test
+        run: |
+          go vet ./llmcore/... ./cmdresp/... ./persistence/...
+          go test -race -count=1 ./...
       - name: Build
         run: |
           make build

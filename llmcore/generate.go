@@ -14,6 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/joshrendek/threat.gg-agent/llmcore/promptrules"
 	"github.com/joshrendek/threat.gg-agent/proto"
 )
 
@@ -81,6 +82,11 @@ var refusalPool = []string{
 // generated text.
 type ReplyKind string
 
+// The string values are the LlmReplyKind LABELS the server allowlists
+// (internal/promptrules.TelemetryKinds, internal/handler/attack_payload.go). That is
+// what lets a corpus rule's telemetry_kind be converted with a plain cast: the two
+// vocabularies are the same vocabulary, and classifiedReply is the one place that
+// maps a label to its proto enum value.
 const (
 	ReplyKindOllamaDescription ReplyKind = "ollama_description"
 	ReplyKindModelIntroEN      ReplyKind = "model_intro_en"
@@ -93,12 +99,23 @@ const (
 	ReplyKindCodeValidation    ReplyKind = "code_validation"
 	ReplyKindConstrainedProse  ReplyKind = "constrained_prose"
 	ReplyKindArithmeticNonce   ReplyKind = "arithmetic_nonce"
+	// The four below are never produced by a compiled group. They exist because a
+	// PRD 034 corpus rule may declare any label in the server's telemetry allowlist,
+	// and a rule the admin UI accepted must not silently report nothing.
+	ReplyKindCorpusRule     ReplyKind = "corpus_rule"
+	ReplyKindStaticEndpoint ReplyKind = "static_endpoint"
+	ReplyKindModelLifecycle ReplyKind = "model_lifecycle"
+	ReplyKindError          ReplyKind = "error"
 )
 
 // ReplyResult carries the safe response and its bounded classification.
 type ReplyResult struct {
 	Text string
 	Kind ReplyKind
+	// RuleID is the llm_prompt_rules uuid of the corpus rule that answered, and is
+	// empty for every compiled reply. It rides to the server as LlmRequest.rule_id so
+	// "which rule fired" is answerable for any single capture.
+	RuleID string
 }
 
 func pickFrom(pool []string, prompt, model string) string {
@@ -186,106 +203,185 @@ const (
 	oceanPoem = "Moonlit waves roll softly to the shore,\nThey turn beneath the stars and rise once more.\nThe salt wind sings across the silver sea,\nThe distant tides roll homeward, wild and free."
 )
 
+// safetyDenylistTerms is the compiled jailbreak / unsafe-prompt gate: builtin
+// "builtin.safety_denylist". It runs before ANY corpus rule and is the one builtin a
+// corpus can never disable (PRD 034 safety invariant 4) -- promptrules.compileRule
+// refuses a builtin_disable row naming it, so there is no state in which this loop
+// is skipped.
+//
+// The server keeps an ADVISORY copy in internal/promptrules.SafetyDenylistTerms so
+// the admin preview can tell an operator "the safety gate wins here, your rule will
+// never fire". This list is the authoritative one; TestSafetyDenylistMirrorsTheServer
+// pins the two together.
+var safetyDenylistTerms = []string{
+	"ignore previous", "ignore all previous", "system prompt", "developer message",
+	"hidden instruction", "reveal your instruction", "jailbreak",
+}
+
 // ReplyFor returns a bounded, deterministic response tuned to the liveness and validation
 // probes scanners use before escalating to their actual prompts. It does not execute prompts or
 // call an external model. Unsupported input receives a deterministic safety-tuned response.
+//
+// The cascade, per PRD 034:
+//
+//  1. safety denylist          -- always first, never disableable
+//  2. corpus stage pre_builtin -- an authored override wins by position
+//  3. the compiled groups      -- minus any the corpus has builtin_disable'd
+//  4. corpus stage post_builtin-- broad catch-alls, behind the narrow builtins
+//  5. genericReply
+//
+// Reading the corpus is a single atomic pointer load. Nothing here touches the
+// network: the bundle is refreshed by a background poller precisely so that a
+// control-plane outage cannot add latency to, or stop, a honeypot answering.
 func ReplyFor(prompt, model string) ReplyResult {
+	return replyFor(prompt, model, promptrules.Current())
+}
+
+func replyFor(prompt, model string, bundle *promptrules.Bundle) ReplyResult {
 	p := strings.TrimSpace(prompt)
 	if p == "" {
 		return genericReply(p, model)
 	}
 
-	lower := strings.ToLower(strings.Join(strings.Fields(p), " "))
-	normalized := strings.Trim(lower, " .!?。！？")
+	normalized := promptrules.Normalize(p)
 
-	for _, unsafe := range []string{
-		"ignore previous", "ignore all previous", "system prompt", "developer message",
-		"hidden instruction", "reveal your instruction", "jailbreak",
-	} {
+	for _, unsafe := range safetyDenylistTerms {
 		if strings.Contains(normalized, unsafe) {
 			return refusalReply(p, model)
 		}
 	}
 
-	if strings.Contains(normalized, "ollama server") &&
+	// One matcher per request carries the per-request match budget across both stages.
+	matcher := bundle.Matcher()
+	if result, ok := corpusReply(matcher, promptrules.StagePreBuiltin, p, normalized, model); ok {
+		return result
+	}
+	if result, ok := builtinReply(bundle, p, normalized, model); ok {
+		return result
+	}
+	if result, ok := corpusReply(matcher, promptrules.StagePostBuiltin, p, normalized, model); ok {
+		return result
+	}
+	return genericReply(p, model)
+}
+
+// builtinReply is the 13 compiled rule groups, unchanged in content and order from
+// before PRD 034 and now gated by the corpus's builtin_disable set. With no bundle
+// loaded, `on` is true for every id and this function is byte-for-byte the cascade
+// that shipped; llmcore/testdata/golden_replies.json is the proof rather than the
+// claim.
+func builtinReply(bundle *promptrules.Bundle, p, normalized, model string) (ReplyResult, bool) {
+	on := func(id string) bool { return !bundle.BuiltinDisabled(id) }
+
+	if on(promptrules.BuiltinOllamaDescription) && strings.Contains(normalized, "ollama server") &&
 		(strings.Contains(normalized, "what") && strings.Contains(normalized, "does") ||
 			strings.Contains(normalized, "describe") || strings.Contains(normalized, "description")) {
 		return ReplyResult{
 			Text: "An Ollama server hosts and runs language models locally, exposing APIs for chat and text generation.",
 			Kind: ReplyKindOllamaDescription,
-		}
+		}, true
 	}
-	if strings.Contains(p, "中文") &&
+	if on(promptrules.BuiltinIntroZH) && strings.Contains(p, "中文") &&
 		(strings.Contains(p, "介绍一下你自己") || strings.Contains(p, "介绍你自己")) {
 		return ReplyResult{
 			Text: fmt.Sprintf("我是 %s，可协助文本生成、问答、总结和编程，但回答可能有误。", displayModel(model)),
 			Kind: ReplyKindModelIntroZH,
+		}, true
+	}
+	if on(promptrules.BuiltinCodeValidation) {
+		if code, ok := observedCodeValidation(normalized); ok {
+			return ReplyResult{Text: code, Kind: ReplyKindCodeValidation}, true
 		}
 	}
-	if code, ok := observedCodeValidation(normalized); ok {
-		return ReplyResult{Text: code, Kind: ReplyKindCodeValidation}
-	}
-	if strings.Contains(normalized, "exactly 100 words") &&
+	if on(promptrules.BuiltinProseLighthouse) &&
+		strings.Contains(normalized, "exactly 100 words") &&
 		strings.Contains(normalized, "lighthouse keeper") &&
 		strings.Contains(normalized, "message in a bottle") {
-		return ReplyResult{Text: lighthouseProse, Kind: ReplyKindConstrainedProse}
+		return ReplyResult{Text: lighthouseProse, Kind: ReplyKindConstrainedProse}, true
 	}
-	if strings.Contains(normalized, "exactly 50 words") &&
+	if on(promptrules.BuiltinProseRain) &&
+		strings.Contains(normalized, "exactly 50 words") &&
 		strings.Contains(normalized, "walking home") &&
 		strings.Contains(normalized, "rain") {
-		return ReplyResult{Text: rainProse, Kind: ReplyKindConstrainedProse}
+		return ReplyResult{Text: rainProse, Kind: ReplyKindConstrainedProse}, true
 	}
-	if strings.Contains(normalized, "4-line poem") &&
+	if on(promptrules.BuiltinPoemOcean) &&
+		strings.Contains(normalized, "4-line poem") &&
 		strings.Contains(normalized, "ocean") &&
 		strings.Contains(normalized, "rhyming") {
-		return ReplyResult{Text: oceanPoem, Kind: ReplyKindConstrainedProse}
+		return ReplyResult{Text: oceanPoem, Kind: ReplyKindConstrainedProse}, true
 	}
-	if asksForSpanishIntroduction(normalized) {
+	// Both introduction branches sit under builtin.intro_en: the Spanish one already
+	// reports the English reply kind, and the server's BuiltinIDs table has no
+	// builtin.intro_es to name it with. See promptrules' builtin-id block.
+	if on(promptrules.BuiltinIntroEN) && asksForSpanishIntroduction(normalized) {
 		return ReplyResult{
 			Text: fmt.Sprintf("Soy %s, un modelo de IA que puede ayudarte con preguntas, redacción, resúmenes y programación.", displayModel(model)),
 			// Spanish introductions reuse the EN intro kind; a distinct value needs a proto change.
 			Kind: ReplyKindModelIntroEN,
-		}
+		}, true
 	}
-	if asksForEnglishIntroduction(normalized) {
+	if on(promptrules.BuiltinIntroEN) && asksForEnglishIntroduction(normalized) {
 		return ReplyResult{
 			Text: fmt.Sprintf("I'm %s, an AI model that can help with questions, writing, summarization, and coding.", displayModel(model)),
 			Kind: ReplyKindModelIntroEN,
-		}
+		}, true
 	}
-	if m := arithNonceRe.FindStringSubmatch(p); m != nil {
-		if s, ok := computeArith(m[1], m[2], m[3]); ok {
-			if nonce := cleanLiteralEcho(m[4]); nonce != "" {
-				return ReplyResult{Text: s + " " + nonce, Kind: ReplyKindArithmeticNonce}
+	if on(promptrules.BuiltinArithNonce) {
+		if m := arithNonceRe.FindStringSubmatch(p); m != nil {
+			if s, ok := computeArith(m[1], m[2], m[3]); ok {
+				if nonce := cleanLiteralEcho(m[4]); nonce != "" {
+					return ReplyResult{Text: s + " " + nonce, Kind: ReplyKindArithmeticNonce}, true
+				}
 			}
 		}
 	}
-	if s, ok := findArithmetic(p); ok {
-		return ReplyResult{Text: s, Kind: ReplyKindArithmetic}
+	if s, ok := findArithmetic(p, enabledArithPatterns(bundle)); ok {
+		return ReplyResult{Text: s, Kind: ReplyKindArithmetic}, true
 	}
 
-	switch normalized {
-	case "你好":
-		return ReplyResult{Text: "你好！有什么我可以帮助你的吗？", Kind: ReplyKindValidationFact}
-	case "say hi in one word":
-		return ReplyResult{Text: "Hi", Kind: ReplyKindValidationFact}
-	case "name a fruit", "give me a fruit":
-		return ReplyResult{Text: "Apple.", Kind: ReplyKindValidationFact}
-	case "count to five", "count from one to five":
-		return ReplyResult{Text: "One, two, three, four, five.", Kind: ReplyKindValidationFact}
-	case "what color is the sky", "what colour is the sky":
-		return ReplyResult{Text: "The sky usually appears blue during the day.", Kind: ReplyKindValidationFact}
-	case "what story should we write":
-		return ReplyResult{
-			Text: "We could write a short mystery about a lost message that changes a small town.",
-			Kind: ReplyKindValidationFact,
+	if on(promptrules.BuiltinValidationFact) {
+		switch normalized {
+		case "你好":
+			return ReplyResult{Text: "你好！有什么我可以帮助你的吗？", Kind: ReplyKindValidationFact}, true
+		case "say hi in one word":
+			return ReplyResult{Text: "Hi", Kind: ReplyKindValidationFact}, true
+		case "name a fruit", "give me a fruit":
+			return ReplyResult{Text: "Apple.", Kind: ReplyKindValidationFact}, true
+		case "count to five", "count from one to five":
+			return ReplyResult{Text: "One, two, three, four, five.", Kind: ReplyKindValidationFact}, true
+		case "what color is the sky", "what colour is the sky":
+			return ReplyResult{Text: "The sky usually appears blue during the day.", Kind: ReplyKindValidationFact}, true
+		case "what story should we write":
+			return ReplyResult{
+				Text: "We could write a short mystery about a lost message that changes a small town.",
+				Kind: ReplyKindValidationFact,
+			}, true
+		case "hi", "hello", "hey", "yo", "greetings":
+			return ReplyResult{Text: "Hello! How can I help you today?", Kind: ReplyKindValidationFact}, true
+		case "hola", "buenos días", "buenos dias", "buenas tardes":
+			return ReplyResult{Text: "¡Hola! ¿En qué puedo ayudarte hoy?", Kind: ReplyKindValidationFact}, true
 		}
-	case "hi", "hello", "hey", "yo", "greetings":
-		return ReplyResult{Text: "Hello! How can I help you today?", Kind: ReplyKindValidationFact}
-	case "hola", "buenos días", "buenos dias", "buenas tardes":
-		return ReplyResult{Text: "¡Hola! ¿En qué puedo ayudarte hoy?", Kind: ReplyKindValidationFact}
 	}
 
+	if on(promptrules.BuiltinEchoLiteral) {
+		if text, kind, ok := echoLiteralReply(p, model); ok {
+			return ReplyResult{Text: text, Kind: kind}, true
+		}
+	}
+	return ReplyResult{}, false
+}
+
+// echoLiteralReply is the compiled literal-echo primitive: builtin
+// "builtin.echo_literal". It is a named function rather than an inline loop because
+// a corpus rule with reply_kind engine:echo_literal ROUTES to it -- and routing to
+// the real primitive, sanitizers and all, is the difference between the corpus
+// widening what we recognize and the corpus widening what we are willing to say.
+//
+// Every path out of here goes through cleanLiteralEcho (24-rune cap, 3-word cap,
+// secret/SQL denylist, alnum-plus-`_-.` charset) or returns the advertised model
+// name, which is not attacker-supplied at all.
+func echoLiteralReply(p, model string) (string, ReplyKind, bool) {
 	for _, clause := range promptClauses(p) {
 		m := echoRe.FindStringSubmatch(clause)
 		if m == nil {
@@ -293,13 +389,98 @@ func ReplyFor(prompt, model string) ReplyResult {
 		}
 		target := echoTarget(m[1])
 		if namesTheModel(target) {
-			return ReplyResult{Text: displayModel(model), Kind: ReplyKindModelIntroEN}
+			return displayModel(model), ReplyKindModelIntroEN, true
 		}
 		if s := cleanLiteralEcho(target); s != "" {
-			return ReplyResult{Text: s, Kind: ReplyKindLiteralEcho}
+			return s, ReplyKindLiteralEcho, true
 		}
 	}
-	return genericReply(p, model)
+	return "", "", false
+}
+
+// corpusReply evaluates the admin-authored rules for one stage.
+//
+// This is the only place a corpus rule can produce text, and there are exactly three
+// ways out of it. Reading them as a list is the shortest statement of PRD 034 safety
+// invariants 1-3:
+//
+//   - static:              the authored literal, served VERBATIM. No template, no
+//     capture-group expansion, no substitution of any kind. The
+//     string that reaches the attacker is the string an admin
+//     typed and the validator accepted.
+//   - engine:echo_literal: the COMPILED echo primitive. The rule supplies the
+//     trigger; cleanLiteralEcho decides what may be said.
+//   - engine:arithmetic:   the COMPILED computeArith primitive, which still refuses
+//     division by zero and non-integer operands.
+//
+// An engine route that declines (no echoable literal, no arithmetic in the prompt)
+// returns false and the cascade continues, rather than inventing something. A rule
+// that matches but cannot be answered is a miss, not a licence.
+func corpusReply(matcher *promptrules.Matcher, stage, p, normalized, model string) (ReplyResult, bool) {
+	rule := matcher.Match(stage, normalized)
+	if rule == nil {
+		return ReplyResult{}, false
+	}
+	kind := ReplyKind(rule.Telemetry())
+
+	switch rule.ReplyKind {
+	case promptrules.ReplyStatic:
+		return ReplyResult{Text: rule.ReplyText, Kind: kind, RuleID: rule.ID}, true
+
+	case promptrules.ReplyEngineEchoLiteral:
+		// Attempt 1 is the compiled extraction, unchanged, over the ORIGINAL prompt --
+		// original because scanners compare the echoed token byte for byte and the
+		// normalized form has been lowercased ("LAYERCLOUD_AI_TEST_OK" must not come back
+		// as "layercloud_ai_test_ok").
+		if text, echoKind, ok := echoLiteralReply(p, model); ok {
+			if rule.TelemetryKind == "" {
+				kind = echoKind
+			}
+			return ReplyResult{Text: text, Kind: kind, RuleID: rule.ID}, true
+		}
+		// Attempt 2 is what makes the corpus able to widen RECOGNITION: a phrasing whose
+		// instruction verb is not in echoRe's alternation ("Your only output must be: X")
+		// still yields its value, taken as the tail after the clause's last colon. It goes
+		// through the same echoTarget + cleanLiteralEcho pair, so the set of things we are
+		// willing to SAY is exactly unchanged -- only the set of prompts that can reach
+		// the sanitizer grew, and only for a prompt an operator deliberately matched.
+		if s := colonTailEcho(p); s != "" {
+			if rule.TelemetryKind == "" {
+				kind = ReplyKindLiteralEcho
+			}
+			return ReplyResult{Text: s, Kind: kind, RuleID: rule.ID}, true
+		}
+		return ReplyResult{}, false
+
+	case promptrules.ReplyEngineArithmetic:
+		// The full primitive, regardless of any builtin_disable: a rule routing here has
+		// explicitly asked for arithmetic, and disabling the compiled GROUP means "stop
+		// answering these prompts by yourself", not "forget how to add".
+		if s, ok := findArithmetic(p, allArithPatterns); ok {
+			if rule.TelemetryKind == "" {
+				kind = ReplyKindArithmetic
+			}
+			return ReplyResult{Text: s, Kind: kind, RuleID: rule.ID}, true
+		}
+		return ReplyResult{}, false
+	}
+	return ReplyResult{}, false
+}
+
+// colonTailEcho extracts an echo value from "<any instruction>: <value>" and
+// sanitizes it exactly as the compiled echo path does. Used only by an
+// engine:echo_literal corpus rule whose trigger echoRe does not recognize.
+func colonTailEcho(p string) string {
+	for _, clause := range promptClauses(p) {
+		idx := strings.LastIndex(clause, ":")
+		if idx < 0 || idx+1 >= len(clause) {
+			continue
+		}
+		if s := cleanLiteralEcho(echoTarget(clause[idx+1:])); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // smartReply is a test convenience for model-neutral response selection. Production
@@ -369,9 +550,36 @@ func namesTheModel(target string) bool {
 	return false
 }
 
+// allArithPatterns is the complete arithmetic primitive: symbolic ("2+2"), spaced
+// cross ("12 x 12") and word-form ("2 plus 2"), tried in that order.
+var allArithPatterns = []*regexp.Regexp{arithRe, crossArithRe, wordArithRe}
+
+// enabledArithPatterns selects the arithmetic patterns the corpus has not disabled.
+//
+// The server's BuiltinIDs table names builtin.arith_symbolic and
+// builtin.arith_wordform separately, but the agent evaluates all three regexes in one
+// function. Rather than collapse the two ids onto one switch -- which would make
+// disabling either one disable both, silently -- the split is honoured by choosing
+// which patterns findArithmetic is handed. With nothing disabled the slice is
+// allArithPatterns, so behaviour is unchanged.
+func enabledArithPatterns(bundle *promptrules.Bundle) []*regexp.Regexp {
+	if !bundle.BuiltinDisabled(promptrules.BuiltinArithSymbolic) &&
+		!bundle.BuiltinDisabled(promptrules.BuiltinArithWordform) {
+		return allArithPatterns
+	}
+	patterns := make([]*regexp.Regexp, 0, len(allArithPatterns))
+	if !bundle.BuiltinDisabled(promptrules.BuiltinArithSymbolic) {
+		patterns = append(patterns, arithRe, crossArithRe)
+	}
+	if !bundle.BuiltinDisabled(promptrules.BuiltinArithWordform) {
+		patterns = append(patterns, wordArithRe)
+	}
+	return patterns
+}
+
 // findArithmetic evaluates the first trivial expression embedded anywhere in the prompt.
-func findArithmetic(prompt string) (string, bool) {
-	for _, re := range []*regexp.Regexp{arithRe, crossArithRe, wordArithRe} {
+func findArithmetic(prompt string, patterns []*regexp.Regexp) (string, bool) {
+	for _, re := range patterns {
 		for _, loc := range re.FindAllStringSubmatchIndex(prompt, -1) {
 			if arithmeticIsGlued(prompt, loc[0], loc[1]) {
 				continue

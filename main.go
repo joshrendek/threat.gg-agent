@@ -14,6 +14,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
 	"github.com/joshrendek/threat.gg-agent/llamacpp"
+	"github.com/joshrendek/threat.gg-agent/llmcore/promptrules"
 	"github.com/joshrendek/threat.gg-agent/localai"
 	"github.com/joshrendek/threat.gg-agent/mcp"
 	memcachedhp "github.com/joshrendek/threat.gg-agent/memcached"
@@ -98,6 +99,13 @@ func main() {
 			time.Sleep(30 * time.Second)
 		}
 	}()
+
+	// Refresh the admin-authored LLM prompt-rule corpus every ~5 minutes (PRD 034).
+	// Started after persistence.Setup so the first poll has a client, and before the
+	// honeypots so a restarting node picks the corpus up rather than serving the
+	// compiled floor for a full interval. It is fire-and-forget on purpose: the
+	// honeypots must come up whether or not the control plane answers.
+	promptrules.Start()
 
 	// TODO: make this not crappy
 	wait := make(chan bool, 1)
