@@ -20,11 +20,22 @@ import (
 
 func do(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return doWithHeaders(t, method, path, body, nil)
+}
+
+// doWithHeaders exists because CORS behaviour depends on the request headers: gin-contrib
+// only emits CORS headers for a genuine cross-origin request, so those tests must send an
+// Origin rather than relying on do().
+func doWithHeaders(t *testing.T, method, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
 	var r *http.Request
 	if body == "" {
 		r = httptest.NewRequest(method, path, nil)
 	} else {
 		r = httptest.NewRequest(method, path, strings.NewReader(body))
+	}
+	for k, v := range hdr {
+		r.Header.Set(k, v)
 	}
 	rec := httptest.NewRecorder()
 	buildHandler().ServeHTTP(rec, r)
@@ -105,9 +116,31 @@ func TestHeadRootAnswers200(t *testing.T) {
 	}
 }
 
-// Real (OLLAMA_ORIGINS=*): preflight -> 204 with the X-Stainless-* allow-header list.
+// gin-contrib/cors applyCors returns before setting any header when the request carries no
+// Origin, or when Origin names this same host. Emitting CORS headers on a plain curl was a
+// one-request fingerprint (threat_gg-51g).
+func TestNoCORSHeadersWithoutOrigin(t *testing.T) {
+	for _, m := range []string{"GET", "OPTIONS"} {
+		rec := do(t, m, "/api/tags", "")
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("%s without Origin set allow-origin %q, want none", m, got)
+		}
+	}
+}
+
+func TestNoCORSHeadersForSameOrigin(t *testing.T) {
+	// httptest.NewRequest gives the request Host "example.com".
+	for _, o := range []string{"http://example.com", "https://example.com"} {
+		rec := doWithHeaders(t, "GET", "/api/tags", "", map[string]string{"Origin": o})
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("same-origin %s set allow-origin %q, want none", o, got)
+		}
+	}
+}
+
+// Real (OLLAMA_ORIGINS=*): cross-origin preflight -> 204 with the X-Stainless-* allow-header list.
 func TestCORSPreflight(t *testing.T) {
-	rec := do(t, "OPTIONS", "/api/chat", "")
+	rec := doWithHeaders(t, "OPTIONS", "/api/chat", "", map[string]string{"Origin": "http://evil.test"})
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d, want 204", rec.Code)
 	}

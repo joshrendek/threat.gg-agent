@@ -87,6 +87,15 @@ const corsAllowHeaders = "Authorization,Content-Type,User-Agent,Accept,X-Request
 // browser-originated probe before it ever reaches a handler.
 func corsHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// gin-contrib/cors (what real Ollama uses) returns from applyCors before setting
+		// any header when the request carries no Origin, or when Origin names this same
+		// host — neither is a CORS request. Setting the header unconditionally made a
+		// plain curl distinguishable from a real Ollama in a single request.
+		origin := r.Header.Get("Origin")
+		if origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host {
+			next.ServeHTTP(w, r)
+			return
+		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Headers", corsAllowHeaders)
