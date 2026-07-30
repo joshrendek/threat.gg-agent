@@ -1,6 +1,7 @@
 package vllm
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,11 +16,21 @@ import (
 
 func do(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return doWith(t, method, path, body, nil)
+}
+
+// doWith is do plus request headers, which the CORS cases need: Starlette's CORSMiddleware
+// branches on Origin, Access-Control-Request-Method and Cookie.
+func doWith(t *testing.T, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
 	var r *http.Request
 	if body == "" {
 		r = httptest.NewRequest(method, path, nil)
 	} else {
 		r = httptest.NewRequest(method, path, strings.NewReader(body))
+	}
+	for k, v := range headers {
+		r.Header.Set(k, v)
 	}
 	rec := httptest.NewRecorder()
 	buildHandler().ServeHTTP(rec, r)
@@ -192,11 +203,74 @@ func TestEmbeddingsErrorIsVLLMShape(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("model=%q: status %d, want 400", model, rec.Code)
 		}
-		want := `{"object":"error","message":"The model does not support Embeddings API",` +
+		want := `{"object":"error","message":"` + embeddingsDisabledMessage + `",` +
 			`"type":"BadRequestError","param":null,"code":400}`
 		if got := rec.Body.String(); got != want {
 			t.Errorf("model=%q:\n got %s\nwant %s", model, got, want)
 		}
+	}
+}
+
+// -- threat_gg-6jp: every version-dependent string has to agree with the version we advertise.
+//
+// The refusal above was 0.7.0's wording on a box whose /version, OpenAPI info block and route
+// table all said 0.6.3. This is the tripwire for the next version bump: the message and the route
+// set both changed in 0.7.0, so neither may be left behind.
+func TestVersionSpecificStringsMatchAdvertisedVersion(t *testing.T) {
+	if vllmVersion != "0.6.3" {
+		t.Fatalf("vllmVersion is now %q. Re-derive the version-specific behaviour from "+
+			"vllm/entrypoints/openai/ at that tag: 0.6.x refuses embeddings with %q "+
+			"(serving_embedding.py) while 0.7.0+ says \"The model does not support Embeddings "+
+			"API\" (api_server.py), and 0.7.0 adds a /ping route this honeypot does not serve",
+			vllmVersion, "Embedding API disabled")
+	}
+	if embeddingsDisabledMessage != "Embedding API disabled" {
+		t.Errorf("embeddings refusal %q is not vLLM 0.6.3's wording", embeddingsDisabledMessage)
+	}
+	if got, want := do(t, "GET", "/version", "").Body.String(),
+		`{"version":"`+vllmVersion+`"}`; got != want {
+		t.Errorf("/version body %s, want %s", got, want)
+	}
+	var schema struct {
+		Info struct {
+			Version string `json:"version"`
+		} `json:"info"`
+		Paths map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal(do(t, "GET", "/openapi.json", "").Body.Bytes(), &schema); err != nil {
+		t.Fatalf("/openapi.json is not JSON: %v", err)
+	}
+	if schema.Info.Version != vllmVersion {
+		t.Errorf("/openapi.json info.version %q, want %q", schema.Info.Version, vllmVersion)
+	}
+	// FastAPI generates the schema from the route table it serves, so the two must not disagree.
+	for path := range schema.Paths {
+		if rec := do(t, "GET", path, ""); rec.Code == http.StatusNotFound {
+			t.Errorf("/openapi.json documents %s but the router 404s it", path)
+		}
+	}
+}
+
+// /ping is a 0.7.0 addition (checked against v0.6.2, v0.6.4, v0.6.6 and v0.7.0: only 0.7.0 has
+// `@router.api_route("/ping", methods=["GET", "POST"])`). A box advertising 0.6.3 must answer it
+// exactly as it answers any other unrouted path — no 200, and no Allow header either, since the
+// 405 path is only reachable for a path that really is registered.
+func TestPingIsAbsentFromVersion063(t *testing.T) {
+	for _, method := range []string{"GET", "HEAD", "POST"} {
+		rec := do(t, method, "/ping", "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s /ping: status %d, want 404 (vLLM %s has no /ping)", method, rec.Code, vllmVersion)
+		}
+		if got := rec.Header().Get("Allow"); got != "" {
+			t.Errorf("%s /ping: unrouted 404 must not carry Allow, got %q", method, got)
+		}
+	}
+	if body := do(t, "GET", "/openapi.json", "").Body.String(); strings.Contains(body, `"/ping"`) {
+		t.Error("/openapi.json still documents /ping")
+	}
+	// The health check 0.6.3 does have must keep working; /ping shared its handler.
+	if rec := do(t, "GET", "/health", ""); rec.Code != http.StatusOK {
+		t.Errorf("/health: status %d, want 200", rec.Code)
 	}
 }
 
@@ -334,13 +408,194 @@ func TestNoSystemFingerprint(t *testing.T) {
 	}
 }
 
-func TestTokenizeAndPing(t *testing.T) {
+func TestTokenize(t *testing.T) {
 	rec := do(t, "POST", "/tokenize", `{"prompt":"hello world"}`)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"count"`) {
 		t.Errorf("/tokenize: status %d body %s", rec.Code, rec.Body.String())
 	}
-	if rec := do(t, "GET", "/ping", ""); rec.Code != http.StatusOK {
-		t.Errorf("/ping: status %d", rec.Code)
+}
+
+// -- threat_gg-6jp: FastAPI's CORSMiddleware, which vLLM's build_app installs unconditionally
+// with allow_origins/methods/headers all ["*"] and credentials off (cli_args.py defaults).
+// Sending nothing was a one-header diff any browser-based scanner reads.
+
+const testOrigin = "https://evil.example"
+
+// Starlette returns from CORSMiddleware.__call__ before touching the response when the request
+// has no Origin. Answering CORS unconditionally would be a tell in the other direction — real
+// vLLM never sends these headers to a plain curl.
+func TestNoCORSHeadersWithoutOrigin(t *testing.T) {
+	for _, path := range []string{"/v1/models", "/health", "/definitely-not-a-route"} {
+		h := do(t, "GET", path, "").Header()
+		for _, name := range []string{
+			"Access-Control-Allow-Origin", "Access-Control-Allow-Methods",
+			"Access-Control-Allow-Headers", "Access-Control-Max-Age", "Vary",
+		} {
+			if got := h.Get(name); got != "" {
+				t.Errorf("GET %s without Origin: %s = %q, want absent", path, name, got)
+			}
+		}
+	}
+}
+
+// A simple (non-preflight) request with an Origin gets exactly one header back: the wildcard.
+// allow_credentials is off and expose_headers is empty, so simple_headers holds nothing else.
+// The middleware wraps the whole app, so error responses carry it too.
+func TestSimpleRequestGetsWildcardOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		method, path, body string
+		wantStatus         int
+	}{
+		{"GET", "/v1/models", "", http.StatusOK},
+		{"GET", "/metrics", "", http.StatusOK},
+		{"GET", "/definitely-not-a-route", "", http.StatusNotFound},
+		{"GET", "/v1/chat/completions", "", http.StatusMethodNotAllowed},
+		{"POST", "/v1/embeddings", `{"input":"hi"}`, http.StatusBadRequest},
+	} {
+		rec := doWith(t, tc.method, tc.path, tc.body, map[string]string{"Origin": testOrigin})
+		if rec.Code != tc.wantStatus {
+			t.Errorf("%s %s: status %d, want %d", tc.method, tc.path, rec.Code, tc.wantStatus)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+			t.Errorf("%s %s: Access-Control-Allow-Origin %q, want *", tc.method, tc.path, got)
+		}
+		// These belong to the preflight branch only.
+		for _, name := range []string{
+			"Access-Control-Allow-Methods", "Access-Control-Max-Age",
+			"Access-Control-Allow-Headers", "Access-Control-Allow-Credentials",
+		} {
+			if got := rec.Header().Get(name); got != "" {
+				t.Errorf("%s %s: simple response carries %s = %q", tc.method, tc.path, name, got)
+			}
+		}
+	}
+}
+
+// simple_response's send() cannot answer "*" to a credentialed request, so when the request
+// carried cookies it mirrors the caller's origin and adds Vary: Origin instead.
+func TestCookieDowngradesWildcardToOrigin(t *testing.T) {
+	rec := doWith(t, "GET", "/v1/models", "", map[string]string{
+		"Origin": testOrigin, "Cookie": "session=abc",
+	})
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != testOrigin {
+		t.Errorf("Access-Control-Allow-Origin %q, want the request origin %q", got, testOrigin)
+	}
+	if got := rec.Header().Get("Vary"); got != "Origin" {
+		t.Errorf("Vary %q, want Origin", got)
+	}
+}
+
+// preflight_response builds a PlainTextResponse("OK") — text/plain with an explicit charset, not
+// FastAPI's bare application/json — carrying the expanded ALL_METHODS tuple and the default
+// 600s max-age. With wildcard origins and credentials off there is no Vary and no
+// Allow-Credentials.
+func TestPreflightIsStarletteShape(t *testing.T) {
+	rec := doWith(t, "OPTIONS", "/v1/chat/completions", "", map[string]string{
+		"Origin": testOrigin, "Access-Control-Request-Method": "POST",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preflight status %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != "OK" {
+		t.Errorf("preflight body %q, want OK", got)
+	}
+	for name, want := range map[string]string{
+		"Access-Control-Allow-Origin":  "*",
+		"Access-Control-Allow-Methods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+		"Access-Control-Max-Age":       "600",
+		"Content-Type":                 "text/plain; charset=utf-8",
+		// uvicorn stamps Server on the preflight too: CORSMiddleware sits inside it.
+		"Server": serverHeader,
+	} {
+		if got := rec.Header().Get(name); got != want {
+			t.Errorf("preflight %s = %q, want %q", name, got, want)
+		}
+	}
+	for _, name := range []string{"Vary", "Access-Control-Allow-Credentials", "Allow"} {
+		if got := rec.Header().Get(name); got != "" {
+			t.Errorf("preflight must not send %s (got %q)", name, got)
+		}
+	}
+}
+
+// allow_headers=["*"] sets allow_all_headers, and Starlette then mirrors the requested list back
+// verbatim rather than answering with a fixed allow-list. Ollama's honeypot answers a fixed list
+// because real Ollama does; copying that here would have been the wrong server's fingerprint.
+func TestPreflightMirrorsRequestedHeaders(t *testing.T) {
+	const requested = "authorization,x-weird-header,Content-Type"
+	rec := doWith(t, "OPTIONS", "/v1/completions", "", map[string]string{
+		"Origin":                         testOrigin,
+		"Access-Control-Request-Method":  "POST",
+		"Access-Control-Request-Headers": requested,
+	})
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != requested {
+		t.Errorf("Access-Control-Allow-Headers %q, want the request echoed verbatim %q", got, requested)
+	}
+	// Without the request header there is nothing to mirror, so the response omits it entirely.
+	rec = doWith(t, "OPTIONS", "/v1/completions", "", map[string]string{
+		"Origin": testOrigin, "Access-Control-Request-Method": "POST",
+	})
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "" {
+		t.Errorf("Access-Control-Allow-Headers %q, want absent when none were requested", got)
+	}
+}
+
+// The membership test is against the uppercase ALL_METHODS tuple, which excludes TRACE and is
+// case-sensitive, so both of these fail it and get Starlette's 400 with the headers it had
+// already assembled.
+func TestPreflightRejectsDisallowedMethod(t *testing.T) {
+	for _, method := range []string{"TRACE", "get", ""} {
+		rec := doWith(t, "OPTIONS", "/v1/chat/completions", "", map[string]string{
+			"Origin": testOrigin, "Access-Control-Request-Method": method,
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("preflight for %q: status %d, want 400", method, rec.Code)
+		}
+		if got := rec.Body.String(); got != "Disallowed CORS method" {
+			t.Errorf("preflight for %q: body %q", method, got)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Methods"); got == "" {
+			t.Errorf("preflight for %q: rejection still carries the assembled headers", method)
+		}
+	}
+}
+
+// The preflight branch answers before the router runs, so an unrouted path preflights 200 rather
+// than 404 — the discrepancy is real upstream behaviour, not a routing bug.
+func TestPreflightBypassesRouting(t *testing.T) {
+	rec := doWith(t, "OPTIONS", "/definitely-not-a-route", "", map[string]string{
+		"Origin": testOrigin, "Access-Control-Request-Method": "GET",
+	})
+	if rec.Code != http.StatusOK || rec.Body.String() != "OK" {
+		t.Errorf("preflight on an unrouted path: status %d body %q, want 200 OK",
+			rec.Code, rec.Body.String())
+	}
+}
+
+// An OPTIONS without Access-Control-Request-Method is not a preflight: it falls through to the
+// router, which 405s it because no vLLM route registers OPTIONS — while still picking up the
+// simple-response CORS header on the way out.
+func TestNonPreflightOptionsStillRoutes(t *testing.T) {
+	rec := doWith(t, "OPTIONS", "/v1/models", "", map[string]string{"Origin": testOrigin})
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("OPTIONS /v1/models: status %d, want 405", rec.Code)
+	}
+	if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+		t.Errorf("Allow %q, want GET, HEAD", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin %q, want *", got)
+	}
+	if got := rec.Body.String(); got != `{"detail":"Method Not Allowed"}` {
+		t.Errorf("body %q", got)
+	}
+	// Without an Origin the same request is a plain 405 with no CORS at all.
+	rec = do(t, "OPTIONS", "/v1/models", "")
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("OPTIONS without Origin: status %d, want 405", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("OPTIONS without Origin: Access-Control-Allow-Origin %q, want absent", got)
 	}
 }
 
