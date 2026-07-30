@@ -23,6 +23,18 @@ var exactSignalPaths = map[string]bool{
 	"/embedding": true, "/infill": true, "/system_stats": true,
 	"/object_info": true, "/queue": true, "/history": true, "/prompt": true,
 	"/nodes": true, "/interrupt": true,
+
+	// Upstream endpoints these products serve that the honeypots do not route. A probe here
+	// 404s, but the attempt is the signal: it means the caller knows the specific product
+	// rather than sweeping ports. /view and /upload/image are ComfyUI's arbitrary-file-read
+	// and upload surfaces, so an attempt there is the exploitation we most want recorded.
+	"/apply-template": true, "/lora-adapters": true, "/embeddings": true,
+	"/extensions": true, "/view": true, "/upload/image": true, "/free": true,
+	"/tts": true, "/backend/monitor": true,
+
+	// Deliberately NOT listed: /logs (Ray) and /ws (ComfyUI). Both are generic enough to draw
+	// ordinary scan traffic, and this table is shared with the ollama honeypot, which takes
+	// ~1.5k requests a day. Revisit if capture data ever shows product-shaped probes there.
 }
 
 // isSignalPath reports whether a request path targets a real LLM API surface — the OpenAI
