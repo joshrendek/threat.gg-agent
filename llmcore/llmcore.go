@@ -66,7 +66,7 @@ func Capture(save func(*proto.LlmRequest) error) func(http.Handler) http.Handler
 			writer := newCaptureResponseWriter(w)
 
 			defer func() {
-				source, replyKind := metadata.snapshot()
+				source, replyKind, ruleID := metadata.snapshot()
 				if writer.status >= http.StatusBadRequest {
 					replyKind = proto.LlmReplyKind_LLM_REPLY_KIND_ERROR
 				}
@@ -75,6 +75,7 @@ func Capture(save func(*proto.LlmRequest) error) func(http.Handler) http.Handler
 				in.ElapsedMs = time.Since(started).Milliseconds()
 				in.ResponseSource = source
 				in.ReplyKind = replyKind
+				in.RuleId = ruleID
 				in.StreamOutcome = writer.streamOutcome(r.Context())
 				saveCapturedRequest(in, save)
 			}()
@@ -156,12 +157,13 @@ type responseMetadata struct {
 	mu        sync.Mutex
 	source    proto.LlmResponseSource
 	replyKind proto.LlmReplyKind
+	ruleID    string
 }
 
-func (m *responseMetadata) snapshot() (proto.LlmResponseSource, proto.LlmReplyKind) {
+func (m *responseMetadata) snapshot() (proto.LlmResponseSource, proto.LlmReplyKind, string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.source, m.replyKind
+	return m.source, m.replyKind, m.ruleID
 }
 
 // MarkResponseSource annotates a captured request with a bounded response source.
@@ -182,9 +184,15 @@ func MarkResponseSource(r *http.Request, source proto.LlmResponseSource) {
 
 // MarkReplyKind annotates a captured request with a bounded reply classification.
 // It is metadata-only: callers must never pass or retain generated response text.
+//
+// The upper bound is the highest LlmReplyKind the proto defines and must be raised
+// whenever the enum grows -- PRD 034 added LLM_REPLY_KIND_CORPUS_RULE (15), and
+// leaving the bound at SAFETY_REFUSAL (14) would have silently dropped the
+// classification for every corpus-answered capture, so the answered-rate panel would
+// have shown the corpus doing nothing at all.
 func MarkReplyKind(r *http.Request, kind proto.LlmReplyKind) {
 	if r == nil || kind <= proto.LlmReplyKind_LLM_REPLY_KIND_UNSPECIFIED ||
-		kind > proto.LlmReplyKind_LLM_REPLY_KIND_SAFETY_REFUSAL {
+		kind > proto.LlmReplyKind_LLM_REPLY_KIND_CORPUS_RULE {
 		return
 	}
 	metadata, _ := r.Context().Value(responseMetadataKey{}).(*responseMetadata)
@@ -194,6 +202,45 @@ func MarkReplyKind(r *http.Request, kind proto.LlmReplyKind) {
 	metadata.mu.Lock()
 	metadata.replyKind = kind
 	metadata.mu.Unlock()
+}
+
+// MarkRuleID records the corpus rule that produced a reply (PRD 034 observability
+// item 2). It is bounded to a uuid-shaped value: the field crosses to the server as
+// LlmRequest.rule_id, where it is parsed as a UUID and dropped if it is not one, and
+// the point of checking here too is that this field must never become a free-text
+// sink for anything that reaches it by another route.
+func MarkRuleID(r *http.Request, ruleID string) {
+	if r == nil || !isUUID(ruleID) {
+		return
+	}
+	metadata, _ := r.Context().Value(responseMetadataKey{}).(*responseMetadata)
+	if metadata == nil {
+		return
+	}
+	metadata.mu.Lock()
+	metadata.ruleID = ruleID
+	metadata.mu.Unlock()
+}
+
+// isUUID reports whether s is a canonical 8-4-4-4-12 lowercase-or-uppercase hex uuid.
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		isHex := c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+		if !isHex {
+			return false
+		}
+	}
+	return true
 }
 
 // classifiedReply selects a safe semantic response and records only its bounded class.
@@ -225,8 +272,21 @@ func classifiedReply(r *http.Request, prompt, model string) ReplyResult {
 		kind = proto.LlmReplyKind_LLM_REPLY_KIND_SAFETY_REFUSAL
 	case ReplyKindArithmeticNonce:
 		kind = proto.LlmReplyKind_LLM_REPLY_KIND_ARITHMETIC_NONCE
+	// The remaining labels are reachable only through a PRD 034 corpus rule's
+	// telemetry_kind. corpus_rule is the default a rule falls back to; the other three
+	// exist because the server's allowlist admits them and a rule that declares one
+	// must not end up reporting nothing.
+	case ReplyKindCorpusRule:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_CORPUS_RULE
+	case ReplyKindStaticEndpoint:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_STATIC_ENDPOINT
+	case ReplyKindModelLifecycle:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_MODEL_LIFECYCLE
+	case ReplyKindError:
+		kind = proto.LlmReplyKind_LLM_REPLY_KIND_ERROR
 	}
 	MarkReplyKind(r, kind)
+	MarkRuleID(r, result.RuleID)
 	return result
 }
 
