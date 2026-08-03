@@ -28,6 +28,7 @@ import (
 	rayhp "github.com/joshrendek/threat.gg-agent/ray"
 	rdphp "github.com/joshrendek/threat.gg-agent/rdp"
 	redishp "github.com/joshrendek/threat.gg-agent/redis"
+	s3hp "github.com/joshrendek/threat.gg-agent/s3"
 	smbhp "github.com/joshrendek/threat.gg-agent/smb"
 	smtphp "github.com/joshrendek/threat.gg-agent/smtp"
 	"github.com/joshrendek/threat.gg-agent/sshd"
@@ -137,6 +138,7 @@ func main() {
 	honeypots.Register(llamacpp.New())
 	honeypots.Register(comfyuihp.New())
 	honeypots.Register(mcp.New())
+	honeypots.Register(s3hp.New())
 	honeypots.StartHoneypots()
 
 	<-wait

@@ -170,6 +170,7 @@ const (
 	Honeypot_SaveComfyui_FullMethodName          = "/honeypot.Honeypot/SaveComfyui"
 	Honeypot_SaveFile_FullMethodName             = "/honeypot.Honeypot/SaveFile"
 	Honeypot_SaveMcp_FullMethodName              = "/honeypot.Honeypot/SaveMcp"
+	Honeypot_SaveS3Request_FullMethodName        = "/honeypot.Honeypot/SaveS3Request"
 	Honeypot_GetLlmBundle_FullMethodName         = "/honeypot.Honeypot/GetLlmBundle"
 )
 
@@ -220,6 +221,7 @@ type HoneypotClient interface {
 	SaveComfyui(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveFile(ctx context.Context, in *FileUploadRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveMcp(ctx context.Context, in *McpRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveS3Request(ctx context.Context, in *S3Request, opts ...grpc.CallOption) (*SaveReply, error)
 	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
 	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
 	// bundle behind an atomic.Pointer and matches locally, so nothing on the
@@ -668,6 +670,16 @@ func (c *honeypotClient) SaveMcp(ctx context.Context, in *McpRequest, opts ...gr
 	return out, nil
 }
 
+func (c *honeypotClient) SaveS3Request(ctx context.Context, in *S3Request, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveS3Request_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *honeypotClient) GetLlmBundle(ctx context.Context, in *LlmBundleRequest, opts ...grpc.CallOption) (*LlmBundleReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LlmBundleReply)
@@ -725,6 +737,7 @@ type HoneypotServer interface {
 	SaveComfyui(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveFile(context.Context, *FileUploadRequest) (*SaveReply, error)
 	SaveMcp(context.Context, *McpRequest) (*SaveReply, error)
+	SaveS3Request(context.Context, *S3Request) (*SaveReply, error)
 	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
 	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
 	// bundle behind an atomic.Pointer and matches locally, so nothing on the
@@ -871,6 +884,9 @@ func (UnimplementedHoneypotServer) SaveFile(context.Context, *FileUploadRequest)
 }
 func (UnimplementedHoneypotServer) SaveMcp(context.Context, *McpRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveMcp not implemented")
+}
+func (UnimplementedHoneypotServer) SaveS3Request(context.Context, *S3Request) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveS3Request not implemented")
 }
 func (UnimplementedHoneypotServer) GetLlmBundle(context.Context, *LlmBundleRequest) (*LlmBundleReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetLlmBundle not implemented")
@@ -1670,6 +1686,24 @@ func _Honeypot_SaveMcp_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveS3Request_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(S3Request)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveS3Request(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveS3Request_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveS3Request(ctx, req.(*S3Request))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Honeypot_GetLlmBundle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LlmBundleRequest)
 	if err := dec(in); err != nil {
@@ -1866,6 +1900,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveMcp",
 			Handler:    _Honeypot_SaveMcp_Handler,
+		},
+		{
+			MethodName: "SaveS3Request",
+			Handler:    _Honeypot_SaveS3Request_Handler,
 		},
 		{
 			MethodName: "GetLlmBundle",

@@ -179,6 +179,17 @@ func SaveDockerRequest(in *proto.DockerRequest) error {
 	return err
 }
 
+func SaveS3Request(in *proto.S3Request) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveS3Request(ctx, in)
+	return err
+}
+
 func SaveEtcdRequest(in *proto.EtcdRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
