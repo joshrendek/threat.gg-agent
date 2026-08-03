@@ -21,6 +21,7 @@ import (
 	memcachedhp "github.com/joshrendek/threat.gg-agent/memcached"
 	mongohp "github.com/joshrendek/threat.gg-agent/mongo"
 	"github.com/joshrendek/threat.gg-agent/mqtt"
+	mssqlhp "github.com/joshrendek/threat.gg-agent/mssql"
 	mysqlhp "github.com/joshrendek/threat.gg-agent/mysql"
 	"github.com/joshrendek/threat.gg-agent/ollama"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
@@ -121,6 +122,7 @@ func main() {
 	honeypots.Register(redishp.New())
 	honeypots.Register(mqtt.New())
 	honeypots.Register(mysqlhp.New())
+	honeypots.Register(mssqlhp.New())
 	honeypots.Register(dockerhp.New())
 	honeypots.Register(etcdhp.New())
 	honeypots.Register(smbhp.New())

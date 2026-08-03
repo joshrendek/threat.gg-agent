@@ -144,6 +144,14 @@ func SaveMysqlLogin(in *proto.MysqlRequest) error {
 	return err
 }
 
+func SaveMssqlLogin(in *proto.MssqlRequest) error {
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMssqlLogin(ctx, in)
+	return err
+}
+
 func SaveRedisConnect(in *proto.RedisConnectRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
