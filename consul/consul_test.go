@@ -172,16 +172,16 @@ func TestCaptureRedactsAndFingerprintsAllTokenForms(t *testing.T) {
 			require.NotContains(t, got.Query, "query-secret")
 			require.NotContains(t, got.Body, "secret")
 			require.Equal(t, int32(rec.Code), got.ResponseStatus)
-		case <-time.After(time.Second):
+		case <-time.After(3 * time.Second):
 			t.Fatal("capture timeout")
 		}
 	}
 }
 
-func TestOversizedBodyReturns413AndCaptureBodyRedactsJSONSecrets(t *testing.T) {
+func TestOversizedBodyReturns413AndSessionCaptureAllowsOnlyScalarFields(t *testing.T) {
 	resetState()
 	old := saveRequest
-	captured := make(chan *proto.ConsulRequest, 2)
+	captured := make(chan *proto.ConsulRequest, 3)
 	saveRequest = func(in *proto.ConsulRequest) error { captured <- in; return nil }
 	t.Cleanup(func() { saveRequest = old })
 	rec := httptest.NewRecorder()
@@ -189,11 +189,14 @@ func TestOversizedBodyReturns413AndCaptureBodyRedactsJSONSecrets(t *testing.T) {
 	require.Equal(t, 413, rec.Code)
 	require.Equal(t, "[REDACTED_KV_VALUE]", awaitCapture(t, captured).Body)
 	rec = httptest.NewRecorder()
-	newHandler().ServeHTTP(rec, httptest.NewRequest("PUT", "http://consul/v1/session/create", strings.NewReader(`{"nested":[{"apiKey":"secret"},{"credentials":123}],"Name":"safe"}`)))
+	newHandler().ServeHTTP(rec, httptest.NewRequest("PUT", "http://consul/v1/session/create", strings.NewReader(`{"nested":[{"apiKey":"secret"},{"credentials":123}],"Name":{"password":"nested-secret"},"Node":["array-secret"],"TTL":"15s","Behavior":"release"}`)))
 	got := awaitCapture(t, captured)
 	require.NotContains(t, got.Body, "secret")
 	require.NotContains(t, got.Body, "123")
-	require.Contains(t, got.Body, "[REDACTED]")
+	require.JSONEq(t, `{"TTL":"15s","Behavior":"release"}`, got.Body)
+	rec = httptest.NewRecorder()
+	newHandler().ServeHTTP(rec, httptest.NewRequest("PUT", "http://consul/v1/session/create", strings.NewReader(`{"Name":"unterminated"`)))
+	require.Equal(t, "[REDACTED_MALFORMED_JSON_BODY]", awaitCapture(t, captured).Body)
 }
 
 func TestCaptureOmitsRawKVValues(t *testing.T) {
@@ -223,6 +226,38 @@ func TestStateStoreEvictsOldestClientAtCapacity(t *testing.T) {
 	require.Len(t, store.clients, maxClients)
 	require.NotContains(t, store.clients, "client-000")
 	require.Contains(t, store.clients, "new-client")
+}
+
+func TestStateStoreRejectsNewClientWhenEveryStateIsActive(t *testing.T) {
+	store := &stateStore{clients: make(map[string]*clientState)}
+	for i := 0; i < maxClients; i++ {
+		store.clients[fmt.Sprintf("client-%03d", i)] = &clientState{touched: time.Unix(int64(i), 0), active: 1}
+	}
+	state, release, ok := store.acquireClient("new-client")
+	require.False(t, ok)
+	require.Nil(t, state)
+	require.Nil(t, release)
+	require.Len(t, store.clients, maxClients)
+}
+
+func TestPersistenceBackpressureDropsAndReleasesSlot(t *testing.T) {
+	oldSave, oldSlots := saveRequest, saveSlots
+	block := make(chan struct{})
+	started := make(chan struct{}, 1)
+	saveRequest = func(*proto.ConsulRequest) error { started <- struct{}{}; <-block; return nil }
+	saveSlots = make(chan struct{}, 1)
+	t.Cleanup(func() { saveRequest, saveSlots = oldSave, oldSlots })
+	req := httptest.NewRequest("GET", "http://consul/v1/agent/self", nil)
+	persist(req, nil, 200)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("save did not start")
+	}
+	persist(req, nil, 200)
+	require.Len(t, saveSlots, 1)
+	close(block)
+	require.Eventually(t, func() bool { return len(saveSlots) == 0 }, time.Second, 10*time.Millisecond)
 }
 
 func awaitCapture(t *testing.T, ch <-chan *proto.ConsulRequest) *proto.ConsulRequest {

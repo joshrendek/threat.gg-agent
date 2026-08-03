@@ -183,6 +183,18 @@ func SaveConsulRequest(in *proto.ConsulRequest) error {
 	return err
 }
 
+// SaveAmqpSession sends one bounded AMQP session record with a deadline.
+func SaveAmqpSession(in *proto.AmqpSessionRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveAmqpSession(ctx, in)
+	return err
+}
+
 func SaveRedisConnect(in *proto.RedisConnectRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

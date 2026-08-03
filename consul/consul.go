@@ -222,7 +222,29 @@ func redactedCaptureBody(r *http.Request, body []byte) string {
 	if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/kv/") && len(body) > 0 {
 		return "[REDACTED_KV_VALUE]"
 	}
-	return redactedBody(body)
+	if r.Method == http.MethodPut && r.URL.Path == "/v1/session/create" && len(body) > 0 {
+		// Session metadata is useful telemetry, but only scalar allowlisted fields
+		// are retained so nested attacker-controlled secrets cannot slip through.
+		var input map[string]any
+		if json.Unmarshal(body, &input) != nil {
+			return "[REDACTED_MALFORMED_JSON_BODY]"
+		}
+		safe := make(map[string]any)
+		for _, key := range []string{"Name", "Node", "TTL", "Behavior"} {
+			if value, ok := input[key]; ok {
+				switch value.(type) {
+				case string, float64, bool:
+					safe[key] = value
+				}
+			}
+		}
+		encoded, _ := json.Marshal(safe)
+		return string(encoded)
+	}
+	if len(body) > 0 {
+		return "[REDACTED_REQUEST_BODY]"
+	}
+	return ""
 }
 func redactedBody(body []byte) string {
 	var v any

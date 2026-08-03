@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/require"
 )
 
 func TestResolvePortDefault(t *testing.T) {
@@ -121,4 +123,31 @@ func TestRolesHandlerRejectsOversizedAndTrailingBodiesWithoutMutation(t *testing
 	if got != 0 {
 		t.Fatalf("invalid bodies mutated role store: %d roles", got)
 	}
+}
+
+func TestRolesHandlerEnforcesNamespaceAndTotalBounds(t *testing.T) {
+	h := &honeypot{}
+	post := func(namespace string) int {
+		req := httptest.NewRequest(http.MethodPost, "/roles", strings.NewReader(`{"kind":"Role"}`))
+		req = mux.SetURLVars(req, map[string]string{"namespace": namespace})
+		rec := httptest.NewRecorder()
+		h.rolesHandler(rec, req)
+		return rec.Code
+	}
+
+	roleStoreMu.Lock()
+	roleStore = make(map[string][]Role)
+	for i := 0; i < maxRoleNamespaces; i++ {
+		roleStore[fmt.Sprintf("namespace-%d", i)] = []Role{{Kind: "Role"}}
+	}
+	roleStoreMu.Unlock()
+	require.Equal(t, http.StatusTooManyRequests, post("one-too-many"))
+
+	roleStoreMu.Lock()
+	roleStore = make(map[string][]Role)
+	for i := 0; i < maxRolesTotal/maxRolesPerNamespace; i++ {
+		roleStore[fmt.Sprintf("namespace-%d", i)] = make([]Role, maxRolesPerNamespace)
+	}
+	roleStoreMu.Unlock()
+	require.Equal(t, http.StatusTooManyRequests, post("namespace-0"))
 }

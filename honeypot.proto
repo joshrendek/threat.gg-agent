@@ -22,6 +22,8 @@ service Honeypot {
   rpc SaveKubeletRequest(KubeletRequest) returns (SaveReply) {}
   // SaveConsulRequest stores bounded metadata for one Consul HTTP API request.
   rpc SaveConsulRequest(ConsulRequest) returns (SaveReply) {}
+  // SaveAmqpSession stores one bounded AMQP 0-9-1 or 1.0 probe session.
+  rpc SaveAmqpSession(AmqpSessionRequest) returns (SaveReply) {}
   rpc SaveQuery(QueryRequest) returns (SaveReply) {}
   rpc SaveHttpHeaders(HttpHeaderRequest) returns (SaveReply) {}
   rpc SaveShellCommand(ShellCommandRequest) returns (SaveReply) {}
@@ -132,6 +134,17 @@ message ConsulRequest {
   string user_agent = 8;
   string body = 9;
   int32 response_status = 10;
+}
+
+message AmqpSessionRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string username = 3;
+  string password = 4;
+  string vhost = 5;
+  string protocol = 6;
+  map<string,string> client_properties = 7;
+  repeated string operations = 8;
 }
 
 message QueryRequest {
