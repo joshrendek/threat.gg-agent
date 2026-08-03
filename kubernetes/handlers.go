@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"sync"
 )
+
+const maxKubernetesBodyBytes = 64 << 10
 
 //go:embed swagger.json
 var openAPISpec string
@@ -70,9 +74,16 @@ func (h *honeypot) apiHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *honeypot) catchAllHandler(w http.ResponseWriter, r *http.Request) {
-	body := make([]byte, r.ContentLength)
-	_, _ = r.Body.Read(body)
-	h.logger.Info().Str("path", r.URL.Path).Str("method", r.Method).Bytes("body", body).Msg("Request received")
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxKubernetesBodyBytes+1))
+	if err != nil {
+		http.Error(w, "unable to read request body", http.StatusBadRequest)
+		return
+	}
+	if len(body) > maxKubernetesBodyBytes {
+		http.Error(w, "request entity too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	h.logger.Info().Str("path", r.URL.Path).Str("method", r.Method).Int("body_bytes", len(body)).Msg("Request received")
 }
 
 // Handler for /api/v1
@@ -912,14 +923,20 @@ type PolicyRule struct {
 }
 
 // In-memory store for roles
-var roleStore = make(map[string][]Role) // Keyed by namespace
+var (
+	roleStore   = make(map[string][]Role) // Keyed by namespace
+	roleStoreMu sync.RWMutex
+)
 
 func (h *honeypot) rolesHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := vars["namespace"]
 
 	if r.Method == http.MethodGet {
+		roleStoreMu.RLock()
 		roles := roleStore[namespace]
+		roles = append([]Role(nil), roles...)
+		roleStoreMu.RUnlock()
 		response := map[string]interface{}{
 			"kind":       "RoleList",
 			"apiVersion": "rbac.authorization.k8s.io/v1",
@@ -929,12 +946,15 @@ func (h *honeypot) rolesHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(response)
 	} else if r.Method == http.MethodPost {
 		var role Role
+		r.Body = http.MaxBytesReader(w, r.Body, maxKubernetesBodyBytes)
 		err := json.NewDecoder(r.Body).Decode(&role)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		roleStoreMu.Lock()
 		roleStore[namespace] = append(roleStore[namespace], role)
+		roleStoreMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(role)
 	}

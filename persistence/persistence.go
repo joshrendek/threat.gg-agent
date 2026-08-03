@@ -159,6 +159,18 @@ func SaveMssqlLogin(in *proto.MssqlRequest) error {
 	return err
 }
 
+// SaveKubeletRequest sends bounded Kubelet request metadata with a deadline.
+func SaveKubeletRequest(in *proto.KubeletRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveKubeletRequest(ctx, in)
+	return err
+}
+
 func SaveRedisConnect(in *proto.RedisConnectRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

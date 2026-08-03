@@ -1,21 +1,16 @@
 package kubernetes
 
 import (
-  "crypto/rand"
-  "crypto/rsa"
-  "crypto/tls"
-  "crypto/x509"
-  "crypto/x509/pkix"
-  "encoding/pem"
-  "fmt"
-  "github.com/gorilla/mux"
-  "github.com/joshrendek/hnypots-agent/honeypots"
-  "github.com/joshrendek/threat.gg-agent/cmdresp"
-  "github.com/rs/zerolog"
-  "math/big"
-  "net/http"
-  "os"
-  "time"
+	"crypto/tls"
+	"fmt"
+	"github.com/gorilla/mux"
+	"github.com/joshrendek/hnypots-agent/honeypots"
+	"github.com/joshrendek/threat.gg-agent/cmdresp"
+	"github.com/joshrendek/threat.gg-agent/internal/kubetls"
+	"github.com/rs/zerolog"
+	"net/http"
+	"os"
+	"time"
 )
 
 const defaultPort = "6443"
@@ -79,34 +74,36 @@ func (h *honeypot) Start() {
 	// Handle /api/v1/namespaces/{namespace}/pods
 	router.HandleFunc("/api/v1/namespaces/{namespace}/pods", h.podsHandler).Methods("GET", "POST")
 
-  router.HandleFunc("/apis/rbac.authorization.k8s.io", h.apiRBACHandler).Methods("GET")
-  router.HandleFunc("/apis/rbac.authorization.k8s.io/v1", h.apiRBACV1Handler).Methods("GET")
-  router.HandleFunc("/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/roles", h.rolesHandler).Methods("GET", "POST")
+	router.HandleFunc("/apis/rbac.authorization.k8s.io", h.apiRBACHandler).Methods("GET")
+	router.HandleFunc("/apis/rbac.authorization.k8s.io/v1", h.apiRBACV1Handler).Methods("GET")
+	router.HandleFunc("/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/roles", h.rolesHandler).Methods("GET", "POST")
 
-
-
-  // add a catch all route and log the request and body
-  router.PathPrefix("/").HandlerFunc(h.catchAllHandler).Methods("GET", "POST")
-
-
+	// Record unmatched reconnaissance without reflecting attacker input.
+	router.PathPrefix("/").HandlerFunc(h.catchAllHandler).Methods("GET", "POST")
 
 	// Generate the TLS certificate
-	cert, err := generateSelfSignedCert()
+	cert, err := kubetls.GenerateSelfSigned("localhost", "localhost")
 	if err != nil {
-		h.logger.Fatal().AnErr("Failed to generate TLS certificate: %v", err).Msg("failed to start k8s")
+		h.logger.Fatal().Err(err).Msg("failed to generate Kubernetes API TLS certificate")
 	}
 
 	// Configure TLS settings
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
 		//ClientAuth:   tls.RequestClientCert,
 	}
 
 	// Create a custom server to use TLS
 	server := &http.Server{
-		Addr:      ":" + port,
-		Handler:   router,
-		TLSConfig: tlsConfig,
+		Addr:              ":" + port,
+		Handler:           router,
+		TLSConfig:         tlsConfig,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	// Start the server
@@ -120,66 +117,46 @@ type responseWriter struct {
 	statusCode int
 }
 
-func (h *honeypot) LoggingMiddleware(next http.Handler) http.Handler {
-  return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-    // Start timer
-    start := time.Now()
-
-    // Wrap the ResponseWriter to capture the status code
-    rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
-    // Process the request
-    next.ServeHTTP(rw, r)
-
-    // Calculate duration
-    duration := time.Since(start)
-
-    // Log the details
-    h.logger.Info().
-      Str("method", r.Method).
-      Str("url", r.URL.String()).
-      Str("remote_addr", r.RemoteAddr).
-      Str("user_agent", r.UserAgent()).
-      Int("status", rw.statusCode).
-      Dur("duration", duration).
-      Msg("HTTP request processed")
-  })
+func (w *responseWriter) WriteHeader(statusCode int) {
+	if w.statusCode != 0 {
+		return
+	}
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
 }
 
-// Function to generate a self-signed TLS certificate and key
-func generateSelfSignedCert() (tls.Certificate, error) {
-	// Set up the certificate template
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: "localhost",
-		},
-		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(365 * 24 * time.Hour), // Valid for one year
-
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
+func (w *responseWriter) Write(body []byte) (int, error) {
+	if w.statusCode == 0 {
+		w.WriteHeader(http.StatusOK)
 	}
+	return w.ResponseWriter.Write(body)
+}
 
-	// Generate a private key
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
+func (h *honeypot) LoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Start timer
+		start := time.Now()
 
-	// Create the certificate
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
+		// Wrap the ResponseWriter to capture the status code
+		rw := &responseWriter{ResponseWriter: w}
 
-	// Encode the certificate and key to PEM format
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	keyBytes := x509.MarshalPKCS1PrivateKey(priv)
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes})
+		// Process the request
+		next.ServeHTTP(rw, r)
+		if rw.statusCode == 0 {
+			rw.statusCode = http.StatusOK
+		}
 
-	// Load the certificate and key into tls.Certificate
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	return cert, err
+		// Calculate duration
+		duration := time.Since(start)
+
+		// Log the details
+		h.logger.Info().
+			Str("method", r.Method).
+			Str("path", r.URL.EscapedPath()).
+			Str("remote_addr", r.RemoteAddr).
+			Str("user_agent", r.UserAgent()).
+			Int("status", rw.statusCode).
+			Dur("duration", duration).
+			Msg("HTTP request processed")
+	})
 }
