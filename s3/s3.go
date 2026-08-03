@@ -47,12 +47,12 @@ var telemetrySaveSlots = make(chan struct{}, maxTelemetrySaves)
 
 type honeypot struct{ logger zerolog.Logger }
 
-// New returns a MinIO/S3 honeypot registered on the configured S3 port.
+// New constructs a MinIO/S3 honeypot.
 func New() honeypots.Honeypot {
 	return &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "s3").Logger()}
 }
 
-// Name returns the command-response and telemetry type used for this honeypot.
+// Name returns the honeypot identifier "s3".
 func (h *honeypot) Name() string { return "s3" }
 
 // Start serves the bounded MinIO/S3 HTTP surface until the process exits.
@@ -152,37 +152,53 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("ETag", "\""+etag(body)+"\"")
 		w.WriteHeader(http.StatusOK)
-	case "CreateMultipartUpload":
-		writeXML(w, http.StatusOK, []byte(fmt.Sprintf(xmlInitiateMultipart, xmlText(bucket), xmlText(key), requestID)))
-	case "UploadPart":
-		w.Header().Set("ETag", "\""+etag(body)+"\"")
-		w.WriteHeader(http.StatusOK)
-	case "CompleteMultipartUpload":
-		writeXML(w, http.StatusOK, []byte(fmt.Sprintf(xmlCompleteMultipart, xmlText(bucket), xmlText(key), xmlText(bucket), xmlText(key), etag(body))))
-	case "DeleteObject":
-		w.WriteHeader(http.StatusNoContent)
-	case "DeleteObjects":
-		writeXML(w, http.StatusOK, deleteObjectsResult(body))
+	case "CreateMultipartUpload", "UploadPart", "CompleteMultipartUpload", "DeleteObject", "DeleteObjects":
+		if _, ok := fakeObjects[bucket]; !ok {
+			writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist", r.URL.Path, requestID)
+			return
+		}
+		switch operation {
+		case "CreateMultipartUpload":
+			writeXML(w, http.StatusOK, []byte(fmt.Sprintf(xmlInitiateMultipart, xmlText(bucket), xmlText(key), requestID)))
+		case "UploadPart":
+			w.Header().Set("ETag", "\""+etag(body)+"\"")
+			w.WriteHeader(http.StatusOK)
+		case "CompleteMultipartUpload":
+			writeXML(w, http.StatusOK, []byte(fmt.Sprintf(xmlCompleteMultipart, xmlText(bucket), xmlText(key), xmlText(bucket), xmlText(key), etag(body))))
+		case "DeleteObject":
+			w.WriteHeader(http.StatusNoContent)
+		case "DeleteObjects":
+			result, err := deleteObjectsResult(body)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed or exceeded the 1000-object limit", r.URL.Path, requestID)
+				return
+			}
+			writeXML(w, http.StatusOK, result)
+		}
 	default:
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "A header you provided implies functionality that is not implemented", r.URL.Path, requestID)
 	}
 }
 
 func readBody(r *http.Request) ([]byte, bool, error) {
+	return readBodyLimit(r, maxUploadBytes)
+}
+
+func readBodyLimit(r *http.Request, limit int64) ([]byte, bool, error) {
 	if r.Body == nil || r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodDelete {
 		return nil, false, nil
 	}
-	if r.ContentLength > maxUploadBytes {
+	if r.ContentLength > limit {
 		_ = r.Body.Close()
 		return nil, true, nil
 	}
 	defer r.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(r.Body, maxUploadBytes+1))
+	b, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		return nil, false, err
 	}
-	if len(b) > maxUploadBytes {
-		return b[:maxUploadBytes], true, nil
+	if int64(len(b)) > limit {
+		return b[:limit], true, nil
 	}
 	return b, false, nil
 }
@@ -194,8 +210,8 @@ func persist(r *http.Request, guid, operation, bucket, key string, body []byte, 
 		preview = preview[:maxPreviewBytes]
 	}
 	meta := captureMetadata{
-		Operation: operation, Headers: boundedStringMap(persistence.HttpToMap(map[string][]string(r.Header)), maxHeaderBytes),
-		Query: boundedValues(r.URL.Query(), maxQueryBytes), ContentLength: r.ContentLength, Presigned: presigned,
+		Operation: operation, Headers: boundedStringMap(redactedMap(persistence.HttpToMap(map[string][]string(r.Header))), maxHeaderBytes),
+		Query: boundedValues(redactedValues(r.URL.Query()), maxQueryBytes), ContentLength: r.ContentLength, Presigned: presigned,
 		SignedHeaders: signedHeaders,
 	}
 	if len(preview) > 0 {
@@ -280,6 +296,35 @@ func boundedValues(in url.Values, limit int) url.Values {
 		out[key] = []string{value}
 	}
 	return out
+}
+
+func redactedMap(in map[string]string) map[string]string {
+	for key := range in {
+		if sensitiveS3Field(key) {
+			in[key] = "[REDACTED]"
+		}
+	}
+	return in
+}
+
+func redactedValues(in url.Values) url.Values {
+	for key := range in {
+		if sensitiveS3Field(key) {
+			in[key] = []string{"[REDACTED]"}
+		}
+	}
+	return in
+}
+
+func sensitiveS3Field(key string) bool {
+	switch strings.ToLower(key) {
+	case "authorization", "proxy-authorization", "x-amz-credential", "x-amz-signature",
+		"x-amz-security-token", "x-amz-server-side-encryption-customer-key",
+		"x-amz-server-side-encryption-customer-key-md5":
+		return true
+	default:
+		return false
+	}
 }
 
 func safeFilename(key string) string {
@@ -375,6 +420,8 @@ func operationFor(r *http.Request, bucket, key string) string {
 		return "UploadPart"
 	case r.Method == http.MethodPost && q.Get("uploadId") != "":
 		return "CompleteMultipartUpload"
+	case r.Method == http.MethodPut && key == "":
+		return "CreateBucket"
 	case r.Method == http.MethodPut:
 		return "PutObject"
 	case r.Method == http.MethodPost && q.Has("delete"):

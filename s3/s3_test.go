@@ -138,7 +138,8 @@ func TestPutObjectPersistsTelemetryAndFile(t *testing.T) {
 		require.Equal(t, int64(13), metadata.ContentLength)
 		require.Equal(t, "host", metadata.SignedHeaders)
 		require.Equal(t, "aws-cli/2.31.0", metadata.Headers["User-Agent"])
-		require.Equal(t, []string{"token"}, metadata.Query["X-Amz-Security-Token"])
+		require.Equal(t, []string{"[REDACTED]"}, metadata.Query["X-Amz-Security-Token"])
+		require.Equal(t, "[REDACTED]", metadata.Headers["Authorization"])
 		preview, err := base64.StdEncoding.DecodeString(metadata.BodyPreviewBase64)
 		require.NoError(t, err)
 		require.Equal(t, "#!/bin/sh\nid\n", string(preview))
@@ -186,6 +187,15 @@ func TestOversizedPutIsRejectedAndNotSentToFilePipeline(t *testing.T) {
 	}
 }
 
+func TestReadBodyLimitRejectsUnderstatedOrChunkedBody(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPut, "http://minio:9000/uploads/chunked.bin", strings.NewReader("123456789"))
+	r.ContentLength = -1
+	body, tooLarge, err := readBodyLimit(r, 4)
+	require.NoError(t, err)
+	require.True(t, tooLarge)
+	require.Equal(t, "1234", string(body))
+}
+
 func TestS3OperationResponses(t *testing.T) {
 	oldRequest := saveS3Request
 	saveS3Request = func(*proto.S3Request) error { return nil }
@@ -203,6 +213,9 @@ func TestS3OperationResponses(t *testing.T) {
 		{"complete multipart", http.MethodPost, "http://minio:9000/uploads/archive.bin?uploadId=abc", "<CompleteMultipartUpload/>", "CompleteMultipartUploadResult", http.StatusOK},
 		{"delete object", http.MethodDelete, "http://minio:9000/uploads/archive.bin", "", "", http.StatusNoContent},
 		{"delete objects", http.MethodPost, "http://minio:9000/uploads?delete", "<Delete><Object><Key>a&amp;b</Key></Object></Delete>", "<Key>a&amp;b</Key>", http.StatusOK},
+		{"create bucket unsupported", http.MethodPut, "http://minio:9000/new-bucket", "", "NotImplemented", http.StatusNotImplemented},
+		{"multipart missing bucket", http.MethodPost, "http://minio:9000/absent/archive.bin?uploads", "", "NoSuchBucket", http.StatusNotFound},
+		{"delete missing bucket", http.MethodDelete, "http://minio:9000/absent/archive.bin", "", "NoSuchBucket", http.StatusNotFound},
 		{"health", http.MethodGet, "http://minio:9000/minio/health/live", "", "", http.StatusOK},
 		{"unknown", http.MethodPatch, "http://minio:9000/data/config.yaml", "", "NotImplemented", http.StatusNotImplemented},
 		{"missing bucket", http.MethodGet, "http://minio:9000/absent", "", "NoSuchBucket", http.StatusNotFound},
@@ -220,6 +233,26 @@ func TestS3OperationResponses(t *testing.T) {
 				require.Equal(t, "\"f4c9385f1902f7334b00b9b4ecd164de\"", w.Header().Get("ETag"))
 			}
 		})
+	}
+}
+
+func TestDeleteObjectsRejectsMalformedAndOversizedLists(t *testing.T) {
+	oldRequest := saveS3Request
+	saveS3Request = func(*proto.S3Request) error { return nil }
+	t.Cleanup(func() { saveS3Request = oldRequest })
+
+	oversized := strings.Builder{}
+	oversized.WriteString("<Delete>")
+	for i := 0; i <= maxDeleteObjects; i++ {
+		oversized.WriteString("<Object><Key>x</Key></Object>")
+	}
+	oversized.WriteString("</Delete>")
+	for _, body := range []string{"<Delete><Object>", oversized.String()} {
+		r := httptest.NewRequest(http.MethodPost, "http://minio:9000/uploads?delete", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		newHandler().ServeHTTP(w, r)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "MalformedXML")
 	}
 }
 
@@ -279,6 +312,18 @@ func TestTelemetrySaturationDropsWithoutBlocking(t *testing.T) {
 	case <-called:
 		t.Fatal("telemetry persistence ran despite saturation")
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestSafeFilenameEdgeCases(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"folder\\payload.exe", "payload.exe"},
+		{"", "object.bin"},
+		{".", "object.bin"},
+		{"dir/control\x00name.sh", "controlname.sh"},
+		{strings.Repeat("a", 300), strings.Repeat("a", 255)},
+	} {
+		require.Equal(t, tc.want, safeFilename(tc.input), tc.input)
 	}
 }
 

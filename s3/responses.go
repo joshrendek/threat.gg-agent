@@ -5,11 +5,14 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
+	"io"
 	"sort"
 	"time"
 )
 
 const s3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/"
+const maxDeleteObjects = 1000
 
 type fakeObject struct {
 	Key          string
@@ -76,12 +79,6 @@ type listObjectsXML struct {
 	Contents    []objectXML `xml:"Contents"`
 }
 
-type deleteObjectsRequestXML struct {
-	Objects []struct {
-		Key string `xml:"Key"`
-	} `xml:"Object"`
-}
-
 type deleteObjectsResultXML struct {
 	XMLName xml.Name `xml:"DeleteResult"`
 	Xmlns   string   `xml:"xmlns,attr"`
@@ -146,14 +143,43 @@ func s3Error(code, message, resource, requestID string) []byte {
 	return marshalXML(errorXML{Code: code, Message: message, Resource: resource, Request: requestID})
 }
 
-func deleteObjectsResult(body []byte) []byte {
-	var request deleteObjectsRequestXML
-	_ = xml.Unmarshal(body, &request)
+func deleteObjectsResult(body []byte) ([]byte, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(body))
+	keys := make([]string, 0, min(16, maxDeleteObjects))
+	inObject := false
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		switch element := token.(type) {
+		case xml.StartElement:
+			if element.Name.Local == "Object" {
+				inObject = true
+			} else if inObject && element.Name.Local == "Key" {
+				var key string
+				if err := decoder.DecodeElement(&key, &element); err != nil {
+					return nil, err
+				}
+				keys = append(keys, key)
+				if len(keys) > maxDeleteObjects {
+					return nil, errors.New("delete request exceeds 1000 objects")
+				}
+			}
+		case xml.EndElement:
+			if element.Name.Local == "Object" {
+				inObject = false
+			}
+		}
+	}
 	result := deleteObjectsResultXML{Xmlns: s3Namespace}
-	for _, object := range request.Objects {
+	for _, key := range keys {
 		result.Deleted = append(result.Deleted, struct {
 			Key string `xml:"Key"`
-		}{Key: object.Key})
+		}{Key: key})
 	}
-	return marshalXML(result)
+	return marshalXML(result), nil
 }
