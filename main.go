@@ -4,6 +4,7 @@ import (
 	"flag"
 	"github.com/jellydator/ttlcache/v3"
 	comfyuihp "github.com/joshrendek/threat.gg-agent/comfyui"
+	consulhp "github.com/joshrendek/threat.gg-agent/consul"
 	dockerhp "github.com/joshrendek/threat.gg-agent/docker"
 	"github.com/joshrendek/threat.gg-agent/elasticsearch"
 	etcdhp "github.com/joshrendek/threat.gg-agent/etcd"
@@ -115,6 +116,7 @@ func main() {
 	wait := make(chan bool, 1)
 	honeypots.Register(kubernetes.New())
 	honeypots.Register(kubelethp.New())
+	honeypots.Register(consulhp.New())
 	honeypots.Register(postgres.New())
 	honeypots.Register(elasticsearch.New())
 	honeypots.Register(ftp.New())

@@ -20,6 +20,8 @@ service Honeypot {
   rpc SaveMssqlLogin(MssqlRequest) returns (SaveReply) {}
   // SaveKubeletRequest stores bounded metadata for one HTTPS Kubelet request.
   rpc SaveKubeletRequest(KubeletRequest) returns (SaveReply) {}
+  // SaveConsulRequest stores bounded metadata for one Consul HTTP API request.
+  rpc SaveConsulRequest(ConsulRequest) returns (SaveReply) {}
   rpc SaveQuery(QueryRequest) returns (SaveReply) {}
   rpc SaveHttpHeaders(HttpHeaderRequest) returns (SaveReply) {}
   rpc SaveShellCommand(ShellCommandRequest) returns (SaveReply) {}
@@ -117,6 +119,19 @@ message KubeletRequest {
   string user_agent = 8;
   string body = 9;
   repeated string commands = 10;
+}
+
+message ConsulRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string method = 3;
+  string path = 4;
+  string query = 5;
+  string token_source = 6;
+  string token_fingerprint = 7;
+  string user_agent = 8;
+  string body = 9;
+  int32 response_status = 10;
 }
 
 message QueryRequest {

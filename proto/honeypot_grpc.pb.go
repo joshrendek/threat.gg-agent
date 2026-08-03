@@ -136,6 +136,7 @@ const (
 	Honeypot_SaveMysqlLogin_FullMethodName       = "/honeypot.Honeypot/SaveMysqlLogin"
 	Honeypot_SaveMssqlLogin_FullMethodName       = "/honeypot.Honeypot/SaveMssqlLogin"
 	Honeypot_SaveKubeletRequest_FullMethodName   = "/honeypot.Honeypot/SaveKubeletRequest"
+	Honeypot_SaveConsulRequest_FullMethodName    = "/honeypot.Honeypot/SaveConsulRequest"
 	Honeypot_SaveQuery_FullMethodName            = "/honeypot.Honeypot/SaveQuery"
 	Honeypot_SaveHttpHeaders_FullMethodName      = "/honeypot.Honeypot/SaveHttpHeaders"
 	Honeypot_SaveShellCommand_FullMethodName     = "/honeypot.Honeypot/SaveShellCommand"
@@ -191,6 +192,8 @@ type HoneypotClient interface {
 	SaveMssqlLogin(ctx context.Context, in *MssqlRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	// SaveKubeletRequest stores bounded metadata for one HTTPS Kubelet request.
 	SaveKubeletRequest(ctx context.Context, in *KubeletRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	// SaveConsulRequest stores bounded metadata for one Consul HTTP API request.
+	SaveConsulRequest(ctx context.Context, in *ConsulRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveQuery(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveHttpHeaders(ctx context.Context, in *HttpHeaderRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveShellCommand(ctx context.Context, in *ShellCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
@@ -333,6 +336,16 @@ func (c *honeypotClient) SaveKubeletRequest(ctx context.Context, in *KubeletRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SaveReply)
 	err := c.cc.Invoke(ctx, Honeypot_SaveKubeletRequest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveConsulRequest(ctx context.Context, in *ConsulRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveConsulRequest_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -743,6 +756,8 @@ type HoneypotServer interface {
 	SaveMssqlLogin(context.Context, *MssqlRequest) (*SaveReply, error)
 	// SaveKubeletRequest stores bounded metadata for one HTTPS Kubelet request.
 	SaveKubeletRequest(context.Context, *KubeletRequest) (*SaveReply, error)
+	// SaveConsulRequest stores bounded metadata for one Consul HTTP API request.
+	SaveConsulRequest(context.Context, *ConsulRequest) (*SaveReply, error)
 	SaveQuery(context.Context, *QueryRequest) (*SaveReply, error)
 	SaveHttpHeaders(context.Context, *HttpHeaderRequest) (*SaveReply, error)
 	SaveShellCommand(context.Context, *ShellCommandRequest) (*SaveReply, error)
@@ -827,6 +842,9 @@ func (UnimplementedHoneypotServer) SaveMssqlLogin(context.Context, *MssqlRequest
 }
 func (UnimplementedHoneypotServer) SaveKubeletRequest(context.Context, *KubeletRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveKubeletRequest not implemented")
+}
+func (UnimplementedHoneypotServer) SaveConsulRequest(context.Context, *ConsulRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveConsulRequest not implemented")
 }
 func (UnimplementedHoneypotServer) SaveQuery(context.Context, *QueryRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveQuery not implemented")
@@ -1124,6 +1142,24 @@ func _Honeypot_SaveKubeletRequest_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HoneypotServer).SaveKubeletRequest(ctx, req.(*KubeletRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveConsulRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConsulRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveConsulRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveConsulRequest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveConsulRequest(ctx, req.(*ConsulRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1872,6 +1908,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveKubeletRequest",
 			Handler:    _Honeypot_SaveKubeletRequest_Handler,
+		},
+		{
+			MethodName: "SaveConsulRequest",
+			Handler:    _Honeypot_SaveConsulRequest_Handler,
 		},
 		{
 			MethodName: "SaveQuery",

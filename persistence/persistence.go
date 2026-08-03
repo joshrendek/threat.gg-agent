@@ -171,6 +171,18 @@ func SaveKubeletRequest(in *proto.KubeletRequest) error {
 	return err
 }
 
+// SaveConsulRequest sends bounded Consul HTTP metadata with a deadline.
+func SaveConsulRequest(in *proto.ConsulRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveConsulRequest(ctx, in)
+	return err
+}
+
 func SaveRedisConnect(in *proto.RedisConnectRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
