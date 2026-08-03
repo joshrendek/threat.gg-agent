@@ -50,6 +50,12 @@ func isSignalPath(path string) bool {
 	if strings.HasPrefix(p, "/v1/") {
 		return true
 	}
+	// LM Studio 0.4.x native REST endpoints live under /api/v1/*. Versioned
+	// LLM-native paths are specific enough to keep even when a particular route
+	// is unsupported, just like the OpenAI /v1 family above.
+	if strings.HasPrefix(p, "/api/v1/") {
+		return true
+	}
 	if strings.HasPrefix(p, "/api/") {
 		seg := p[len("/api/"):]
 		if i := strings.IndexByte(seg, '/'); i >= 0 {

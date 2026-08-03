@@ -166,6 +166,7 @@ const (
 	Honeypot_SaveOllama_FullMethodName           = "/honeypot.Honeypot/SaveOllama"
 	Honeypot_SaveRay_FullMethodName              = "/honeypot.Honeypot/SaveRay"
 	Honeypot_SaveLocalai_FullMethodName          = "/honeypot.Honeypot/SaveLocalai"
+	Honeypot_SaveLmstudio_FullMethodName         = "/honeypot.Honeypot/SaveLmstudio"
 	Honeypot_SaveLlamacpp_FullMethodName         = "/honeypot.Honeypot/SaveLlamacpp"
 	Honeypot_SaveComfyui_FullMethodName          = "/honeypot.Honeypot/SaveComfyui"
 	Honeypot_SaveFile_FullMethodName             = "/honeypot.Honeypot/SaveFile"
@@ -217,6 +218,7 @@ type HoneypotClient interface {
 	SaveOllama(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveRay(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveLocalai(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveLmstudio(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveLlamacpp(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveComfyui(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveFile(ctx context.Context, in *FileUploadRequest, opts ...grpc.CallOption) (*SaveReply, error)
@@ -631,6 +633,16 @@ func (c *honeypotClient) SaveLocalai(ctx context.Context, in *LlmRequest, opts .
 	return out, nil
 }
 
+func (c *honeypotClient) SaveLmstudio(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveLmstudio_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *honeypotClient) SaveLlamacpp(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SaveReply)
@@ -734,6 +746,7 @@ type HoneypotServer interface {
 	SaveOllama(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveRay(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveLocalai(context.Context, *LlmRequest) (*SaveReply, error)
+	SaveLmstudio(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveLlamacpp(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveComfyui(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveFile(context.Context, *FileUploadRequest) (*SaveReply, error)
@@ -874,6 +887,9 @@ func (UnimplementedHoneypotServer) SaveRay(context.Context, *LlmRequest) (*SaveR
 }
 func (UnimplementedHoneypotServer) SaveLocalai(context.Context, *LlmRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveLocalai not implemented")
+}
+func (UnimplementedHoneypotServer) SaveLmstudio(context.Context, *LlmRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveLmstudio not implemented")
 }
 func (UnimplementedHoneypotServer) SaveLlamacpp(context.Context, *LlmRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveLlamacpp not implemented")
@@ -1616,6 +1632,24 @@ func _Honeypot_SaveLocalai_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveLmstudio_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LlmRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveLmstudio(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveLmstudio_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveLmstudio(ctx, req.(*LlmRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Honeypot_SaveLlamacpp_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LlmRequest)
 	if err := dec(in); err != nil {
@@ -1886,6 +1920,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveLocalai",
 			Handler:    _Honeypot_SaveLocalai_Handler,
+		},
+		{
+			MethodName: "SaveLmstudio",
+			Handler:    _Honeypot_SaveLmstudio_Handler,
 		},
 		{
 			MethodName: "SaveLlamacpp",

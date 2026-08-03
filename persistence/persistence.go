@@ -231,6 +231,17 @@ func SaveLocalaiRequest(in *proto.LlmRequest) error {
 	return err
 }
 
+func SaveLmstudioRequest(in *proto.LlmRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveLmstudio(ctx, in)
+	return err
+}
+
 func SaveLlamacppRequest(in *proto.LlmRequest) error {
 	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
 	defer cancel()

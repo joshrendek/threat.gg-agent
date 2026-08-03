@@ -290,6 +290,15 @@ func classifiedReply(r *http.Request, prompt, model string) ReplyResult {
 	return result
 }
 
+// ClassifiedReply selects the same bounded semantic reply used by the shared
+// OpenAI/Ollama generators and attaches its reply-kind metadata to r. Product
+// adapters with a distinct wire shape (for example LM Studio native and
+// Anthropic-compatible responses) use this rather than duplicating the safety
+// and corpus-rule cascade.
+func ClassifiedReply(r *http.Request, prompt, model string) ReplyResult {
+	return classifiedReply(r, prompt, model)
+}
+
 type captureResponseWriter struct {
 	http.ResponseWriter
 	status      int
