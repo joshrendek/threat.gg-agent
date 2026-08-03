@@ -20,6 +20,7 @@ The agent is a Go binary that runs on honeypot nodes and emulates multiple netwo
 | Kubelet | 10250 | Emulates the node HTTPS API, including pods, metrics, logs, stats, and exec/run capture |
 | Consul | 8500 | Emulates service discovery, health, KV, session, and ACL-token HTTP APIs |
 | RabbitMQ / AMQP | 5672 | Negotiates AMQP 0-9-1, captures SASL credentials, topology, publish, and consume activity |
+| Android Debug Bridge | 5555 | Emulates an authenticated Android device, shell services, and bounded sync uploads |
 | OpenClaw | 18789 | WebSocket-based honeypot for custom protocol interactions |
 | Kafka | 9092 | Emulates an Apache Kafka broker, captures client reconnaissance and SASL/PLAIN credentials |
 | VNC | 5900 | Emulates VNC/RFB handshake and captures auth challenge-response + client preferences |
@@ -56,6 +57,7 @@ Environment variables:
 | `KUBELET_HONEYPOT_PORT` | Kubelet HTTPS honeypot port | `10250` |
 | `CONSUL_HONEYPOT_PORT` | Consul HTTP API honeypot port | `8500` |
 | `AMQP_HONEYPOT_PORT` | RabbitMQ-compatible AMQP honeypot port | `5672` |
+| `ADB_HONEYPOT_PORT` | Android Debug Bridge device honeypot port | `5555` |
 
 The MSSQL honeypot intentionally advertises `ENCRYPT_NOT_SUP` so it can observe
 LOGIN7 reconnaissance and reversibly obfuscated SQL-auth attempts. Run honeypot

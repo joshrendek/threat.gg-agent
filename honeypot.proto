@@ -24,6 +24,8 @@ service Honeypot {
   rpc SaveConsulRequest(ConsulRequest) returns (SaveReply) {}
   // SaveAmqpSession stores one bounded AMQP 0-9-1 or 1.0 probe session.
   rpc SaveAmqpSession(AmqpSessionRequest) returns (SaveReply) {}
+  // SaveAdbSession stores one bounded Android Debug Bridge transport session.
+  rpc SaveAdbSession(AdbSessionRequest) returns (SaveReply) {}
   rpc SaveQuery(QueryRequest) returns (SaveReply) {}
   rpc SaveHttpHeaders(HttpHeaderRequest) returns (SaveReply) {}
   rpc SaveShellCommand(ShellCommandRequest) returns (SaveReply) {}
@@ -145,6 +147,18 @@ message AmqpSessionRequest {
   string protocol = 6;
   map<string,string> client_properties = 7;
   repeated string operations = 8;
+}
+
+message AdbSessionRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string host_banner = 3;
+  string auth_kind = 4;
+  string auth_fingerprint = 5;
+  uint32 protocol_version = 6;
+  uint32 max_payload = 7;
+  repeated string services = 8;
+  repeated string commands = 9;
 }
 
 message QueryRequest {

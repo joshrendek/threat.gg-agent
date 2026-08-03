@@ -195,6 +195,18 @@ func SaveAmqpSession(in *proto.AmqpSessionRequest) error {
 	return err
 }
 
+// SaveAdbSession sends one bounded ADB transport session with a deadline.
+func SaveAdbSession(in *proto.AdbSessionRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveAdbSession(ctx, in)
+	return err
+}
+
 func SaveRedisConnect(in *proto.RedisConnectRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)

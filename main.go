@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"github.com/jellydator/ttlcache/v3"
+	adbhp "github.com/joshrendek/threat.gg-agent/adb"
 	amqphp "github.com/joshrendek/threat.gg-agent/amqp"
 	comfyuihp "github.com/joshrendek/threat.gg-agent/comfyui"
 	consulhp "github.com/joshrendek/threat.gg-agent/consul"
@@ -119,6 +120,7 @@ func main() {
 	honeypots.Register(kubelethp.New())
 	honeypots.Register(consulhp.New())
 	honeypots.Register(amqphp.New())
+	honeypots.Register(adbhp.New())
 	honeypots.Register(postgres.New())
 	honeypots.Register(elasticsearch.New())
 	honeypots.Register(ftp.New())

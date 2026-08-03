@@ -138,6 +138,7 @@ const (
 	Honeypot_SaveKubeletRequest_FullMethodName   = "/honeypot.Honeypot/SaveKubeletRequest"
 	Honeypot_SaveConsulRequest_FullMethodName    = "/honeypot.Honeypot/SaveConsulRequest"
 	Honeypot_SaveAmqpSession_FullMethodName      = "/honeypot.Honeypot/SaveAmqpSession"
+	Honeypot_SaveAdbSession_FullMethodName       = "/honeypot.Honeypot/SaveAdbSession"
 	Honeypot_SaveQuery_FullMethodName            = "/honeypot.Honeypot/SaveQuery"
 	Honeypot_SaveHttpHeaders_FullMethodName      = "/honeypot.Honeypot/SaveHttpHeaders"
 	Honeypot_SaveShellCommand_FullMethodName     = "/honeypot.Honeypot/SaveShellCommand"
@@ -197,6 +198,8 @@ type HoneypotClient interface {
 	SaveConsulRequest(ctx context.Context, in *ConsulRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	// SaveAmqpSession stores one bounded AMQP 0-9-1 or 1.0 probe session.
 	SaveAmqpSession(ctx context.Context, in *AmqpSessionRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	// SaveAdbSession stores one bounded Android Debug Bridge transport session.
+	SaveAdbSession(ctx context.Context, in *AdbSessionRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveQuery(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveHttpHeaders(ctx context.Context, in *HttpHeaderRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveShellCommand(ctx context.Context, in *ShellCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
@@ -359,6 +362,16 @@ func (c *honeypotClient) SaveAmqpSession(ctx context.Context, in *AmqpSessionReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SaveReply)
 	err := c.cc.Invoke(ctx, Honeypot_SaveAmqpSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveAdbSession(ctx context.Context, in *AdbSessionRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveAdbSession_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -773,6 +786,8 @@ type HoneypotServer interface {
 	SaveConsulRequest(context.Context, *ConsulRequest) (*SaveReply, error)
 	// SaveAmqpSession stores one bounded AMQP 0-9-1 or 1.0 probe session.
 	SaveAmqpSession(context.Context, *AmqpSessionRequest) (*SaveReply, error)
+	// SaveAdbSession stores one bounded Android Debug Bridge transport session.
+	SaveAdbSession(context.Context, *AdbSessionRequest) (*SaveReply, error)
 	SaveQuery(context.Context, *QueryRequest) (*SaveReply, error)
 	SaveHttpHeaders(context.Context, *HttpHeaderRequest) (*SaveReply, error)
 	SaveShellCommand(context.Context, *ShellCommandRequest) (*SaveReply, error)
@@ -863,6 +878,9 @@ func (UnimplementedHoneypotServer) SaveConsulRequest(context.Context, *ConsulReq
 }
 func (UnimplementedHoneypotServer) SaveAmqpSession(context.Context, *AmqpSessionRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveAmqpSession not implemented")
+}
+func (UnimplementedHoneypotServer) SaveAdbSession(context.Context, *AdbSessionRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveAdbSession not implemented")
 }
 func (UnimplementedHoneypotServer) SaveQuery(context.Context, *QueryRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveQuery not implemented")
@@ -1196,6 +1214,24 @@ func _Honeypot_SaveAmqpSession_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HoneypotServer).SaveAmqpSession(ctx, req.(*AmqpSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveAdbSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdbSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveAdbSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveAdbSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveAdbSession(ctx, req.(*AdbSessionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1952,6 +1988,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveAmqpSession",
 			Handler:    _Honeypot_SaveAmqpSession_Handler,
+		},
+		{
+			MethodName: "SaveAdbSession",
+			Handler:    _Honeypot_SaveAdbSession_Handler,
 		},
 		{
 			MethodName: "SaveQuery",
