@@ -11,6 +11,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/jenkins"
 	"github.com/joshrendek/threat.gg-agent/kafka"
+	kubelethp "github.com/joshrendek/threat.gg-agent/kubelet"
 	"github.com/joshrendek/threat.gg-agent/kubernetes"
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
 	"github.com/joshrendek/threat.gg-agent/llamacpp"
@@ -113,6 +114,7 @@ func main() {
 	// TODO: make this not crappy
 	wait := make(chan bool, 1)
 	honeypots.Register(kubernetes.New())
+	honeypots.Register(kubelethp.New())
 	honeypots.Register(postgres.New())
 	honeypots.Register(elasticsearch.New())
 	honeypots.Register(ftp.New())

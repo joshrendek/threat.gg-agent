@@ -17,6 +17,7 @@ The agent is a Go binary that runs on honeypot nodes and emulates multiple netwo
 | Elasticsearch | 9200 | Emulates an Elasticsearch REST API, captures search and index requests |
 | HTTP | 8080 | Web server honeypot capturing HTTP request payloads |
 | Kubernetes API | 6443 | Emulates the Kubernetes API server |
+| Kubelet | 10250 | Emulates the node HTTPS API, including pods, metrics, logs, stats, and exec/run capture |
 | OpenClaw | 18789 | WebSocket-based honeypot for custom protocol interactions |
 | Kafka | 9092 | Emulates an Apache Kafka broker, captures client reconnaissance and SASL/PLAIN credentials |
 | VNC | 5900 | Emulates VNC/RFB handshake and captures auth challenge-response + client preferences |
@@ -50,6 +51,7 @@ Environment variables:
 | `SSH_PORT` | SSH honeypot port | `22` |
 | `KAFKA_PORT` | Kafka honeypot port | `9092` |
 | `MSSQL_HONEYPOT_PORT` | Microsoft SQL Server honeypot port | `1433` |
+| `KUBELET_HONEYPOT_PORT` | Kubelet HTTPS honeypot port | `10250` |
 
 The MSSQL honeypot intentionally advertises `ENCRYPT_NOT_SUP` so it can observe
 LOGIN7 reconnaissance and reversibly obfuscated SQL-auth attempts. Run honeypot
