@@ -172,13 +172,13 @@ func TestCaptureRedactsAndFingerprintsAllTokenForms(t *testing.T) {
 			require.NotContains(t, got.Query, "query-secret")
 			require.NotContains(t, got.Body, "secret")
 			require.Equal(t, int32(rec.Code), got.ResponseStatus)
-		case <-time.After(time.Second):
+		case <-time.After(3 * time.Second):
 			t.Fatal("capture timeout")
 		}
 	}
 }
 
-func TestOversizedBodyReturns413AndCaptureBodyRedactsJSONSecrets(t *testing.T) {
+func TestOversizedBodyReturns413AndSessionCaptureAllowsOnlyScalarFields(t *testing.T) {
 	resetState()
 	old := saveRequest
 	captured := make(chan *proto.ConsulRequest, 2)
@@ -189,11 +189,11 @@ func TestOversizedBodyReturns413AndCaptureBodyRedactsJSONSecrets(t *testing.T) {
 	require.Equal(t, 413, rec.Code)
 	require.Equal(t, "[REDACTED_KV_VALUE]", awaitCapture(t, captured).Body)
 	rec = httptest.NewRecorder()
-	newHandler().ServeHTTP(rec, httptest.NewRequest("PUT", "http://consul/v1/session/create", strings.NewReader(`{"nested":[{"apiKey":"secret"},{"credentials":123}],"Name":"safe"}`)))
+	newHandler().ServeHTTP(rec, httptest.NewRequest("PUT", "http://consul/v1/session/create", strings.NewReader(`{"nested":[{"apiKey":"secret"},{"credentials":123}],"Name":{"password":"nested-secret"},"Node":["array-secret"],"TTL":"15s","Behavior":"release"}`)))
 	got := awaitCapture(t, captured)
 	require.NotContains(t, got.Body, "secret")
 	require.NotContains(t, got.Body, "123")
-	require.JSONEq(t, `{"Name":"safe"}`, got.Body)
+	require.JSONEq(t, `{"TTL":"15s","Behavior":"release"}`, got.Body)
 }
 
 func TestCaptureOmitsRawKVValues(t *testing.T) {

@@ -1,4 +1,4 @@
-// Package amqp emulates a bounded RabbitMQ-compatible AMQP 0-9-1 server.
+// Package amqp emulates bounded RabbitMQ-compatible AMQP 0-9-1 sessions and records AMQP 1.0 probes.
 package amqp
 
 import (
@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joshrendek/threat.gg-agent/honeypots"
@@ -27,6 +28,8 @@ const (
 	maxFrameBytes     = 128 << 10
 	maxOperations     = 128
 	maxBodyCapture    = 32 << 10
+	maxOperationBytes = 48 << 10
+	maxTableDepth     = 8
 	maxConnections    = 128
 	idleTimeout       = 45 * time.Second
 	connectionTimeout = 5 * time.Minute
@@ -38,7 +41,7 @@ var persistenceSlots = make(chan struct{}, 32)
 
 type honeypot struct{ logger zerolog.Logger }
 
-// New constructs the AMQP honeypot.
+// New returns a honeypot that negotiates bounded AMQP sessions and captures credentials, topology, and publishes.
 func New() honeypots.Honeypot {
 	return &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "amqp").Logger()}
 }
@@ -74,7 +77,11 @@ type session struct {
 	operations                                        []string
 	publishes                                         map[uint16]*publish
 	confirms                                          map[uint16]bool
-	deliveryTag                                       uint64
+	deliveryTags                                      map[uint16]uint64
+	writeMu                                           sync.Mutex
+	heartbeatStop                                     chan struct{}
+	heartbeatStart                                    sync.Once
+	heartbeatOnce                                     sync.Once
 }
 type publish struct {
 	exchange, routingKey string
@@ -94,8 +101,9 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	if err != nil {
 		host = conn.RemoteAddr().String()
 	}
-	s := &session{guid: uuid.NewV4().String(), remote: host, properties: make(map[string]string), publishes: make(map[uint16]*publish), confirms: make(map[uint16]bool)}
+	s := &session{guid: uuid.NewV4().String(), remote: host, properties: make(map[string]string), publishes: make(map[uint16]*publish), confirms: make(map[uint16]bool), deliveryTags: make(map[uint16]uint64), heartbeatStop: make(chan struct{})}
 	defer persist(s)
+	defer s.stopHeartbeat()
 	_ = conn.SetDeadline(time.Now().Add(connectionTimeout))
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(conn, header); err != nil {
@@ -112,7 +120,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	default:
 		return
 	}
-	if err := writeMethod(conn, 0, 10, 10, connectionStart()); err != nil {
+	if err := s.writeMethod(conn, 0, 10, 10, connectionStart()); err != nil {
 		return
 	}
 	for i := 0; i < 512; i++ {
@@ -122,20 +130,18 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			return
 		}
 		if f.typeID == 8 {
-			_ = writeFrame(conn, frame{typeID: 8})
+			_ = s.writeFrame(conn, frame{typeID: 8})
 			continue
 		}
 		if f.typeID == 2 {
 			if s.handleContentHeader(f) && s.confirms[f.channel] {
-				s.deliveryTag++
-				_ = writeMethod(conn, f.channel, 60, 80, append(appendUint64(nil, s.deliveryTag), 0))
+				s.ackPublish(conn, f.channel)
 			}
 			continue
 		}
 		if f.typeID == 3 {
 			if complete := s.handleContentBody(f); complete && s.confirms[f.channel] {
-				s.deliveryTag++
-				_ = writeMethod(conn, f.channel, 60, 80, append(appendUint64(nil, s.deliveryTag), 0))
+				s.ackPublish(conn, f.channel)
 			}
 			continue
 		}
@@ -160,8 +166,12 @@ func (s *session) handleMethod(conn net.Conn, channel, classID, methodID uint16,
 		s.properties = props
 		s.username, s.password = parseSASL(mechanism, response)
 		s.addOperation("CONNECTION_START_OK mechanism=" + bounded(mechanism, 32))
-		return writeMethod(conn, 0, 10, 30, connectionTune()) == nil
+		return s.writeMethod(conn, 0, 10, 30, connectionTune()) == nil
 	case classID == 10 && methodID == 31: // Connection.TuneOk
+		if len(args) < 8 {
+			return false
+		}
+		s.startHeartbeat(conn, binary.BigEndian.Uint16(args[6:8]))
 		return true
 	case classID == 10 && methodID == 40: // Connection.Open
 		vhost, _, err := readShortString(args)
@@ -170,22 +180,22 @@ func (s *session) handleMethod(conn net.Conn, channel, classID, methodID uint16,
 		}
 		s.vhost = bounded(vhost, 1024)
 		s.addOperation("CONNECTION_OPEN vhost=" + quote(s.vhost))
-		return writeMethod(conn, 0, 10, 41, []byte{0}) == nil
+		return s.writeMethod(conn, 0, 10, 41, []byte{0}) == nil
 	case classID == 10 && methodID == 50: // Connection.Close
-		_ = writeMethod(conn, 0, 10, 51, nil)
+		_ = s.writeMethod(conn, 0, 10, 51, nil)
 		return false
 	case classID == 20 && methodID == 10: // Channel.Open
 		s.addOperation(fmt.Sprintf("CHANNEL_OPEN channel=%d", channel))
-		return writeMethod(conn, channel, 20, 11, []byte{0, 0, 0, 0}) == nil
+		return s.writeMethod(conn, channel, 20, 11, []byte{0, 0, 0, 0}) == nil
 	case classID == 20 && methodID == 40: // Channel.Close
-		return writeMethod(conn, channel, 20, 41, nil) == nil
+		return s.writeMethod(conn, channel, 20, 41, nil) == nil
 	case classID == 40 && methodID == 10: // Exchange.Declare
 		exchange, kind, err := parseExchangeDeclare(args)
 		if err != nil {
 			return false
 		}
 		s.addOperation("EXCHANGE_DECLARE exchange=" + quote(exchange) + " type=" + quote(kind))
-		return writeMethod(conn, channel, 40, 11, nil) == nil
+		return s.writeMethod(conn, channel, 40, 11, nil) == nil
 	case classID == 50 && methodID == 10: // Queue.Declare
 		queue, err := parseQueueDeclare(args)
 		if err != nil {
@@ -198,16 +208,16 @@ func (s *session) handleMethod(conn net.Conn, channel, classID, methodID uint16,
 		var out []byte
 		out = appendShortString(out, queue)
 		out = append(out, make([]byte, 8)...)
-		return writeMethod(conn, channel, 50, 11, out) == nil
+		return s.writeMethod(conn, channel, 50, 11, out) == nil
 	case classID == 50 && methodID == 20: // Queue.Bind
 		queue, exchange, routing, err := parseQueueBind(args)
 		if err != nil {
 			return false
 		}
 		s.addOperation("QUEUE_BIND queue=" + quote(queue) + " exchange=" + quote(exchange) + " routing_key=" + quote(routing))
-		return writeMethod(conn, channel, 50, 21, nil) == nil
+		return s.writeMethod(conn, channel, 50, 21, nil) == nil
 	case classID == 60 && methodID == 10: // Basic.Qos
-		return writeMethod(conn, channel, 60, 11, nil) == nil
+		return s.writeMethod(conn, channel, 60, 11, nil) == nil
 	case classID == 60 && methodID == 20: // Basic.Consume
 		queue, tag, err := parseBasicConsume(args)
 		if err != nil {
@@ -217,7 +227,7 @@ func (s *session) handleMethod(conn net.Conn, channel, classID, methodID uint16,
 			tag = "amq.ctag-" + s.guid[:12]
 		}
 		s.addOperation("BASIC_CONSUME queue=" + quote(queue) + " consumer_tag=" + quote(tag))
-		return writeMethod(conn, channel, 60, 21, appendShortString(nil, tag)) == nil
+		return s.writeMethod(conn, channel, 60, 21, appendShortString(nil, tag)) == nil
 	case classID == 60 && methodID == 40: // Basic.Publish
 		exchange, routing, err := parseBasicPublish(args)
 		if err != nil {
@@ -228,7 +238,7 @@ func (s *session) handleMethod(conn net.Conn, channel, classID, methodID uint16,
 	case classID == 85 && methodID == 10: // Confirm.Select
 		s.addOperation(fmt.Sprintf("CONFIRM_SELECT channel=%d", channel))
 		s.confirms[channel] = true
-		return writeMethod(conn, channel, 85, 11, nil) == nil
+		return s.writeMethod(conn, channel, 85, 11, nil) == nil
 	default:
 		s.addOperation(fmt.Sprintf("METHOD class=%d method=%d channel=%d", classID, methodID, channel))
 		return true
@@ -271,15 +281,62 @@ func (s *session) finishPublish(channel uint16) {
 	if p == nil {
 		return
 	}
-	s.addOperation("BASIC_PUBLISH exchange=" + quote(p.exchange) + " routing_key=" + quote(p.routingKey) +
-		" body_base64=" + base64.StdEncoding.EncodeToString(p.body))
+	if len(s.operations) < maxOperations {
+		s.addOperation("BASIC_PUBLISH exchange=" + quote(p.exchange) + " routing_key=" + quote(p.routingKey) +
+			" body_base64=" + base64.StdEncoding.EncodeToString(p.body))
+	}
 	delete(s.publishes, channel)
 }
 func (s *session) addOperation(value string) {
 	if len(s.operations) < maxOperations {
-		s.operations = append(s.operations, bounded(value, 8192))
+		s.operations = append(s.operations, bounded(value, maxOperationBytes))
 	}
 }
+
+func (s *session) ackPublish(conn net.Conn, channel uint16) {
+	s.deliveryTags[channel]++
+	_ = s.writeMethod(conn, channel, 60, 80, append(appendUint64(nil, s.deliveryTags[channel]), 0))
+}
+
+func (s *session) writeFrame(conn net.Conn, f frame) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return writeFrame(conn, f)
+}
+
+func (s *session) writeMethod(conn net.Conn, channel, classID, methodID uint16, args []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return writeMethod(conn, channel, classID, methodID, args)
+}
+
+func (s *session) startHeartbeat(conn net.Conn, seconds uint16) {
+	if seconds == 0 {
+		return
+	}
+	interval := time.Duration(seconds) * time.Second / 2
+	if interval < time.Second {
+		interval = time.Second
+	}
+	s.heartbeatStart.Do(func() {
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if s.writeFrame(conn, frame{typeID: 8}) != nil {
+						return
+					}
+				case <-s.heartbeatStop:
+					return
+				}
+			}
+		}()
+	})
+}
+
+func (s *session) stopHeartbeat() { s.heartbeatOnce.Do(func() { close(s.heartbeatStop) }) }
 
 func persist(s *session) {
 	if s.protocol == "" {
@@ -375,9 +432,13 @@ func parseStartOK(data []byte) (map[string]string, string, []byte, error) {
 }
 func parseSASL(mechanism string, response []byte) (string, string) {
 	if mechanism == "PLAIN" {
-		parts := bytes.Split(response, []byte{0})
-		if len(parts) >= 3 {
-			return bounded(string(parts[len(parts)-2]), 1024), bounded(string(parts[len(parts)-1]), 4096)
+		first := bytes.IndexByte(response, 0)
+		if first >= 0 {
+			secondOffset := bytes.IndexByte(response[first+1:], 0)
+			if secondOffset >= 0 {
+				second := first + 1 + secondOffset
+				return bounded(string(response[first+1:second]), 1024), bounded(string(response[second+1:]), 4096)
+			}
 		}
 	}
 	if mechanism == "AMQPLAIN" {
@@ -446,6 +507,13 @@ func parseBasicPublish(data []byte) (string, string, error) {
 }
 
 func parseTable(data []byte) (map[string]string, []byte, error) {
+	return parseTableDepth(data, 0)
+}
+
+func parseTableDepth(data []byte, depth int) (map[string]string, []byte, error) {
+	if depth >= maxTableDepth {
+		return nil, nil, errors.New("AMQP field table nesting is too deep")
+	}
 	if len(data) < 4 {
 		return nil, nil, io.ErrUnexpectedEOF
 	}
@@ -462,35 +530,9 @@ func parseTable(data []byte) (map[string]string, []byte, error) {
 		}
 		typeID := tail[0]
 		tail = tail[1:]
-		var value string
-		switch typeID {
-		case 'S':
-			b, next, err := readLongBytes(tail)
-			if err != nil {
-				return nil, nil, err
-			}
-			value, tail = string(b), next
-		case 't':
-			if len(tail) < 1 {
-				return nil, nil, io.ErrUnexpectedEOF
-			}
-			value = strconv.FormatBool(tail[0] != 0)
-			tail = tail[1:]
-		case 'I':
-			if len(tail) < 4 {
-				return nil, nil, io.ErrUnexpectedEOF
-			}
-			value = strconv.FormatInt(int64(int32(binary.BigEndian.Uint32(tail))), 10)
-			tail = tail[4:]
-		case 'F':
-			nested, next, err := parseTable(tail)
-			if err != nil {
-				return nil, nil, err
-			}
-			value = fmt.Sprint(nested)
-			tail = next
-		default:
-			return nil, nil, fmt.Errorf("unsupported AMQP table type %q", typeID)
+		value, tail, err := parseFieldValue(typeID, tail, depth)
+		if err != nil {
+			return nil, nil, err
 		}
 		if len(out) < 32 {
 			out[bounded(key, 128)] = bounded(value, 1024)
@@ -498,6 +540,108 @@ func parseTable(data []byte) (map[string]string, []byte, error) {
 		fieldData = tail
 	}
 	return out, rest, nil
+}
+
+func parseFieldValue(typeID byte, data []byte, depth int) (string, []byte, error) {
+	if depth >= maxTableDepth {
+		return "", nil, errors.New("AMQP field value nesting is too deep")
+	}
+	need := func(n int) error {
+		if len(data) < n {
+			return io.ErrUnexpectedEOF
+		}
+		return nil
+	}
+	switch typeID {
+	case 'S', 'x':
+		value, rest, err := readLongBytes(data)
+		return string(value), rest, err
+	case 't':
+		if err := need(1); err != nil {
+			return "", nil, err
+		}
+		return strconv.FormatBool(data[0] != 0), data[1:], nil
+	case 'b':
+		if err := need(1); err != nil {
+			return "", nil, err
+		}
+		return strconv.FormatInt(int64(int8(data[0])), 10), data[1:], nil
+	case 'B':
+		if err := need(1); err != nil {
+			return "", nil, err
+		}
+		return strconv.FormatUint(uint64(data[0]), 10), data[1:], nil
+	case 'U':
+		if err := need(2); err != nil {
+			return "", nil, err
+		}
+		return strconv.FormatInt(int64(int16(binary.BigEndian.Uint16(data))), 10), data[2:], nil
+	case 'u':
+		if err := need(2); err != nil {
+			return "", nil, err
+		}
+		return strconv.FormatUint(uint64(binary.BigEndian.Uint16(data)), 10), data[2:], nil
+	case 'I':
+		if err := need(4); err != nil {
+			return "", nil, err
+		}
+		return strconv.FormatInt(int64(int32(binary.BigEndian.Uint32(data))), 10), data[4:], nil
+	case 'i':
+		if err := need(4); err != nil {
+			return "", nil, err
+		}
+		return strconv.FormatUint(uint64(binary.BigEndian.Uint32(data)), 10), data[4:], nil
+	case 'L':
+		if err := need(8); err != nil {
+			return "", nil, err
+		}
+		return strconv.FormatInt(int64(binary.BigEndian.Uint64(data)), 10), data[8:], nil
+	case 'l', 'T':
+		if err := need(8); err != nil {
+			return "", nil, err
+		}
+		return strconv.FormatUint(binary.BigEndian.Uint64(data), 10), data[8:], nil
+	case 'f':
+		if err := need(4); err != nil {
+			return "", nil, err
+		}
+		return "float32", data[4:], nil
+	case 'd':
+		if err := need(8); err != nil {
+			return "", nil, err
+		}
+		return "float64", data[8:], nil
+	case 'D':
+		if err := need(5); err != nil {
+			return "", nil, err
+		}
+		return "decimal", data[5:], nil
+	case 'F':
+		value, rest, err := parseTableDepth(data, depth+1)
+		return fmt.Sprint(value), rest, err
+	case 'A':
+		if err := need(4); err != nil {
+			return "", nil, err
+		}
+		n := int(binary.BigEndian.Uint32(data[:4]))
+		if n > len(data)-4 || n > 64<<10 {
+			return "", nil, errors.New("invalid AMQP field array")
+		}
+		array := data[4 : 4+n]
+		for len(array) > 0 {
+			typeByte := array[0]
+			_, next, err := parseFieldValue(typeByte, array[1:], depth+1)
+			if err != nil {
+				return "", nil, err
+			}
+			array = next
+		}
+		return "array", data[4+n:], nil
+	case 'V':
+		return "", data, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported AMQP table type %q", typeID)
+	}
 }
 func readShortString(data []byte) (string, []byte, error) {
 	if len(data) < 1 {

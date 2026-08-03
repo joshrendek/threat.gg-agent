@@ -230,7 +230,10 @@ func redactedCaptureBody(r *http.Request, body []byte) string {
 		safe := make(map[string]any)
 		for _, key := range []string{"Name", "Node", "TTL", "Behavior"} {
 			if value, ok := input[key]; ok {
-				safe[key] = value
+				switch value.(type) {
+				case string, float64, bool:
+					safe[key] = value
+				}
 			}
 		}
 		encoded, _ := json.Marshal(safe)
