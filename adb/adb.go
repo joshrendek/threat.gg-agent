@@ -35,6 +35,7 @@ const (
 	maxServices         = 128
 	maxCommands         = 128
 	maxCommandBytes     = 4096
+	maxCommandResponse  = 64 << 10
 	maxUploadBytes      = 64 << 20
 	maxBufferedUploads  = 128 << 20
 	maxConnections      = 128
@@ -137,9 +138,10 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	s := &session{guid: uuid.NewV4().String(), remote: host, channels: make(map[uint32]*channel), nextDeviceID: 1}
 	defer persist(s)
 	defer s.releaseUploads()
-	_ = conn.SetDeadline(time.Now().Add(connectionTimeout))
+	absoluteDeadline := time.Now().Add(connectionTimeout)
+	_ = conn.SetDeadline(absoluteDeadline)
 	for i := 0; i < 4096; i++ {
-		_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
+		_ = conn.SetReadDeadline(nextReadDeadline(time.Now(), absoluteDeadline))
 		msg, err := readMessage(conn)
 		if err != nil {
 			return
@@ -186,10 +188,13 @@ func (s *session) handleMessage(conn net.Conn, msg message) bool {
 		return s.writeChannel(conn, msg)
 	case cmdOKAY:
 		ch := s.channels[msg.arg1]
-		if ch != nil && len(ch.pending) > 0 {
+		if ch == nil || msg.arg0 != ch.clientID {
+			return false
+		}
+		if len(ch.pending) > 0 {
 			return s.sendNextChannelChunk(conn, ch)
 		}
-		if ch != nil && ch.closeAfterAck {
+		if ch.closeAfterAck {
 			ch.closeAfterAck = false
 			_ = writeMessage(conn, message{command: cmdCLSE, arg0: ch.deviceID, arg1: ch.clientID})
 			releaseSync(&ch.sync)
@@ -198,11 +203,18 @@ func (s *session) handleMessage(conn net.Conn, msg message) bool {
 		return true
 	case cmdCLSE:
 		ch := s.channels[msg.arg1]
-		if ch != nil {
-			_ = writeMessage(conn, message{command: cmdCLSE, arg0: ch.deviceID, arg1: ch.clientID})
-			releaseSync(&ch.sync)
-			delete(s.channels, ch.deviceID)
+		// ADB peers acknowledge our CLSE after we have removed the local channel.
+		// Ignore that stale acknowledgement, but reject a sender ID mismatch for a
+		// channel that is still live so one stream cannot close another.
+		if ch == nil {
+			return true
 		}
+		if msg.arg0 != ch.clientID {
+			return false
+		}
+		_ = writeMessage(conn, message{command: cmdCLSE, arg0: ch.deviceID, arg1: ch.clientID})
+		releaseSync(&ch.sync)
+		delete(s.channels, ch.deviceID)
 		return true
 	default:
 		return false
@@ -310,7 +322,7 @@ func (s *session) runCommand(conn net.Conn, ch *channel, command string, closeAf
 	s.addCommand(command)
 	response := defaultCommandResponse(command)
 	if result, err := getCommandResponse(&pb.CommandRequest{Command: command, CommandType: "adb"}, commandLookupLimit); err == nil && result.Matched {
-		response = result.Response
+		response = boundedText([]byte(result.Response), maxCommandResponse)
 	}
 	if !strings.HasSuffix(response, "\n") {
 		response += "\n"
@@ -319,6 +331,14 @@ func (s *session) runCommand(conn net.Conn, ch *channel, command string, closeAf
 		response += "shell@pixel7:/ $ "
 	}
 	return s.sendChannelData(conn, ch, []byte(response), closeAfter)
+}
+
+func nextReadDeadline(now, absolute time.Time) time.Time {
+	idle := now.Add(idleTimeout)
+	if absolute.Before(idle) {
+		return absolute
+	}
+	return idle
 }
 
 func (s *session) sendChannelData(conn net.Conn, ch *channel, data []byte, closeAfter bool) bool {

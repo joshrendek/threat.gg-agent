@@ -19,8 +19,12 @@ import (
 )
 
 func handshake(t *testing.T, conn net.Conn) {
+	handshakeWithPayload(t, conn, advertisedPayload)
+}
+
+func handshakeWithPayload(t *testing.T, conn net.Conn, payload uint32) {
 	t.Helper()
-	require.NoError(t, writeMessage(conn, message{command: cmdCNXN, arg0: adbVersion, arg1: advertisedPayload, data: []byte("host::features=cmd")}))
+	require.NoError(t, writeMessage(conn, message{command: cmdCNXN, arg0: adbVersion, arg1: payload, data: []byte("host::features=cmd")}))
 	auth, err := readMessage(conn)
 	require.NoError(t, err)
 	require.Equal(t, uint32(cmdAUTH), auth.command)
@@ -42,7 +46,8 @@ func TestTransportAuthenticatesRunsShellAndCapturesSession(t *testing.T) {
 		request *pb.CommandRequest
 		timeout time.Duration
 	}, 1)
-	longResponse := strings.Repeat("x", advertisedPayload+17)
+	const peerPayload = 4096
+	longResponse := strings.Repeat("x", peerPayload+17)
 	getCommandResponse = func(in *pb.CommandRequest, timeout time.Duration) (*pb.CommandResponse, error) {
 		lookedUp <- struct {
 			request *pb.CommandRequest
@@ -54,7 +59,7 @@ func TestTransportAuthenticatesRunsShellAndCapturesSession(t *testing.T) {
 	server, client := net.Pipe()
 	done := make(chan struct{})
 	go func() { (&honeypot{}).handleConnection(server); close(done) }()
-	handshake(t, client)
+	handshakeWithPayload(t, client, peerPayload)
 	require.NoError(t, writeMessage(client, message{command: cmdOPEN, arg0: 7, data: []byte("shell:id\x00")}))
 	ok, err := readMessage(client)
 	require.NoError(t, err)
@@ -62,8 +67,8 @@ func TestTransportAuthenticatesRunsShellAndCapturesSession(t *testing.T) {
 	output, err := readMessage(client)
 	require.NoError(t, err)
 	require.Equal(t, uint32(cmdWRTE), output.command)
-	require.Len(t, output.data, advertisedPayload)
-	require.Equal(t, strings.Repeat("x", advertisedPayload), string(output.data))
+	require.Len(t, output.data, peerPayload)
+	require.Equal(t, strings.Repeat("x", peerPayload), string(output.data))
 	require.NoError(t, writeMessage(client, message{command: cmdOKAY, arg0: 7, arg1: ok.arg0}))
 	output, err = readMessage(client)
 	require.NoError(t, err)
@@ -111,6 +116,21 @@ func TestAuthenticationAndTextSafetyBoundaries(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("sha256:%x", sum[:]), fingerprintAuth([]byte(encoded), true))
 	require.Equal(t, "adb-upload.bin", safeFilename("../.."))
 	require.Equal(t, "a", boundedText([]byte{'a', 0xe2, 0x82, 0xac}, 2))
+	require.Len(t, boundedText([]byte(strings.Repeat("x", maxCommandResponse+1)), maxCommandResponse), maxCommandResponse)
+}
+
+func TestConnectionDeadlineAndChannelControlAreBounded(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	require.Equal(t, now.Add(idleTimeout), nextReadDeadline(now, now.Add(connectionTimeout)))
+	require.Equal(t, now.Add(time.Second), nextReadDeadline(now, now.Add(time.Second)))
+
+	ch := &channel{clientID: 7, deviceID: 11, pending: []byte("pending")}
+	s := &session{channels: map[uint32]*channel{11: ch}}
+	require.False(t, s.handleMessage(nil, message{command: cmdOKAY, arg0: 8, arg1: 11}))
+	require.Equal(t, []byte("pending"), ch.pending)
+	require.False(t, s.handleMessage(nil, message{command: cmdCLSE, arg0: 8, arg1: 11}))
+	require.Same(t, ch, s.channels[11])
+	require.True(t, s.handleMessage(nil, message{command: cmdCLSE, arg0: 7, arg1: 99}))
 }
 
 func TestGlobalUploadBudgetIsEnforced(t *testing.T) {
@@ -121,6 +141,28 @@ func TestGlobalUploadBudgetIsEnforced(t *testing.T) {
 	require.False(t, reserveUploadBytes(1))
 	releaseUploadBytes(1)
 	require.Equal(t, int64(maxBufferedUploads-1), bufferedUploadBytes.Load())
+}
+
+func TestSyncBudgetIsReleasedOnDropAndSessionTeardown(t *testing.T) {
+	original := bufferedUploadBytes.Load()
+	t.Cleanup(func() { bufferedUploadBytes.Store(original) })
+	bufferedUploadBytes.Store(maxBufferedUploads)
+	ch := &channel{sync: syncState{data: []byte("held"), reserved: 4}}
+	payload := appendSyncRecord(nil, "DATA", []byte("x"))
+	require.True(t, (&session{}).handleSync(nil, ch, payload))
+	require.True(t, ch.sync.dropped)
+	require.Nil(t, ch.sync.data)
+	require.Zero(t, ch.sync.reserved)
+	require.Equal(t, int64(maxBufferedUploads-4), bufferedUploadBytes.Load())
+
+	bufferedUploadBytes.Store(7)
+	first := &channel{sync: syncState{data: []byte("abc"), reserved: 3}}
+	second := &channel{sync: syncState{data: []byte("defg"), reserved: 4}}
+	s := &session{channels: map[uint32]*channel{1: first, 2: second}}
+	s.releaseUploads()
+	require.Zero(t, bufferedUploadBytes.Load())
+	require.Nil(t, first.sync.data)
+	require.Nil(t, second.sync.data)
 }
 
 func TestSyncPushIsBoundedAndSentToFilePipeline(t *testing.T) {
