@@ -181,7 +181,7 @@ func TestCaptureRedactsAndFingerprintsAllTokenForms(t *testing.T) {
 func TestOversizedBodyReturns413AndSessionCaptureAllowsOnlyScalarFields(t *testing.T) {
 	resetState()
 	old := saveRequest
-	captured := make(chan *proto.ConsulRequest, 2)
+	captured := make(chan *proto.ConsulRequest, 3)
 	saveRequest = func(in *proto.ConsulRequest) error { captured <- in; return nil }
 	t.Cleanup(func() { saveRequest = old })
 	rec := httptest.NewRecorder()
@@ -194,6 +194,9 @@ func TestOversizedBodyReturns413AndSessionCaptureAllowsOnlyScalarFields(t *testi
 	require.NotContains(t, got.Body, "secret")
 	require.NotContains(t, got.Body, "123")
 	require.JSONEq(t, `{"TTL":"15s","Behavior":"release"}`, got.Body)
+	rec = httptest.NewRecorder()
+	newHandler().ServeHTTP(rec, httptest.NewRequest("PUT", "http://consul/v1/session/create", strings.NewReader(`{"Name":"unterminated"`)))
+	require.Equal(t, "[REDACTED_MALFORMED_JSON_BODY]", awaitCapture(t, captured).Body)
 }
 
 func TestCaptureOmitsRawKVValues(t *testing.T) {

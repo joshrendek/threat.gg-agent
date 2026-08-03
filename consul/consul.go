@@ -223,6 +223,8 @@ func redactedCaptureBody(r *http.Request, body []byte) string {
 		return "[REDACTED_KV_VALUE]"
 	}
 	if r.Method == http.MethodPut && r.URL.Path == "/v1/session/create" && len(body) > 0 {
+		// Session metadata is useful telemetry, but only scalar allowlisted fields
+		// are retained so nested attacker-controlled secrets cannot slip through.
 		var input map[string]any
 		if json.Unmarshal(body, &input) != nil {
 			return "[REDACTED_MALFORMED_JSON_BODY]"

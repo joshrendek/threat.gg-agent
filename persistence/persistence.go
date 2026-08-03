@@ -183,7 +183,7 @@ func SaveConsulRequest(in *proto.ConsulRequest) error {
 	return err
 }
 
-// SaveAmqpSession sends one bounded AMQP session with a deadline.
+// SaveAmqpSession sends one bounded AMQP session record with a deadline.
 func SaveAmqpSession(in *proto.AmqpSessionRequest) error {
 	if honeypotClient == nil {
 		return nil

@@ -227,11 +227,14 @@ func TestFieldTableSupportsStandardScalarsAndBoundsNesting(t *testing.T) {
 	fields = append(fields, 'T', 0, 0, 0, 0, 0, 0, 0, 9)
 	fields = append(fields, appendShortString(nil, "void")...)
 	fields = append(fields, 'V')
+	fields = append(fields, appendShortString(nil, "array")...)
+	fields = append(fields, 'A', 0, 0, 0, 3, 'V', 'B', 7)
 	got, rest, err := parseTable(table(fields))
 	require.NoError(t, err)
 	require.Empty(t, rest)
 	require.Equal(t, "7", got["byte"])
 	require.Equal(t, "9", got["timestamp"])
+	require.Equal(t, "array", got["array"])
 
 	deep := table()
 	for i := 0; i < maxTableDepth+1; i++ {
