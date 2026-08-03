@@ -218,6 +218,7 @@ type HoneypotClient interface {
 	SaveOllama(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveRay(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveLocalai(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	// SaveLmstudio stores one bounded native, OpenAI, or Anthropic API interaction.
 	SaveLmstudio(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveLlamacpp(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveComfyui(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
@@ -746,6 +747,7 @@ type HoneypotServer interface {
 	SaveOllama(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveRay(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveLocalai(context.Context, *LlmRequest) (*SaveReply, error)
+	// SaveLmstudio stores one bounded native, OpenAI, or Anthropic API interaction.
 	SaveLmstudio(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveLlamacpp(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveComfyui(context.Context, *LlmRequest) (*SaveReply, error)

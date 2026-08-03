@@ -1,5 +1,5 @@
 // Package llmcore holds the shared HTTP machinery for the LLM-serving honeypots
-// (vLLM, Ollama, Ray, LocalAI, llama.cpp, ComfyUI): request capture with a body cap,
+// (vLLM, Ollama, Ray, LocalAI, llama.cpp, ComfyUI, LM Studio): request capture with a body cap,
 // JSON/error helpers, and the dynamic completion generators. Each product package is a
 // thin wrapper that configures identity + routes and reuses this core.
 package llmcore

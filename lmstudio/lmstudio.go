@@ -28,12 +28,15 @@ var saveLmstudioRequest = persistence.SaveLmstudioRequest
 
 type honeypot struct{ logger zerolog.Logger }
 
+// New returns an LM Studio-compatible honeypot registered on port 1234 by default.
 func New() honeypots.Honeypot {
 	return &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "lmstudio").Logger()}
 }
 
+// Name returns the command-response and telemetry type used for this honeypot.
 func (h *honeypot) Name() string { return "lmstudio" }
 
+// Start serves the bounded native, OpenAI, and Anthropic API surfaces.
 func (h *honeypot) Start() {
 	port := os.Getenv("LMSTUDIO_HONEYPOT_PORT")
 	if port == "" {

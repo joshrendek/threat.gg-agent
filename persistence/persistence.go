@@ -231,6 +231,7 @@ func SaveLocalaiRequest(in *proto.LlmRequest) error {
 	return err
 }
 
+// SaveLmstudioRequest sends bounded LM Studio telemetry with a deadline.
 func SaveLmstudioRequest(in *proto.LlmRequest) error {
 	if honeypotClient == nil {
 		return nil

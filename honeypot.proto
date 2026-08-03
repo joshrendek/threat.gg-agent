@@ -49,6 +49,8 @@ service Honeypot {
   rpc SaveOllama(LlmRequest) returns (SaveReply) {}
   rpc SaveRay(LlmRequest) returns (SaveReply) {}
   rpc SaveLocalai(LlmRequest) returns (SaveReply) {}
+  // SaveLmstudio stores one bounded native, OpenAI, or Anthropic API interaction.
+  rpc SaveLmstudio(LlmRequest) returns (SaveReply) {}
   rpc SaveLlamacpp(LlmRequest) returns (SaveReply) {}
   rpc SaveComfyui(LlmRequest) returns (SaveReply) {}
   rpc SaveFile(FileUploadRequest) returns (SaveReply) {}
