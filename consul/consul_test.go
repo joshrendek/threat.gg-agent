@@ -193,7 +193,7 @@ func TestOversizedBodyReturns413AndCaptureBodyRedactsJSONSecrets(t *testing.T) {
 	got := awaitCapture(t, captured)
 	require.NotContains(t, got.Body, "secret")
 	require.NotContains(t, got.Body, "123")
-	require.Contains(t, got.Body, "[REDACTED]")
+	require.JSONEq(t, `{"Name":"safe"}`, got.Body)
 }
 
 func TestCaptureOmitsRawKVValues(t *testing.T) {
@@ -223,6 +223,38 @@ func TestStateStoreEvictsOldestClientAtCapacity(t *testing.T) {
 	require.Len(t, store.clients, maxClients)
 	require.NotContains(t, store.clients, "client-000")
 	require.Contains(t, store.clients, "new-client")
+}
+
+func TestStateStoreRejectsNewClientWhenEveryStateIsActive(t *testing.T) {
+	store := &stateStore{clients: make(map[string]*clientState)}
+	for i := 0; i < maxClients; i++ {
+		store.clients[fmt.Sprintf("client-%03d", i)] = &clientState{touched: time.Unix(int64(i), 0), active: 1}
+	}
+	state, release, ok := store.acquireClient("new-client")
+	require.False(t, ok)
+	require.Nil(t, state)
+	require.Nil(t, release)
+	require.Len(t, store.clients, maxClients)
+}
+
+func TestPersistenceBackpressureDropsAndReleasesSlot(t *testing.T) {
+	oldSave, oldSlots := saveRequest, saveSlots
+	block := make(chan struct{})
+	started := make(chan struct{}, 1)
+	saveRequest = func(*proto.ConsulRequest) error { started <- struct{}{}; <-block; return nil }
+	saveSlots = make(chan struct{}, 1)
+	t.Cleanup(func() { saveRequest, saveSlots = oldSave, oldSlots })
+	req := httptest.NewRequest("GET", "http://consul/v1/agent/self", nil)
+	persist(req, nil, 200)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("save did not start")
+	}
+	persist(req, nil, 200)
+	require.Len(t, saveSlots, 1)
+	close(block)
+	require.Eventually(t, func() bool { return len(saveSlots) == 0 }, time.Second, 10*time.Millisecond)
 }
 
 func awaitCapture(t *testing.T, ch <-chan *proto.ConsulRequest) *proto.ConsulRequest {

@@ -99,6 +99,11 @@ func (blockingClient) SaveConsulRequest(ctx context.Context, in *proto.ConsulReq
 	return nil, ctx.Err()
 }
 
+func (blockingClient) SaveAmqpSession(ctx context.Context, in *proto.AmqpSessionRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func (blockingClient) SaveQuery(ctx context.Context, in *proto.QueryRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -132,6 +137,7 @@ func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 		{"mssql-login", func() error { return SaveMssqlLogin(&proto.MssqlRequest{}) }},
 		{"kubelet", func() error { return SaveKubeletRequest(&proto.KubeletRequest{}) }},
 		{"consul", func() error { return SaveConsulRequest(&proto.ConsulRequest{}) }},
+		{"amqp", func() error { return SaveAmqpSession(&proto.AmqpSessionRequest{}) }},
 		{"sql-query", func() error { return SaveQuery(&proto.QueryRequest{}) }},
 		{"connect", func() error { return SaveMemcachedConnect(&proto.MemcachedConnectRequest{}) }},
 		{"command", func() error { return SaveMemcachedCommand(&proto.MemcachedCommandRequest{}) }},
@@ -190,6 +196,13 @@ func TestSaveConsulRequestIsNoOpWithoutClient(t *testing.T) {
 	t.Cleanup(func() { honeypotClient = originalClient })
 	honeypotClient = nil
 	require.NoError(t, SaveConsulRequest(&proto.ConsulRequest{}))
+}
+
+func TestSaveAmqpSessionIsNoOpWithoutClient(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = nil
+	require.NoError(t, SaveAmqpSession(&proto.AmqpSessionRequest{}))
 }
 
 func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
