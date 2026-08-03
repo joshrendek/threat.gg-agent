@@ -22,8 +22,9 @@ import (
 func TestRealGoMSSQLClientCanLoginAndQuery(t *testing.T) {
 	origLogin, origQuery, origLookup := saveMssqlLogin, saveQuery, lookupResponse
 	t.Cleanup(func() { saveMssqlLogin, saveQuery, lookupResponse = origLogin, origQuery, origLookup })
-	saveMssqlLogin = func(*proto.MssqlRequest) error { return nil }
-	saveQuery = func(*proto.QueryRequest) error { return nil }
+	saved := make(chan struct{}, 2)
+	saveMssqlLogin = func(*proto.MssqlRequest) error { saved <- struct{}{}; return nil }
+	saveQuery = func(*proto.QueryRequest) error { saved <- struct{}{}; return nil }
 	lookupResponse = func(string, string) (string, bool) { return "", false }
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -42,6 +43,13 @@ func TestRealGoMSSQLClientCanLoginAndQuery(t *testing.T) {
 	var version string
 	require.NoError(t, db.QueryRowContext(ctx, "SELECT @@VERSION").Scan(&version))
 	require.Contains(t, version, "Microsoft SQL Server 2022")
+	for i := 0; i < 2; i++ {
+		select {
+		case <-saved:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for asynchronous persistence")
+		}
+	}
 }
 
 func TestParseLogin7CapturesClientMetadataAndPassword(t *testing.T) {

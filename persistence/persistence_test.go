@@ -84,6 +84,16 @@ func (blockingClient) SaveLmstudio(ctx context.Context, in *proto.LlmRequest, op
 	return nil, ctx.Err()
 }
 
+func (blockingClient) SaveMssqlLogin(ctx context.Context, in *proto.MssqlRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (blockingClient) SaveQuery(ctx context.Context, in *proto.QueryRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func (blockingClient) GetCommandResponse(ctx context.Context, in *proto.CommandRequest, opts ...grpc.CallOption) (*proto.CommandResponse, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -109,6 +119,8 @@ func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 		{"comfyui", func() error { return SaveComfyuiRequest(&proto.LlmRequest{}) }},
 		{"s3", func() error { return SaveS3Request(&proto.S3Request{}) }},
 		{"lmstudio", func() error { return SaveLmstudioRequest(&proto.LlmRequest{}) }},
+		{"mssql-login", func() error { return SaveMssqlLogin(&proto.MssqlRequest{}) }},
+		{"sql-query", func() error { return SaveQuery(&proto.QueryRequest{}) }},
 		{"connect", func() error { return SaveMemcachedConnect(&proto.MemcachedConnectRequest{}) }},
 		{"command", func() error { return SaveMemcachedCommand(&proto.MemcachedCommandRequest{}) }},
 	} {
@@ -144,6 +156,14 @@ func TestSaveLmstudioRequestIsNoOpWithoutClient(t *testing.T) {
 	t.Cleanup(func() { honeypotClient = originalClient })
 	honeypotClient = nil
 	require.NoError(t, SaveLmstudioRequest(&proto.LlmRequest{}))
+}
+
+func TestSaveMssqlCallsAreNoOpWithoutClient(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = nil
+	require.NoError(t, SaveMssqlLogin(&proto.MssqlRequest{}))
+	require.NoError(t, SaveQuery(&proto.QueryRequest{}))
 }
 
 func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
