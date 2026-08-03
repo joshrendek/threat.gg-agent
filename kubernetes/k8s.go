@@ -79,7 +79,7 @@ func (h *honeypot) Start() {
 	router.HandleFunc("/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/roles", h.rolesHandler).Methods("GET", "POST")
 
 	// Record unmatched reconnaissance without reflecting attacker input.
-	router.PathPrefix("/").HandlerFunc(h.catchAllHandler).Methods("GET", "POST")
+	router.PathPrefix("/").HandlerFunc(h.catchAllHandler)
 
 	// Generate the TLS certificate
 	cert, err := kubetls.GenerateSelfSigned("localhost", "localhost")

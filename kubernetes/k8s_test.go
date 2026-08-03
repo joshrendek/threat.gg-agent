@@ -89,4 +89,36 @@ func TestRolesHandlerConcurrentReadsAndWrites(t *testing.T) {
 	if got != writers {
 		t.Fatalf("expected %d stored roles, got %d", writers, got)
 	}
+	req := httptest.NewRequest(http.MethodPost, "/apis/rbac.authorization.k8s.io/v1/namespaces/default/roles", strings.NewReader(`{"kind":"Role"}`))
+	req = mux.SetURLVars(req, map[string]string{"namespace": "default"})
+	rec := httptest.NewRecorder()
+	h.rolesHandler(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected bounded role store to return 429, got %d", rec.Code)
+	}
+}
+
+func TestRolesHandlerRejectsOversizedAndTrailingBodiesWithoutMutation(t *testing.T) {
+	roleStoreMu.Lock()
+	roleStore = make(map[string][]Role)
+	roleStoreMu.Unlock()
+	h := &honeypot{logger: zerolog.Nop()}
+	for _, body := range []string{
+		`{"kind":"Role"}` + strings.Repeat(" ", maxKubernetesBodyBytes),
+		`{"kind":"Role"}{"kind":"Role"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/roles", strings.NewReader(body))
+		req = mux.SetURLVars(req, map[string]string{"namespace": "default"})
+		rec := httptest.NewRecorder()
+		h.rolesHandler(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected invalid role body to return 400, got %d", rec.Code)
+		}
+	}
+	roleStoreMu.RLock()
+	got := len(roleStore["default"])
+	roleStoreMu.RUnlock()
+	if got != 0 {
+		t.Fatalf("invalid bodies mutated role store: %d roles", got)
+	}
 }

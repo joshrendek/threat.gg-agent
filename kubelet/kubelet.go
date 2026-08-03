@@ -27,14 +27,15 @@ import (
 )
 
 const (
-	defaultPort       = "10250"
-	maxBodyBytes      = 64 << 10
-	maxPathBytes      = 8 << 10
-	maxQueryBytes     = 16 << 10
-	maxUserAgentBytes = 4 << 10
-	maxCommands       = 64
-	maxCommandBytes   = 4 << 10
-	persistSlotsN     = 32
+	defaultPort        = "10250"
+	maxBodyBytes       = 64 << 10
+	maxPathBytes       = 8 << 10
+	maxQueryBytes      = 16 << 10
+	maxUserAgentBytes  = 4 << 10
+	maxQueryValueBytes = 4 << 10
+	maxCommands        = 64
+	maxCommandBytes    = 4 << 10
+	persistSlotsN      = 32
 )
 
 var (
@@ -42,7 +43,7 @@ var (
 	persistSlots = make(chan struct{}, persistSlotsN)
 )
 
-var labeledSecretPattern = regexp.MustCompile(`(?i)(?:access[_-]?token|token|secret|password|authorization|api[_-]?key|cookie)\s*[:=]\s*["']?[^&,;\s"']+["']?`)
+var labeledSecretPattern = regexp.MustCompile(`(?i)(?:access[_-]?token|token|secret|password|authorization|api[_-]?key|cookie)\s*[:=]\s*(?:bearer\s+)?["']?[^&,;\s"']+["']?`)
 
 var _ honeypots.Honeypot = (*honeypot)(nil)
 
@@ -118,7 +119,7 @@ func captureMiddleware(next http.Handler) http.Handler {
 func persist(r *http.Request, guid string, body []byte) {
 	authScheme, tokenFingerprint := authorizationMetadata(r.Header.Get("Authorization"))
 	query := r.URL.Query()
-	commands := boundedCommands(query["command"])
+	commands := redactedCommands(query["command"])
 	req := &proto.KubeletRequest{
 		RemoteAddr:       bounded(r.RemoteAddr, 4096),
 		Guid:             guid,
@@ -131,11 +132,12 @@ func persist(r *http.Request, guid string, body []byte) {
 		Body:             redactedBody(body),
 		Commands:         commands,
 	}
+	slots := persistSlots
 	select {
-	case persistSlots <- struct{}{}:
+	case slots <- struct{}{}:
 		save := saveRequest
 		go func() {
-			defer func() { <-persistSlots }()
+			defer func() { <-slots }()
 			_ = save(req)
 		}()
 	default:
@@ -164,10 +166,14 @@ func redactedQuery(values url.Values) url.Values {
 			continue
 		}
 		for _, value := range vals {
-			out[key] = append(out[key], bounded(value, maxCommandBytes))
+			out[key] = append(out[key], bounded(redactLabeledSecrets(value), maxQueryValueBytes))
 		}
 	}
 	return out
+}
+
+func redactLabeledSecrets(value string) string {
+	return labeledSecretPattern.ReplaceAllString(value, "[REDACTED]")
 }
 
 func isSecretKey(key string) bool {
@@ -193,7 +199,7 @@ func redactedBody(body []byte) string {
 				return redactedQuery(values).Encode()
 			}
 		}
-		return labeledSecretPattern.ReplaceAllString(raw, "[REDACTED]")
+		return redactLabeledSecrets(raw)
 	}
 	redactJSONSecrets(value)
 	encoded, err := json.Marshal(value)
@@ -229,6 +235,14 @@ func boundedCommands(commands []string) []string {
 		out = append(out, bounded(command, maxCommandBytes))
 	}
 	return out
+}
+
+func redactedCommands(commands []string) []string {
+	commands = boundedCommands(commands)
+	for i := range commands {
+		commands[i] = redactLabeledSecrets(commands[i])
+	}
+	return commands
 }
 
 func bounded(value string, limit int) string {
