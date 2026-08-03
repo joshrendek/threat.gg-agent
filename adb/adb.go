@@ -2,6 +2,7 @@
 package adb
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -14,7 +15,9 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/persistence"
@@ -24,19 +27,22 @@ import (
 )
 
 const (
-	defaultPort        = "5555"
-	adbVersion         = 0x01000000
-	advertisedPayload  = 256 << 10
-	maxWirePayload     = 1 << 20
-	maxHostBanner      = 4096
-	maxServices        = 128
-	maxCommands        = 128
-	maxCommandBytes    = 4096
-	maxUploadBytes     = 64 << 20
-	maxConnections     = 128
-	idleTimeout        = 90 * time.Second
-	connectionTimeout  = 10 * time.Minute
-	commandLookupLimit = time.Second
+	defaultPort         = "5555"
+	adbVersion          = 0x01000000
+	advertisedPayload   = 256 << 10
+	maxWirePayload      = 1 << 20
+	maxHostBanner       = 4096
+	maxServices         = 128
+	maxCommands         = 128
+	maxCommandBytes     = 4096
+	maxUploadBytes      = 64 << 20
+	maxBufferedUploads  = 128 << 20
+	maxConnections      = 128
+	maxChannels         = 64
+	maxCommandsPerFrame = 32
+	idleTimeout         = 90 * time.Second
+	connectionTimeout   = 10 * time.Minute
+	commandLookupLimit  = time.Second
 
 	cmdCNXN = 0x4e584e43
 	cmdOPEN = 0x4e45504f
@@ -56,6 +62,7 @@ var getCommandResponse = persistence.GetCommandResponseWithin
 var connectionSlots = make(chan struct{}, maxConnections)
 var persistenceSlots = make(chan struct{}, 32)
 var fileSlots = make(chan struct{}, 8)
+var bufferedUploadBytes atomic.Int64
 
 type honeypot struct{ logger zerolog.Logger }
 
@@ -99,6 +106,7 @@ type channel struct {
 	service            string
 	interactive        bool
 	closeAfterAck      bool
+	pending            []byte
 	sync               syncState
 }
 
@@ -107,6 +115,7 @@ type syncState struct {
 	filename string
 	data     []byte
 	dropped  bool
+	reserved int64
 }
 
 type session struct {
@@ -116,6 +125,7 @@ type session struct {
 	channels                                            map[uint32]*channel
 	nextDeviceID                                        uint32
 	authPending                                         bool
+	authenticated                                       bool
 }
 
 func (h *honeypot) handleConnection(conn net.Conn) {
@@ -126,6 +136,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	}
 	s := &session{guid: uuid.NewV4().String(), remote: host, channels: make(map[uint32]*channel), nextDeviceID: 1}
 	defer persist(s)
+	defer s.releaseUploads()
 	_ = conn.SetDeadline(time.Now().Add(connectionTimeout))
 	for i := 0; i < 4096; i++ {
 		_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
@@ -142,8 +153,14 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 func (s *session) handleMessage(conn net.Conn, msg message) bool {
 	switch msg.command {
 	case cmdCNXN:
+		if (msg.arg0 != 0x01000000 && msg.arg0 != 0x01000001) || msg.arg1 == 0 {
+			return false
+		}
 		s.protocolVersion = msg.arg0
 		s.maxPayload = msg.arg1
+		if s.maxPayload > maxWirePayload {
+			s.maxPayload = maxWirePayload
+		}
 		s.hostBanner = boundedText(msg.data, maxHostBanner)
 		challenge := make([]byte, 20)
 		if _, err := rand.Read(challenge); err != nil {
@@ -158,16 +175,24 @@ func (s *session) handleMessage(conn net.Conn, msg message) bool {
 		s.authKind = map[bool]string{true: "public-key", false: "signature"}[msg.arg0 == authPublicKey]
 		s.authFingerprint = fingerprintAuth(msg.data, msg.arg0 == authPublicKey)
 		s.authPending = false
+		s.authenticated = true
 		return writeMessage(conn, message{command: cmdCNXN, arg0: adbVersion, arg1: advertisedPayload, data: []byte(deviceBanner())}) == nil
 	case cmdOPEN:
+		if !s.authenticated {
+			return false
+		}
 		return s.openChannel(conn, msg)
 	case cmdWRTE:
 		return s.writeChannel(conn, msg)
 	case cmdOKAY:
 		ch := s.channels[msg.arg1]
+		if ch != nil && len(ch.pending) > 0 {
+			return s.sendNextChannelChunk(conn, ch)
+		}
 		if ch != nil && ch.closeAfterAck {
 			ch.closeAfterAck = false
 			_ = writeMessage(conn, message{command: cmdCLSE, arg0: ch.deviceID, arg1: ch.clientID})
+			releaseSync(&ch.sync)
 			delete(s.channels, ch.deviceID)
 		}
 		return true
@@ -175,6 +200,7 @@ func (s *session) handleMessage(conn net.Conn, msg message) bool {
 		ch := s.channels[msg.arg1]
 		if ch != nil {
 			_ = writeMessage(conn, message{command: cmdCLSE, arg0: ch.deviceID, arg1: ch.clientID})
+			releaseSync(&ch.sync)
 			delete(s.channels, ch.deviceID)
 		}
 		return true
@@ -185,8 +211,15 @@ func (s *session) handleMessage(conn net.Conn, msg message) bool {
 
 func (s *session) openChannel(conn net.Conn, msg message) bool {
 	service := strings.TrimRight(boundedText(msg.data, maxCommandBytes), "\x00")
-	if service == "" || len(s.channels) >= 64 {
+	if service == "" || len(s.channels) >= maxChannels {
 		return false
+	}
+	if service == "sync:" {
+		for _, existing := range s.channels {
+			if existing.service == "sync:" {
+				return false
+			}
+		}
 	}
 	deviceID := s.nextDeviceID
 	s.nextDeviceID++
@@ -242,10 +275,24 @@ func (s *session) writeChannel(conn net.Conn, msg message) bool {
 		return s.handleSync(conn, ch, msg.data)
 	}
 	if ch.interactive {
-		for _, line := range strings.Split(strings.ReplaceAll(string(msg.data), "\r", ""), "\n") {
-			line = strings.TrimSpace(line)
+		remaining := msg.data
+		processed := 0
+		for len(remaining) > 0 {
+			lineBytes := remaining
+			if newline := bytes.IndexByte(remaining, '\n'); newline >= 0 {
+				lineBytes, remaining = remaining[:newline], remaining[newline+1:]
+			} else {
+				remaining = nil
+			}
+			line := strings.TrimSpace(string(lineBytes))
 			if line != "" && !s.runCommand(conn, ch, line, false) {
 				return false
+			}
+			if line != "" {
+				processed++
+				if processed >= maxCommandsPerFrame && len(remaining) > 0 {
+					return false
+				}
 			}
 		}
 	}
@@ -256,6 +303,9 @@ func (s *session) runCommand(conn net.Conn, ch *channel, command string, closeAf
 	command = boundedText([]byte(strings.TrimSpace(command)), maxCommandBytes)
 	if command == "" {
 		return true
+	}
+	if len(s.commands) >= maxCommands {
+		return false
 	}
 	s.addCommand(command)
 	response := defaultCommandResponse(command)
@@ -272,13 +322,28 @@ func (s *session) runCommand(conn net.Conn, ch *channel, command string, closeAf
 }
 
 func (s *session) sendChannelData(conn net.Conn, ch *channel, data []byte, closeAfter bool) bool {
-	if len(data) > advertisedPayload {
-		data = data[:advertisedPayload]
+	if len(ch.pending) > 0 {
+		return false
 	}
+	ch.pending = data
+	ch.closeAfterAck = closeAfter
+	return s.sendNextChannelChunk(conn, ch)
+}
+
+func (s *session) sendNextChannelChunk(conn net.Conn, ch *channel) bool {
+	n := len(ch.pending)
+	limit := uint32(advertisedPayload)
+	if s.maxPayload > 0 && s.maxPayload < limit {
+		limit = s.maxPayload
+	}
+	if n > int(limit) {
+		n = int(limit)
+	}
+	data := ch.pending[:n]
 	if err := writeMessage(conn, message{command: cmdWRTE, arg0: ch.deviceID, arg1: ch.clientID, data: data}); err != nil {
 		return false
 	}
-	ch.closeAfterAck = closeAfter
+	ch.pending = ch.pending[n:]
 	return true
 }
 
@@ -301,6 +366,7 @@ func (s *session) handleSync(conn net.Conn, ch *channel, data []byte) bool {
 				}
 			} else {
 				_ = writeMessage(conn, message{command: cmdCLSE, arg0: ch.deviceID, arg1: ch.clientID})
+				releaseSync(&ch.sync)
 				delete(s.channels, ch.deviceID)
 				return true
 			}
@@ -316,6 +382,7 @@ func (s *session) handleSync(conn net.Conn, ch *channel, data []byte) bool {
 		ch.sync.buffer = ch.sync.buffer[8+int(n):]
 		switch id {
 		case "SEND":
+			releaseSync(&ch.sync)
 			spec := boundedText(payload, maxHostBanner)
 			filename := spec
 			if comma := strings.LastIndexByte(filename, ','); comma >= 0 {
@@ -326,10 +393,11 @@ func (s *session) handleSync(conn net.Conn, ch *channel, data []byte) bool {
 			ch.sync.dropped = false
 			s.addService("sync:push " + boundedText([]byte(filename), maxHostBanner))
 		case "DATA":
-			if len(ch.sync.data)+len(payload) <= maxUploadBytes && !ch.sync.dropped {
+			if len(ch.sync.data)+len(payload) <= maxUploadBytes && !ch.sync.dropped && reserveUploadBytes(len(payload)) {
 				ch.sync.data = append(ch.sync.data, payload...)
+				ch.sync.reserved += int64(len(payload))
 			} else {
-				ch.sync.data = nil
+				releaseSync(&ch.sync)
 				ch.sync.dropped = true
 			}
 		case "STAT":
@@ -347,17 +415,54 @@ func (s *session) handleSync(conn net.Conn, ch *channel, data []byte) bool {
 
 func (s *session) finishUpload(ch *channel) {
 	if ch.sync.filename == "" || len(ch.sync.data) == 0 || ch.sync.dropped {
+		releaseSync(&ch.sync)
 		return
 	}
-	data := append([]byte(nil), ch.sync.data...)
-	filename, guid := ch.sync.filename, s.guid
 	select {
 	case fileSlots <- struct{}{}:
+		data, reserved := ch.sync.data, ch.sync.reserved
+		filename, guid := ch.sync.filename, s.guid
+		ch.sync.data, ch.sync.reserved = nil, 0
 		save := saveFile
-		go func() { defer func() { <-fileSlots }(); _ = save(data, filename, guid, "adb-sync") }()
+		go func() {
+			defer func() { releaseUploadBytes(reserved); <-fileSlots }()
+			_ = save(data, filename, guid, "adb-sync")
+		}()
 	default:
+		releaseSync(&ch.sync)
 	}
-	ch.sync.data = nil
+}
+
+func reserveUploadBytes(n int) bool {
+	for {
+		current := bufferedUploadBytes.Load()
+		if n < 0 || current+int64(n) > maxBufferedUploads {
+			return false
+		}
+		if bufferedUploadBytes.CompareAndSwap(current, current+int64(n)) {
+			return true
+		}
+	}
+}
+
+func releaseUploadBytes(n int64) {
+	if n > 0 {
+		bufferedUploadBytes.Add(-n)
+	}
+}
+
+func releaseSync(state *syncState) {
+	if state == nil {
+		return
+	}
+	releaseUploadBytes(state.reserved)
+	state.data, state.reserved = nil, 0
+}
+
+func (s *session) releaseUploads() {
+	for _, ch := range s.channels {
+		releaseSync(&ch.sync)
+	}
 }
 
 func (s *session) addService(value string) {
@@ -469,7 +574,11 @@ func boundedText(data []byte, limit int) string {
 	value := strings.ToValidUTF8(string(data), "�")
 	value = strings.ReplaceAll(value, "\x00", "")
 	if len(value) > limit {
-		value = value[:limit]
+		end := limit
+		for end > 0 && !utf8.ValidString(value[:end]) {
+			end--
+		}
+		value = value[:end]
 	}
 	return value
 }
@@ -477,7 +586,7 @@ func boundedText(data []byte, limit int) string {
 func safeFilename(value string) string {
 	value = path.Base(strings.ReplaceAll(value, "\\", "/"))
 	value = boundedText([]byte(value), 255)
-	if value == "" || value == "." || value == "/" {
+	if value == "" || value == "." || value == ".." || value == "/" {
 		return "adb-upload.bin"
 	}
 	return value

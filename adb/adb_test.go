@@ -3,7 +3,10 @@ package adb
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -35,11 +38,17 @@ func TestTransportAuthenticatesRunsShellAndCapturesSession(t *testing.T) {
 	t.Cleanup(func() { saveSession, getCommandResponse = originalSave, originalLookup })
 	saved := make(chan *pb.AdbSessionRequest, 1)
 	saveSession = func(in *pb.AdbSessionRequest) error { saved <- in; return nil }
+	lookedUp := make(chan struct {
+		request *pb.CommandRequest
+		timeout time.Duration
+	}, 1)
+	longResponse := strings.Repeat("x", advertisedPayload+17)
 	getCommandResponse = func(in *pb.CommandRequest, timeout time.Duration) (*pb.CommandResponse, error) {
-		require.Equal(t, "adb", in.CommandType)
-		require.Equal(t, "id", in.Command)
-		require.Equal(t, commandLookupLimit, timeout)
-		return &pb.CommandResponse{Matched: true, Response: "custom-shell"}, nil
+		lookedUp <- struct {
+			request *pb.CommandRequest
+			timeout time.Duration
+		}{in, timeout}
+		return &pb.CommandResponse{Matched: true, Response: longResponse}, nil
 	}
 
 	server, client := net.Pipe()
@@ -53,7 +62,12 @@ func TestTransportAuthenticatesRunsShellAndCapturesSession(t *testing.T) {
 	output, err := readMessage(client)
 	require.NoError(t, err)
 	require.Equal(t, uint32(cmdWRTE), output.command)
-	require.Equal(t, "custom-shell\n", string(output.data))
+	require.Len(t, output.data, advertisedPayload)
+	require.Equal(t, strings.Repeat("x", advertisedPayload), string(output.data))
+	require.NoError(t, writeMessage(client, message{command: cmdOKAY, arg0: 7, arg1: ok.arg0}))
+	output, err = readMessage(client)
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat("x", 17)+"\n", string(output.data))
 	require.NoError(t, writeMessage(client, message{command: cmdOKAY, arg0: 7, arg1: ok.arg0}))
 	closed, err := readMessage(client)
 	require.NoError(t, err)
@@ -68,12 +82,45 @@ func TestTransportAuthenticatesRunsShellAndCapturesSession(t *testing.T) {
 	case capture := <-saved:
 		require.Equal(t, "host::features=cmd", capture.HostBanner)
 		require.Equal(t, "signature", capture.AuthKind)
-		require.True(t, strings.HasPrefix(capture.AuthFingerprint, "sha256:"))
+		sum := sha256.Sum256(bytes.Repeat([]byte{0x42}, 256))
+		require.Equal(t, fmt.Sprintf("sha256:%x", sum[:]), capture.AuthFingerprint)
 		require.Equal(t, []string{"shell:id"}, capture.Services)
 		require.Equal(t, []string{"id"}, capture.Commands)
 	case <-time.After(time.Second):
 		t.Fatal("session was not persisted")
 	}
+	select {
+	case lookup := <-lookedUp:
+		require.Equal(t, "adb", lookup.request.CommandType)
+		require.Equal(t, "id", lookup.request.Command)
+		require.Equal(t, commandLookupLimit, lookup.timeout)
+	case <-time.After(time.Second):
+		t.Fatal("command lookup was not captured")
+	}
+}
+
+func TestAuthenticationAndTextSafetyBoundaries(t *testing.T) {
+	s := &session{channels: make(map[uint32]*channel)}
+	require.True(t, s.handleMessage(nil, message{command: cmdAUTH, arg0: authSignature, data: []byte("unsolicited")}))
+	require.False(t, s.authenticated)
+	require.False(t, s.handleMessage(nil, message{command: cmdOPEN, arg0: 1, data: []byte("shell:id\x00")}))
+
+	key := []byte("decoded-adb-public-key")
+	encoded := base64.StdEncoding.EncodeToString(key) + " operator@host\x00"
+	sum := sha256.Sum256(key)
+	require.Equal(t, fmt.Sprintf("sha256:%x", sum[:]), fingerprintAuth([]byte(encoded), true))
+	require.Equal(t, "adb-upload.bin", safeFilename("../.."))
+	require.Equal(t, "a", boundedText([]byte{'a', 0xe2, 0x82, 0xac}, 2))
+}
+
+func TestGlobalUploadBudgetIsEnforced(t *testing.T) {
+	original := bufferedUploadBytes.Load()
+	t.Cleanup(func() { bufferedUploadBytes.Store(original) })
+	bufferedUploadBytes.Store(maxBufferedUploads - 1)
+	require.True(t, reserveUploadBytes(1))
+	require.False(t, reserveUploadBytes(1))
+	releaseUploadBytes(1)
+	require.Equal(t, int64(maxBufferedUploads-1), bufferedUploadBytes.Load())
 }
 
 func TestSyncPushIsBoundedAndSentToFilePipeline(t *testing.T) {

@@ -4396,7 +4396,7 @@ type FileUploadRequest struct {
 	Data       []byte `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
 	Filename   string `protobuf:"bytes,2,opt,name=filename,proto3" json:"filename,omitempty"`
 	Guid       string `protobuf:"bytes,3,opt,name=guid,proto3" json:"guid,omitempty"`
-	SourceType string `protobuf:"bytes,4,opt,name=source_type,json=sourceType,proto3" json:"source_type,omitempty"` // "scp" | "ftp" | "s3"
+	SourceType string `protobuf:"bytes,4,opt,name=source_type,json=sourceType,proto3" json:"source_type,omitempty"` // "scp" | "ftp" | "s3" | "adb-sync"
 }
 
 func (x *FileUploadRequest) Reset() {

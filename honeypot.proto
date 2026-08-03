@@ -571,7 +571,7 @@ message FileUploadRequest {
   bytes data = 1;
   string filename = 2;
   string guid = 3;
-  string source_type = 4; // "scp" | "ftp" | "s3"
+  string source_type = 4; // "scp" | "ftp" | "s3" | "adb-sync"
 }
 
 message ConnectRequest {
