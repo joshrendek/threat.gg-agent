@@ -1,6 +1,8 @@
 package s3
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
 	"io"
 	"net/http"
@@ -59,6 +61,11 @@ func TestResourceParsingSupportsPathAndVirtualHostStyles(t *testing.T) {
 	bucket, key = resourceFromRequest(r)
 	require.Equal(t, "data", bucket)
 	require.Equal(t, "config.yaml", key)
+
+	r = httptest.NewRequest(http.MethodGet, "http://stolen.minio.example/secrets.txt", nil)
+	bucket, key = resourceFromRequest(r)
+	require.Equal(t, "stolen", bucket)
+	require.Equal(t, "secrets.txt", key)
 }
 
 func TestHandlerEnumerateRangeAndMissingKey(t *testing.T) {
@@ -106,8 +113,9 @@ func TestPutObjectPersistsTelemetryAndFile(t *testing.T) {
 	}
 	t.Cleanup(func() { saveS3Request, saveFile = oldRequest, oldFile })
 
-	r := httptest.NewRequest(http.MethodPut, "http://minio:9000/uploads/payload.sh", strings.NewReader("#!/bin/sh\nid\n"))
+	r := httptest.NewRequest(http.MethodPut, "http://minio:9000/uploads/tools/../payload.sh?X-Amz-Security-Token=token", strings.NewReader("#!/bin/sh\nid\n"))
 	r.RemoteAddr = "203.0.113.8:44221"
+	r.Header.Set("User-Agent", "aws-cli/2.31.0")
 	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIABOT/20260803/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc")
 	w := httptest.NewRecorder()
 	newHandler().ServeHTTP(w, r)
@@ -118,8 +126,22 @@ func TestPutObjectPersistsTelemetryAndFile(t *testing.T) {
 	case got := <-requestCh:
 		require.Equal(t, "203.0.113.8", got.RemoteAddr)
 		require.Equal(t, "uploads", got.Bucket)
-		require.Equal(t, "payload.sh", got.Key)
+		require.Equal(t, "tools/../payload.sh", got.Key)
 		require.Equal(t, "AKIABOT", got.AccessKeyId)
+		require.Equal(t, "PUT", got.Method)
+		require.Equal(t, "/uploads/tools/../payload.sh", got.Path)
+		require.Equal(t, "us-east-1", got.Region)
+		require.Equal(t, "aws-cli/2.31.0", got.UserAgent)
+		var metadata captureMetadata
+		require.NoError(t, json.Unmarshal([]byte(got.Data), &metadata))
+		require.Equal(t, "PutObject", metadata.Operation)
+		require.Equal(t, int64(13), metadata.ContentLength)
+		require.Equal(t, "host", metadata.SignedHeaders)
+		require.Equal(t, "aws-cli/2.31.0", metadata.Headers["User-Agent"])
+		require.Equal(t, []string{"token"}, metadata.Query["X-Amz-Security-Token"])
+		preview, err := base64.StdEncoding.DecodeString(metadata.BodyPreviewBase64)
+		require.NoError(t, err)
+		require.Equal(t, "#!/bin/sh\nid\n", string(preview))
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for S3 telemetry")
 	}
@@ -131,6 +153,132 @@ func TestPutObjectPersistsTelemetryAndFile(t *testing.T) {
 		require.NotEmpty(t, got.guid)
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for S3 file persistence")
+	}
+}
+
+func TestOversizedPutIsRejectedAndNotSentToFilePipeline(t *testing.T) {
+	requestCh := make(chan *proto.S3Request, 1)
+	fileCh := make(chan struct{}, 1)
+	oldRequest, oldFile := saveS3Request, saveFile
+	saveS3Request = func(in *proto.S3Request) error { requestCh <- in; return nil }
+	saveFile = func([]byte, string, string, string) error { fileCh <- struct{}{}; return nil }
+	t.Cleanup(func() { saveS3Request, saveFile = oldRequest, oldFile })
+
+	r := httptest.NewRequest(http.MethodPut, "http://minio:9000/uploads/too-large.bin", strings.NewReader("small"))
+	r.ContentLength = maxUploadBytes + 1
+	w := httptest.NewRecorder()
+	newHandler().ServeHTTP(w, r)
+	require.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+	require.Contains(t, w.Body.String(), "EntityTooLarge")
+
+	select {
+	case got := <-requestCh:
+		var metadata captureMetadata
+		require.NoError(t, json.Unmarshal([]byte(got.Data), &metadata))
+		require.Equal(t, "true", metadata.Headers["X-ThreatGG-Capture-Truncated"])
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for oversized request telemetry")
+	}
+	select {
+	case <-fileCh:
+		t.Fatal("oversized upload reached the file pipeline")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestS3OperationResponses(t *testing.T) {
+	oldRequest := saveS3Request
+	saveS3Request = func(*proto.S3Request) error { return nil }
+	t.Cleanup(func() { saveS3Request = oldRequest })
+
+	tests := []struct {
+		name, method, target, body, contains string
+		status                               int
+	}{
+		{"bucket acl", http.MethodGet, "http://minio:9000/data?acl", "", "AccessControlPolicy", http.StatusOK},
+		{"head bucket", http.MethodHead, "http://minio:9000/data", "", "", http.StatusOK},
+		{"head object", http.MethodHead, "http://minio:9000/data/config.yaml", "", "", http.StatusOK},
+		{"start multipart", http.MethodPost, "http://minio:9000/uploads/archive.bin?uploads", "", "InitiateMultipartUploadResult", http.StatusOK},
+		{"upload part", http.MethodPut, "http://minio:9000/uploads/archive.bin?partNumber=1&uploadId=abc", "part", "", http.StatusOK},
+		{"complete multipart", http.MethodPost, "http://minio:9000/uploads/archive.bin?uploadId=abc", "<CompleteMultipartUpload/>", "CompleteMultipartUploadResult", http.StatusOK},
+		{"delete object", http.MethodDelete, "http://minio:9000/uploads/archive.bin", "", "", http.StatusNoContent},
+		{"delete objects", http.MethodPost, "http://minio:9000/uploads?delete", "<Delete><Object><Key>a&amp;b</Key></Object></Delete>", "<Key>a&amp;b</Key>", http.StatusOK},
+		{"health", http.MethodGet, "http://minio:9000/minio/health/live", "", "", http.StatusOK},
+		{"unknown", http.MethodPatch, "http://minio:9000/data/config.yaml", "", "NotImplemented", http.StatusNotImplemented},
+		{"missing bucket", http.MethodGet, "http://minio:9000/absent", "", "NoSuchBucket", http.StatusNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
+			w := httptest.NewRecorder()
+			newHandler().ServeHTTP(w, r)
+			require.Equal(t, tc.status, w.Code)
+			if tc.contains != "" {
+				require.Contains(t, w.Body.String(), tc.contains)
+			}
+			if tc.name == "upload part" {
+				require.Equal(t, "\"f4c9385f1902f7334b00b9b4ecd164de\"", w.Header().Get("ETag"))
+			}
+		})
+	}
+}
+
+func TestRangeParsingAndInvalidRangeResponse(t *testing.T) {
+	for _, tc := range []struct {
+		header     string
+		start, end int
+		ok         bool
+	}{
+		{"bytes=0-10", 0, 10, true},
+		{"bytes=5-", 5, 76, true},
+		{"bytes=-5", 72, 76, true},
+		{"bytes=-100", 0, 76, true},
+		{"bytes=5-100", 5, 76, true},
+		{"bytes=10-5", 0, 0, false},
+		{"bytes=100-", 0, 0, false},
+		{"bytes=0-1,4-5", 0, 0, false},
+		{"items=0-1", 0, 0, false},
+	} {
+		start, end, ok := parseRange(tc.header, 77)
+		require.Equal(t, tc.ok, ok, tc.header)
+		require.Equal(t, tc.start, start, tc.header)
+		require.Equal(t, tc.end, end, tc.header)
+	}
+
+	oldRequest := saveS3Request
+	saveS3Request = func(*proto.S3Request) error { return nil }
+	t.Cleanup(func() { saveS3Request = oldRequest })
+	r := httptest.NewRequest(http.MethodGet, "http://minio:9000/data/config.yaml", nil)
+	r.Header.Set("Range", "bytes=99-100")
+	w := httptest.NewRecorder()
+	newHandler().ServeHTTP(w, r)
+	require.Equal(t, http.StatusRequestedRangeNotSatisfiable, w.Code)
+	require.Equal(t, "bytes */77", w.Header().Get("Content-Range"))
+	require.Contains(t, w.Body.String(), "InvalidRange")
+}
+
+func TestTelemetrySaturationDropsWithoutBlocking(t *testing.T) {
+	for i := 0; i < maxTelemetrySaves; i++ {
+		telemetrySaveSlots <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for i := 0; i < maxTelemetrySaves; i++ {
+			<-telemetrySaveSlots
+		}
+	})
+
+	called := make(chan struct{}, 1)
+	oldRequest := saveS3Request
+	saveS3Request = func(*proto.S3Request) error { called <- struct{}{}; return nil }
+	t.Cleanup(func() { saveS3Request = oldRequest })
+	r := httptest.NewRequest(http.MethodGet, "http://minio:9000/", nil)
+	w := httptest.NewRecorder()
+	newHandler().ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code)
+	select {
+	case <-called:
+		t.Fatal("telemetry persistence ran despite saturation")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

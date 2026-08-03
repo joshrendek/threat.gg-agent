@@ -179,6 +179,8 @@ func SaveDockerRequest(in *proto.DockerRequest) error {
 	return err
 }
 
+// SaveS3Request sends bounded S3 telemetry with a deadline so a stalled
+// control plane cannot retain the handler's asynchronous capture goroutine.
 func SaveS3Request(in *proto.S3Request) error {
 	if honeypotClient == nil {
 		return nil

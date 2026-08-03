@@ -66,14 +66,28 @@ type objectXML struct {
 }
 
 type listObjectsXML struct {
-	XMLName    xml.Name    `xml:"ListBucketResult"`
-	Xmlns      string      `xml:"xmlns,attr"`
-	Name       string      `xml:"Name"`
-	Prefix     string      `xml:"Prefix"`
-	KeyCount   int         `xml:"KeyCount"`
-	MaxKeys    int         `xml:"MaxKeys"`
-	IsTruncate bool        `xml:"IsTruncated"`
-	Contents   []objectXML `xml:"Contents"`
+	XMLName     xml.Name    `xml:"ListBucketResult"`
+	Xmlns       string      `xml:"xmlns,attr"`
+	Name        string      `xml:"Name"`
+	Prefix      string      `xml:"Prefix"`
+	KeyCount    int         `xml:"KeyCount"`
+	MaxKeys     int         `xml:"MaxKeys"`
+	IsTruncated bool        `xml:"IsTruncated"`
+	Contents    []objectXML `xml:"Contents"`
+}
+
+type deleteObjectsRequestXML struct {
+	Objects []struct {
+		Key string `xml:"Key"`
+	} `xml:"Object"`
+}
+
+type deleteObjectsResultXML struct {
+	XMLName xml.Name `xml:"DeleteResult"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Deleted []struct {
+		Key string `xml:"Key"`
+	} `xml:"Deleted"`
 }
 
 type errorXML struct {
@@ -130,4 +144,16 @@ func listObjects(bucket, prefix string) ([]byte, bool) {
 
 func s3Error(code, message, resource, requestID string) []byte {
 	return marshalXML(errorXML{Code: code, Message: message, Resource: resource, Request: requestID})
+}
+
+func deleteObjectsResult(body []byte) []byte {
+	var request deleteObjectsRequestXML
+	_ = xml.Unmarshal(body, &request)
+	result := deleteObjectsResultXML{Xmlns: s3Namespace}
+	for _, object := range request.Objects {
+		result.Deleted = append(result.Deleted, struct {
+			Key string `xml:"Key"`
+		}{Key: object.Key})
+	}
+	return marshalXML(result)
 }

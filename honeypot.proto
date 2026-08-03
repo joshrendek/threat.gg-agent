@@ -53,6 +53,8 @@ service Honeypot {
   rpc SaveComfyui(LlmRequest) returns (SaveReply) {}
   rpc SaveFile(FileUploadRequest) returns (SaveReply) {}
   rpc SaveMcp(McpRequest) returns (SaveReply) {}
+  // SaveS3Request stores bounded metadata for one emulated MinIO/S3 operation.
+  rpc SaveS3Request(S3Request) returns (SaveReply) {}
   // GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
   // Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
   // bundle behind an atomic.Pointer and matches locally, so nothing on the
@@ -357,6 +359,19 @@ message DockerRequest {
   string user_agent = 10;
 }
 
+message S3Request {
+  string remote_addr = 1;
+  string guid = 2;
+  string method = 3;
+  string path = 4;
+  string bucket = 5;
+  string key = 6;
+  string access_key_id = 7;
+  string region = 8;
+  string user_agent = 9;
+  string data = 10;
+}
+
 message MongoConnectRequest {
   string remote_addr = 1;
   string guid = 2;
@@ -482,7 +497,7 @@ message FileUploadRequest {
   bytes data = 1;
   string filename = 2;
   string guid = 3;
-  string source_type = 4; // "scp" | "ftp"
+  string source_type = 4; // "scp" | "ftp" | "s3"
 }
 
 message ConnectRequest {

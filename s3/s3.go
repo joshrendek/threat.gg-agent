@@ -1,3 +1,5 @@
+// Package s3 emulates an exposed MinIO-compatible S3 service and captures
+// enumeration, credential, object, and upload activity without storing objects.
 package s3
 
 import (
@@ -9,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +30,10 @@ const (
 	maxUploadBytes    = 64 << 20
 	maxPreviewBytes   = 4 << 10
 	maxConcurrent     = 4
+	maxTelemetrySaves = 32
+	maxTelemetryBytes = 64 << 10
+	maxHeaderBytes    = 32 << 10
+	maxQueryBytes     = 8 << 10
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 30 * time.Second
 )
@@ -35,15 +43,19 @@ var saveS3Request = persistence.SaveS3Request
 var saveFile = persistence.SaveFile
 var requestSlots = make(chan struct{}, maxConcurrent)
 var fileSaveSlots = make(chan struct{}, maxConcurrent)
+var telemetrySaveSlots = make(chan struct{}, maxTelemetrySaves)
 
 type honeypot struct{ logger zerolog.Logger }
 
+// New returns a MinIO/S3 honeypot registered on the configured S3 port.
 func New() honeypots.Honeypot {
 	return &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "s3").Logger()}
 }
 
+// Name returns the command-response and telemetry type used for this honeypot.
 func (h *honeypot) Name() string { return "s3" }
 
+// Start serves the bounded MinIO/S3 HTTP surface until the process exits.
 func (h *honeypot) Start() {
 	port := os.Getenv("S3_HONEYPOT_PORT")
 	if port == "" {
@@ -143,12 +155,14 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 	case "CreateMultipartUpload":
 		writeXML(w, http.StatusOK, []byte(fmt.Sprintf(xmlInitiateMultipart, xmlText(bucket), xmlText(key), requestID)))
 	case "UploadPart":
-		w.Header().Set("ETag", "\""+etag(body)+"-1\"")
+		w.Header().Set("ETag", "\""+etag(body)+"\"")
 		w.WriteHeader(http.StatusOK)
 	case "CompleteMultipartUpload":
 		writeXML(w, http.StatusOK, []byte(fmt.Sprintf(xmlCompleteMultipart, xmlText(bucket), xmlText(key), xmlText(bucket), xmlText(key), etag(body))))
-	case "DeleteObject", "DeleteObjects":
+	case "DeleteObject":
 		w.WriteHeader(http.StatusNoContent)
+	case "DeleteObjects":
+		writeXML(w, http.StatusOK, deleteObjectsResult(body))
 	default:
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "A header you provided implies functionality that is not implemented", r.URL.Path, requestID)
 	}
@@ -157,6 +171,10 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 func readBody(r *http.Request) ([]byte, bool, error) {
 	if r.Body == nil || r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodDelete {
 		return nil, false, nil
+	}
+	if r.ContentLength > maxUploadBytes {
+		_ = r.Body.Close()
+		return nil, true, nil
 	}
 	defer r.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(r.Body, maxUploadBytes+1))
@@ -176,8 +194,8 @@ func persist(r *http.Request, guid, operation, bucket, key string, body []byte, 
 		preview = preview[:maxPreviewBytes]
 	}
 	meta := captureMetadata{
-		Operation: operation, Headers: persistence.HttpToMap(map[string][]string(r.Header)),
-		Query: r.URL.Query(), ContentLength: r.ContentLength, Presigned: presigned,
+		Operation: operation, Headers: boundedStringMap(persistence.HttpToMap(map[string][]string(r.Header)), maxHeaderBytes),
+		Query: boundedValues(r.URL.Query(), maxQueryBytes), ContentLength: r.ContentLength, Presigned: presigned,
 		SignedHeaders: signedHeaders,
 	}
 	if len(preview) > 0 {
@@ -187,6 +205,11 @@ func persist(r *http.Request, guid, operation, bucket, key string, body []byte, 
 		meta.Headers["X-ThreatGG-Capture-Truncated"] = "true"
 	}
 	data, _ := json.Marshal(meta)
+	if len(data) > maxTelemetryBytes {
+		meta.Headers = map[string]string{"X-ThreatGG-Capture-Truncated": "true"}
+		meta.Query = nil
+		data, _ = json.Marshal(meta)
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -196,21 +219,26 @@ func persist(r *http.Request, guid, operation, bucket, key string, body []byte, 
 		Bucket: bucket, Key: key, AccessKeyId: accessKey, Region: region,
 		UserAgent: r.UserAgent(), Data: string(data),
 	}
-	go func() {
-		if err := saveS3Request(req); err != nil {
-			logger.Error().Err(err).Msg("error saving S3 request")
-		}
-	}()
+	saveTelemetry := saveS3Request
+	select {
+	case telemetrySaveSlots <- struct{}{}:
+		go func() {
+			defer func() { <-telemetrySaveSlots }()
+			if err := saveTelemetry(req); err != nil {
+				logger.Error().Err(err).Msg("error saving S3 request")
+			}
+		}()
+	default:
+		logger.Warn().Msg("dropping S3 telemetry because persistence is saturated")
+	}
 	if operation == "PutObject" && len(body) > 0 && !truncated {
-		filename := key
-		if filename == "" {
-			filename = "object.bin"
-		}
+		filename := safeFilename(key)
+		saveObject := saveFile
 		select {
 		case fileSaveSlots <- struct{}{}:
 			go func(data []byte) {
 				defer func() { <-fileSaveSlots }()
-				if err := saveFile(data, filename, guid, "s3"); err != nil {
+				if err := saveObject(data, filename, guid, "s3"); err != nil {
 					logger.Error().Err(err).Msg("error saving S3 object")
 				}
 			}(body)
@@ -218,6 +246,58 @@ func persist(r *http.Request, guid, operation, bucket, key string, body []byte, 
 			logger.Warn().Msg("dropping S3 object from file pipeline because persistence is saturated")
 		}
 	}
+}
+
+func boundedStringMap(in map[string]string, limit int) map[string]string {
+	keys := make([]string, 0, len(in))
+	for key := range in {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out, used := map[string]string{}, 0
+	for _, key := range keys {
+		value := in[key]
+		if len(value) > 4096 {
+			value = value[:4096]
+		}
+		if used+len(key)+len(value) > limit {
+			out["X-ThreatGG-Headers-Truncated"] = "true"
+			break
+		}
+		out[key], used = value, used+len(key)+len(value)
+	}
+	return out
+}
+
+func boundedValues(in url.Values, limit int) url.Values {
+	flat := make(map[string]string, len(in))
+	for key, values := range in {
+		flat[key] = strings.Join(values, ",")
+	}
+	bounded := boundedStringMap(flat, limit)
+	out := make(url.Values, len(bounded))
+	for key, value := range bounded {
+		out[key] = []string{value}
+	}
+	return out
+}
+
+func safeFilename(key string) string {
+	name := path.Base(strings.ReplaceAll(key, "\\", "/"))
+	name = strings.ToValidUTF8(name, "_")
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+	if name == "" || name == "." || name == "/" {
+		return "object.bin"
+	}
+	if len(name) > 255 {
+		name = strings.ToValidUTF8(name[:255], "_")
+	}
+	return name
 }
 
 func parseAuth(r *http.Request) (accessKey, region, signedHeaders string, presigned bool) {
@@ -256,8 +336,11 @@ func resourceFromRequest(r *http.Request) (string, string) {
 		host = h
 	}
 	if net.ParseIP(host) == nil && host != "localhost" {
-		label := strings.Split(host, ".")[0]
-		if _, ok := fakeObjects[label]; ok {
+		labels := strings.Split(strings.TrimSuffix(host, "."), ".")
+		label := labels[0]
+		_, known := fakeObjects[label]
+		virtualSuffix := len(labels) >= 3 && (labels[1] == "minio" || labels[1] == "s3" || strings.HasPrefix(labels[1], "s3-"))
+		if known || virtualSuffix {
 			return label, strings.TrimPrefix(r.URL.Path, "/")
 		}
 	}
@@ -316,7 +399,13 @@ func serveObject(w http.ResponseWriter, r *http.Request, bucket, key string, hea
 	}
 	body := o.Body
 	status := http.StatusOK
-	start, end, ranged := parseRange(r.Header.Get("Range"), len(body))
+	rangeHeader := r.Header.Get("Range")
+	start, end, ranged := parseRange(rangeHeader, len(body))
+	if rangeHeader != "" && !ranged {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", len(body)))
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "InvalidRange", "The requested range is not satisfiable", r.URL.Path, requestID)
+		return
+	}
 	if ranged {
 		status = http.StatusPartialContent
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(body)))
@@ -337,8 +426,18 @@ func parseRange(header string, size int) (start, end int, ok bool) {
 		return 0, 0, false
 	}
 	parts := strings.SplitN(strings.TrimPrefix(header, "bytes="), "-", 2)
-	if len(parts) != 2 || parts[0] == "" {
+	if len(parts) != 2 {
 		return 0, 0, false
+	}
+	if parts[0] == "" {
+		suffix, err := strconv.Atoi(parts[1])
+		if err != nil || suffix <= 0 {
+			return 0, 0, false
+		}
+		if suffix > size {
+			suffix = size
+		}
+		return size - suffix, size - 1, true
 	}
 	start, err := strconv.Atoi(parts[0])
 	if err != nil || start < 0 || start >= size {
@@ -346,7 +445,11 @@ func parseRange(header string, size int) (start, end int, ok bool) {
 	}
 	end = size - 1
 	if parts[1] != "" {
-		if parsed, err := strconv.Atoi(parts[1]); err == nil && parsed >= start && parsed < size {
+		parsed, err := strconv.Atoi(parts[1])
+		if err != nil || parsed < start {
+			return 0, 0, false
+		}
+		if parsed < size {
 			end = parsed
 		}
 	}

@@ -221,6 +221,7 @@ type HoneypotClient interface {
 	SaveComfyui(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveFile(ctx context.Context, in *FileUploadRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveMcp(ctx context.Context, in *McpRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	// SaveS3Request stores bounded metadata for one emulated MinIO/S3 operation.
 	SaveS3Request(ctx context.Context, in *S3Request, opts ...grpc.CallOption) (*SaveReply, error)
 	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
 	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
@@ -737,6 +738,7 @@ type HoneypotServer interface {
 	SaveComfyui(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveFile(context.Context, *FileUploadRequest) (*SaveReply, error)
 	SaveMcp(context.Context, *McpRequest) (*SaveReply, error)
+	// SaveS3Request stores bounded metadata for one emulated MinIO/S3 operation.
 	SaveS3Request(context.Context, *S3Request) (*SaveReply, error)
 	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
 	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/joshrendek/threat.gg-agent/proto"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
@@ -73,6 +74,11 @@ func (blockingClient) SaveComfyui(ctx context.Context, in *proto.LlmRequest, opt
 	return nil, ctx.Err()
 }
 
+func (blockingClient) SaveS3Request(ctx context.Context, in *proto.S3Request, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func (blockingClient) GetCommandResponse(ctx context.Context, in *proto.CommandRequest, opts ...grpc.CallOption) (*proto.CommandResponse, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -96,6 +102,7 @@ func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 		{"localai", func() error { return SaveLocalaiRequest(&proto.LlmRequest{}) }},
 		{"llamacpp", func() error { return SaveLlamacppRequest(&proto.LlmRequest{}) }},
 		{"comfyui", func() error { return SaveComfyuiRequest(&proto.LlmRequest{}) }},
+		{"s3", func() error { return SaveS3Request(&proto.S3Request{}) }},
 		{"connect", func() error { return SaveMemcachedConnect(&proto.MemcachedConnectRequest{}) }},
 		{"command", func() error { return SaveMemcachedCommand(&proto.MemcachedCommandRequest{}) }},
 	} {
@@ -117,6 +124,13 @@ func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSaveS3RequestIsNoOpWithoutClient(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = nil
+	require.NoError(t, SaveS3Request(&proto.S3Request{}))
 }
 
 func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
