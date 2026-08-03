@@ -1,6 +1,7 @@
 // Package kubelet emulates the authenticated HTTPS API exposed by a Kubernetes
 // node agent. It returns a small, coherent node/pod persona and records bounded
-// request metadata without validating attacker-supplied bearer tokens.
+// request metadata. Bearer tokens are fingerprinted and redacted, but are
+// never validated against an external control plane.
 package kubelet
 
 import (
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -40,6 +42,8 @@ var (
 	persistSlots = make(chan struct{}, persistSlotsN)
 )
 
+var labeledSecretPattern = regexp.MustCompile(`(?i)(?:access[_-]?token|token|secret|password|authorization|api[_-]?key|cookie)\s*[:=]\s*["']?[^&,;\s"']+["']?`)
+
 var _ honeypots.Honeypot = (*honeypot)(nil)
 
 type honeypot struct{ logger zerolog.Logger }
@@ -56,7 +60,7 @@ func (h *honeypot) Start() {
 	if port == "" {
 		port = defaultPort
 	}
-	cert, err := generateSelfSignedCert()
+	cert, err := selfSignedCertForNode()
 	if err != nil {
 		h.logger.Fatal().Err(err).Msg("failed to generate kubelet TLS certificate")
 	}
@@ -113,13 +117,14 @@ func captureMiddleware(next http.Handler) http.Handler {
 
 func persist(r *http.Request, guid string, body []byte) {
 	authScheme, tokenFingerprint := authorizationMetadata(r.Header.Get("Authorization"))
-	commands := boundedCommands(r.URL.Query()["command"])
+	query := r.URL.Query()
+	commands := boundedCommands(query["command"])
 	req := &proto.KubeletRequest{
 		RemoteAddr:       bounded(r.RemoteAddr, 4096),
 		Guid:             guid,
 		Method:           bounded(r.Method, 16),
 		Path:             bounded(r.URL.EscapedPath(), maxPathBytes),
-		Query:            bounded(redactedQuery(r.URL.Query()).Encode(), maxQueryBytes),
+		Query:            bounded(redactedQuery(query).Encode(), maxQueryBytes),
 		AuthScheme:       authScheme,
 		TokenFingerprint: tokenFingerprint,
 		UserAgent:        bounded(r.UserAgent(), maxUserAgentBytes),
@@ -154,7 +159,7 @@ func authorizationMetadata(value string) (string, string) {
 func redactedQuery(values url.Values) url.Values {
 	out := make(url.Values, len(values))
 	for key, vals := range values {
-		if strings.EqualFold(key, "token") || strings.EqualFold(key, "authorization") || strings.EqualFold(key, "access_token") {
+		if isSecretKey(key) {
 			out[key] = []string{"[REDACTED]"}
 			continue
 		}
@@ -165,13 +170,30 @@ func redactedQuery(values url.Values) url.Values {
 	return out
 }
 
+func isSecretKey(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+	return strings.Contains(normalized, "token") || strings.Contains(normalized, "secret") ||
+		strings.Contains(normalized, "password") || strings.Contains(normalized, "authorization") ||
+		normalized == "api_key" || strings.Contains(normalized, "cookie")
+}
+
 func redactedBody(body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
 	var value any
 	if json.Unmarshal(body, &value) != nil {
-		return bounded(string(body), maxBodyBytes)
+		raw := bounded(string(body), maxBodyBytes)
+		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+			return "[REDACTED_MALFORMED_JSON_BODY]"
+		}
+		if strings.Contains(raw, "=") {
+			if values, err := url.ParseQuery(raw); err == nil {
+				return redactedQuery(values).Encode()
+			}
+		}
+		return labeledSecretPattern.ReplaceAllString(raw, "[REDACTED]")
 	}
 	redactJSONSecrets(value)
 	encoded, err := json.Marshal(value)
@@ -185,10 +207,7 @@ func redactJSONSecrets(value any) {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
-			normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
-			if strings.Contains(normalized, "token") || strings.Contains(normalized, "secret") ||
-				strings.Contains(normalized, "password") || normalized == "authorization" ||
-				normalized == "api_key" || strings.Contains(normalized, "cookie") {
+			if isSecretKey(key) {
 				typed[key] = "[REDACTED]"
 				continue
 			}
@@ -290,7 +309,7 @@ func notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func generateSelfSignedCert() (tls.Certificate, error) {
+func selfSignedCertForNode() (tls.Certificate, error) {
 	return kubetls.GenerateSelfSigned("worker-01", "worker-01", "localhost")
 }
 

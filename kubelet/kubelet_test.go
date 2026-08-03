@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -104,12 +105,35 @@ func TestCaptureRedactsJSONSecrets(t *testing.T) {
 }
 
 func TestKubeletCertificateUsesNodePersona(t *testing.T) {
-	cert, err := generateSelfSignedCert()
+	cert, err := selfSignedCertForNode()
 	require.NoError(t, err)
 	parsed, err := x509.ParseCertificate(cert.Certificate[0])
 	require.NoError(t, err)
 	require.Equal(t, "worker-01", parsed.Subject.CommonName)
 	require.Contains(t, parsed.DNSNames, "worker-01")
+}
+
+func TestCaptureBoundsAndRedactsNonJSONSecrets(t *testing.T) {
+	values := make(url.Values)
+	values.Set("client-secret", "query-secret")
+	values.Set("safe", "visible")
+	redacted := redactedQuery(values).Encode()
+	require.Contains(t, redacted, "client-secret=%5BREDACTED%5D")
+	require.NotContains(t, redacted, "query-secret")
+
+	require.Equal(t, "password=%5BREDACTED%5D&safe=visible", redactedBody([]byte("password=hunter2&safe=visible")))
+	require.Equal(t, "[REDACTED_MALFORMED_JSON_BODY]", redactedBody([]byte(`{"password":"hunter2"`)))
+	require.NotContains(t, redactedBody([]byte("authorization: bearer-secret")), "bearer-secret")
+
+	commands := make([]string, maxCommands+4)
+	for i := range commands {
+		commands[i] = strings.Repeat("x", maxCommandBytes+10)
+	}
+	got := boundedCommands(commands)
+	require.Len(t, got, maxCommands)
+	for _, command := range got {
+		require.Len(t, command, maxCommandBytes)
+	}
 }
 
 func TestCommandResponseShapes(t *testing.T) {

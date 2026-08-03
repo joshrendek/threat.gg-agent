@@ -78,26 +78,32 @@ func (h *honeypot) Start() {
 	router.HandleFunc("/apis/rbac.authorization.k8s.io/v1", h.apiRBACV1Handler).Methods("GET")
 	router.HandleFunc("/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/roles", h.rolesHandler).Methods("GET", "POST")
 
-	// add a catch all route and log the request and body
+	// Record unmatched reconnaissance without reflecting attacker input.
 	router.PathPrefix("/").HandlerFunc(h.catchAllHandler).Methods("GET", "POST")
 
 	// Generate the TLS certificate
 	cert, err := kubetls.GenerateSelfSigned("localhost", "localhost")
 	if err != nil {
-		h.logger.Fatal().AnErr("Failed to generate TLS certificate: %v", err).Msg("failed to start k8s")
+		h.logger.Fatal().Err(err).Msg("failed to generate Kubernetes API TLS certificate")
 	}
 
 	// Configure TLS settings
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
 		//ClientAuth:   tls.RequestClientCert,
 	}
 
 	// Create a custom server to use TLS
 	server := &http.Server{
-		Addr:      ":" + port,
-		Handler:   router,
-		TLSConfig: tlsConfig,
+		Addr:              ":" + port,
+		Handler:           router,
+		TLSConfig:         tlsConfig,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	// Start the server
@@ -111,16 +117,34 @@ type responseWriter struct {
 	statusCode int
 }
 
+func (w *responseWriter) WriteHeader(statusCode int) {
+	if w.statusCode != 0 {
+		return
+	}
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *responseWriter) Write(body []byte) (int, error) {
+	if w.statusCode == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
 func (h *honeypot) LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Start timer
 		start := time.Now()
 
 		// Wrap the ResponseWriter to capture the status code
-		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		rw := &responseWriter{ResponseWriter: w}
 
 		// Process the request
 		next.ServeHTTP(rw, r)
+		if rw.statusCode == 0 {
+			rw.statusCode = http.StatusOK
+		}
 
 		// Calculate duration
 		duration := time.Since(start)
@@ -128,7 +152,7 @@ func (h *honeypot) LoggingMiddleware(next http.Handler) http.Handler {
 		// Log the details
 		h.logger.Info().
 			Str("method", r.Method).
-			Str("url", r.URL.String()).
+			Str("path", r.URL.EscapedPath()).
 			Str("remote_addr", r.RemoteAddr).
 			Str("user_agent", r.UserAgent()).
 			Int("status", rw.statusCode).

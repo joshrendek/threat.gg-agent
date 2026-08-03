@@ -1,5 +1,5 @@
-// Package kubetls provides the self-signed server identity shared by the
-// Kubernetes API and Kubelet honeypots.
+// Package kubetls creates self-signed server certificates for Kubernetes API
+// and Kubelet personas. Callers supply their own distinct identity values.
 package kubetls
 
 import (
@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// GenerateSelfSigned creates a one-year server certificate for a Kubernetes
-// persona. Loopback SANs keep local probes usable without weakening TLS.
+// GenerateSelfSigned creates a 365-day server certificate for a Kubernetes
+// persona. Loopback SANs permit local health probes.
 func GenerateSelfSigned(commonName string, dnsNames ...string) (tls.Certificate, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
