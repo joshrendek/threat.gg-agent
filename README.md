@@ -50,3 +50,8 @@ Environment variables:
 | `SSH_PORT` | SSH honeypot port | `22` |
 | `KAFKA_PORT` | Kafka honeypot port | `9092` |
 | `MSSQL_HONEYPOT_PORT` | Microsoft SQL Server honeypot port | `1433` |
+
+The MSSQL honeypot intentionally advertises `ENCRYPT_NOT_SUP` so it can observe
+LOGIN7 reconnaissance and reversibly obfuscated SQL-auth attempts. Run honeypot
+nodes on an isolated capture network; do not place legitimate credentials or
+production database traffic on the listener's network path.

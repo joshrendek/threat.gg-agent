@@ -96,7 +96,8 @@ func writeMessage(w io.Writer, typeID byte, payload []byte) error {
 }
 
 func preloginResponse() []byte {
-	// VERSION, ENCRYPTION, INSTOPT, THREADID and MARS. Offsets are from the
+	// Tokens 0x00-0x04 advertise VERSION, ENCRYPTION, INSTOPT, THREADID and
+	// MARS respectively. Offsets are from the
 	// beginning of the PRELOGIN payload, including this option table.
 	return []byte{
 		0x00, 0x00, 0x1a, 0x00, 0x06,
@@ -135,9 +136,9 @@ func parseLogin7(payload []byte) (loginRecord, error) {
 		}
 		return payload[offset : offset+byteLen], nil
 	}
-	fields := make([]string, 9)
+	fields := make([]string, 7)
 	var err error
-	for i, off := range []int{36, 40, 44, 48, 52, 60, 64, 68, 82} {
+	for i, off := range []int{36, 40, 44, 48, 52, 60, 68} {
 		var raw []byte
 		raw, err = readRawField(off)
 		if err != nil {
@@ -151,8 +152,8 @@ func parseLogin7(payload []byte) (loginRecord, error) {
 	}
 	return loginRecord{
 		hostname: fields[0], username: fields[1], password: fields[2],
-		appName: fields[3], serverName: fields[4], library: fields[5], database: fields[7],
-		tdsVersion: binary.BigEndian.Uint32(payload[4:8]),
+		appName: fields[3], serverName: fields[4], library: fields[5], database: fields[6],
+		tdsVersion: binary.LittleEndian.Uint32(payload[4:8]),
 	}, nil
 }
 
@@ -203,9 +204,9 @@ func bVarChar(s string) []byte {
 	return append([]byte{byte(len(runes))}, encodeUCS2(string(runes))...)
 }
 
-func loginResponse(database string) []byte {
-	if database == "" {
-		database = "master"
+func postLoginResponse(envDatabase string) []byte {
+	if envDatabase == "" {
+		envDatabase = "master"
 	}
 	// LOGINACK: SQL_TSQL + TDS 7.4 + program name + 16.0.1000.6.
 	body := []byte{0x01, 0x74, 0x00, 0x00, 0x04}
@@ -215,7 +216,7 @@ func loginResponse(database string) []byte {
 	payload = appendU16(payload, uint16(len(body)))
 	payload = append(payload, body...)
 
-	newDB := bVarChar(database)
+	newDB := bVarChar(envDatabase)
 	oldDB := bVarChar("")
 	envBody := append([]byte{0x01}, append(newDB, oldDB...)...)
 	payload = append(payload, 0xe3)

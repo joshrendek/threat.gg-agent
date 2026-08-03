@@ -117,7 +117,7 @@ func TestSessionCompletesLoginPersistsAndAnswersQuery(t *testing.T) {
 	}
 	lookupResponse = func(commandType, command string) (string, bool) {
 		require.Equal(t, "mssql", commandType)
-		require.Equal(t, "SELECT @@VERSION", command)
+		require.Equal(t, "select @@version", command)
 		return "authored-version", true
 	}
 
@@ -186,9 +186,123 @@ func TestPersistenceQueueDropsInsteadOfBlocking(t *testing.T) {
 	require.False(t, called)
 }
 
+func TestConnectionAdmissionRejectsWhenCapacityIsFull(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	slots <- struct{}{}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	h := &honeypot{logger: zerolog.Nop(), connectionSlots: slots}
+	done := make(chan struct{})
+	go func() { h.serve(listener); close(done) }()
+	t.Cleanup(func() { listener.Close(); <-done })
+
+	client, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+	defer client.Close()
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+	_, err = client.Read(make([]byte, 1))
+	require.Error(t, err)
+}
+
+func TestInitialReadAndSessionDurationAreBounded(t *testing.T) {
+	server, client := net.Pipe()
+	h := &honeypot{logger: zerolog.Nop(), idleTimeout: 20 * time.Millisecond}
+	initialDone := make(chan struct{})
+	go func() { h.handleConnection(server); close(initialDone) }()
+	t.Cleanup(func() { client.Close() })
+	select {
+	case <-initialDone:
+	case <-time.After(time.Second):
+		t.Fatal("initial TDS read was not bounded by the idle deadline")
+	}
+
+	h = &honeypot{logger: zerolog.Nop(), idleTimeout: time.Second, sessionLimit: 30 * time.Millisecond}
+	sessionClient, sessionDone := startLoggedInPipe(t, h)
+	_ = sessionClient
+	select {
+	case <-sessionDone:
+	case <-time.After(time.Second):
+		t.Fatal("session did not stop at its duration limit")
+	}
+}
+
+func TestSessionQueryCapStopsFurtherBatches(t *testing.T) {
+	origLookup := lookupResponse
+	lookupResponse = func(string, string) (string, bool) { return "", false }
+	t.Cleanup(func() { lookupResponse = origLookup })
+	h := &honeypot{logger: zerolog.Nop(), queryLimit: 1}
+	require.Equal(t, maxQueries, (&honeypot{}).effectiveQueryLimit())
+	client, done := startLoggedInPipe(t, h)
+	require.NoError(t, writeMessage(client, packetSQLBatch, encodeUCS2("SELECT 1")))
+	_, _, err := readMessage(client)
+	require.NoError(t, err)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("session did not stop at query cap")
+	}
+	require.Error(t, writeMessage(client, packetSQLBatch, encodeUCS2("SELECT 2")))
+}
+
+func TestUnsupportedPacketKeepsSessionUsable(t *testing.T) {
+	origLookup := lookupResponse
+	lookupResponse = func(string, string) (string, bool) { return "", false }
+	t.Cleanup(func() { lookupResponse = origLookup })
+	client, _ := startLoggedInPipe(t, &honeypot{logger: zerolog.Nop(), queryLimit: 2})
+	require.NoError(t, writeMessage(client, packetRPC, []byte{1, 2, 3}))
+	_, unsupported, err := readMessage(client)
+	require.NoError(t, err)
+	require.Equal(t, byte(0xaa), unsupported[0])
+
+	require.NoError(t, writeMessage(client, packetSQLBatch, encodeUCS2("SELECT 1")))
+	_, reply, err := readMessage(client)
+	require.NoError(t, err)
+	require.True(t, bytes.Contains(reply, encodeUCS2("1")))
+}
+
+func TestOverrideLookupIsNormalizedAndCachedPerSession(t *testing.T) {
+	origLookup := lookupResponse
+	calls := 0
+	lookupResponse = func(commandType, command string) (string, bool) {
+		calls++
+		require.Equal(t, "mssql", commandType)
+		require.Equal(t, "select @@version", command)
+		return "cached", true
+	}
+	t.Cleanup(func() { lookupResponse = origLookup })
+	client, _ := startLoggedInPipe(t, &honeypot{logger: zerolog.Nop(), queryLimit: 2})
+	for _, query := range []string{"SELECT   @@VERSION", " select @@version "} {
+		require.NoError(t, writeMessage(client, packetSQLBatch, encodeUCS2(query)))
+		_, reply, err := readMessage(client)
+		require.NoError(t, err)
+		require.True(t, bytes.Contains(reply, encodeUCS2("cached")))
+	}
+	require.Equal(t, 1, calls)
+}
+
+func startLoggedInPipe(t *testing.T, h *honeypot) (net.Conn, <-chan struct{}) {
+	t.Helper()
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() { h.handleConnection(server); close(done) }()
+	t.Cleanup(func() {
+		client.Close()
+		<-done
+	})
+	require.NoError(t, writeMessage(client, packetPrelogin, []byte{0xff}))
+	_, _, err := readMessage(client)
+	require.NoError(t, err)
+	require.NoError(t, writeMessage(client, packetLogin7, login7Fixture(map[int]string{40: "svc-sql", 44: "secret"})))
+	_, reply, err := readMessage(client)
+	require.NoError(t, err)
+	require.Equal(t, byte(0xad), reply[0])
+	return client, done
+}
+
 func login7Fixture(fields map[int]string) []byte {
 	payload := make([]byte, 94)
-	binary.BigEndian.PutUint32(payload[4:8], 0x74000004)
+	binary.LittleEndian.PutUint32(payload[4:8], 0x74000004)
 	for _, pair := range []int{36, 40, 44, 48, 52, 60, 64, 68, 82, 86} {
 		value := fields[pair]
 		raw := encodeUCS2(value)

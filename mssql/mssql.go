@@ -17,22 +17,34 @@ import (
 )
 
 const (
-	maxQueries    = 64
-	idleTimeout   = 30 * time.Second
-	sessionLimit  = 5 * time.Minute
-	persistSlotsN = 32
+	maxQueries            = 64
+	idleTimeout           = 30 * time.Second
+	sessionLimit          = 5 * time.Minute
+	persistSlotsN         = 32
+	maxConnections        = 128
+	overrideCacheEntries  = 64
+	overrideLookupTimeout = 500 * time.Millisecond
 )
 
 var (
 	saveMssqlLogin = persistence.SaveMssqlLogin
 	saveQuery      = persistence.SaveQuery
-	lookupResponse = cmdresp.Lookup
-	persistSlots   = make(chan struct{}, persistSlotsN)
+	lookupResponse = func(commandType, command string) (string, bool) {
+		return cmdresp.LookupWithin(commandType, command, overrideLookupTimeout)
+	}
+	persistSlots           = make(chan struct{}, persistSlotsN)
+	defaultConnectionSlots = make(chan struct{}, maxConnections)
 )
 
 var _ honeypots.Honeypot = (*honeypot)(nil)
 
-type honeypot struct{ logger zerolog.Logger }
+type honeypot struct {
+	logger          zerolog.Logger
+	idleTimeout     time.Duration
+	sessionLimit    time.Duration
+	queryLimit      int
+	connectionSlots chan struct{}
+}
 
 func New() honeypots.Honeypot {
 	return &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "mssql").Logger()}
@@ -54,6 +66,7 @@ func (h *honeypot) Start() {
 }
 
 func (h *honeypot) serve(listener net.Listener) {
+	slots := h.effectiveConnectionSlots()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -63,13 +76,31 @@ func (h *honeypot) serve(listener net.Listener) {
 			h.logger.Error().Err(err).Msg("accept error")
 			continue
 		}
-		go h.handleConnection(conn)
+		select {
+		case slots <- struct{}{}:
+			go func() {
+				defer func() { <-slots }()
+				h.handleConnection(conn)
+			}()
+		default:
+			h.logger.Warn().Msg("rejecting mssql connection: session limit reached")
+			_ = conn.Close()
+		}
 	}
+}
+
+func (h *honeypot) effectiveConnectionSlots() chan struct{} {
+	if h.connectionSlots != nil {
+		return h.connectionSlots
+	}
+	return defaultConnectionSlots
 }
 
 func (h *honeypot) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	started := time.Now()
+	sessionEnd := started.Add(h.effectiveSessionLimit())
+	h.setDeadline(conn, sessionEnd)
 	guid := uuid.NewV4().String()
 	remoteIP := conn.RemoteAddr().String()
 	if host, _, err := net.SplitHostPort(remoteIP); err == nil {
@@ -83,7 +114,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	if err := writeMessage(conn, packetReply, preloginResponse()); err != nil {
 		return
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
+	h.setDeadline(conn, sessionEnd)
 	typeID, payload, err := readMessage(conn)
 	if err != nil || typeID != packetLogin7 {
 		return
@@ -100,12 +131,14 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			Library: login.library, Database: login.database, TdsVersion: login.tdsVersion,
 		})
 	})
-	if err := writeMessage(conn, packetReply, loginResponse(login.database)); err != nil {
+	h.setDeadline(conn, sessionEnd)
+	if err := writeMessage(conn, packetReply, postLoginResponse(login.database)); err != nil {
 		return
 	}
 
-	for queryCount := 0; queryCount < maxQueries && time.Since(started) < sessionLimit; queryCount++ {
-		_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
+	overrides := make(map[string]overrideResult)
+	for queryCount := 0; queryCount < h.effectiveQueryLimit() && time.Now().Before(sessionEnd); queryCount++ {
+		h.setDeadline(conn, sessionEnd)
 		typeID, payload, err = readMessage(conn)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
@@ -125,7 +158,18 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		h.persist(func() error {
 			return saveQuery(&proto.QueryRequest{Guid: guid, Query: query, CommandType: "mssql"})
 		})
-		if authored, ok := lookupResponse("mssql", query); ok {
+		normalized := normalizeQuery(query)
+		authored, ok := "", false
+		if cached, exists := overrides[normalized]; exists {
+			authored, ok = cached.response, cached.matched
+		} else {
+			authored, ok = lookupResponse("mssql", normalized)
+			if len(overrides) < overrideCacheEntries {
+				overrides[normalized] = overrideResult{response: authored, matched: ok}
+			}
+		}
+		h.setDeadline(conn, sessionEnd)
+		if ok {
 			err = writeMessage(conn, packetReply, resultResponse("result", []string{authored}))
 		} else {
 			err = writeMessage(conn, packetReply, responseForQuery(query))
@@ -134,6 +178,40 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			return
 		}
 	}
+}
+
+type overrideResult struct {
+	response string
+	matched  bool
+}
+
+func (h *honeypot) effectiveIdleTimeout() time.Duration {
+	if h.idleTimeout > 0 {
+		return h.idleTimeout
+	}
+	return idleTimeout
+}
+
+func (h *honeypot) effectiveSessionLimit() time.Duration {
+	if h.sessionLimit > 0 {
+		return h.sessionLimit
+	}
+	return sessionLimit
+}
+
+func (h *honeypot) effectiveQueryLimit() int {
+	if h.queryLimit > 0 {
+		return h.queryLimit
+	}
+	return maxQueries
+}
+
+func (h *honeypot) setDeadline(conn net.Conn, sessionEnd time.Time) {
+	deadline := time.Now().Add(h.effectiveIdleTimeout())
+	if sessionEnd.Before(deadline) {
+		deadline = sessionEnd
+	}
+	_ = conn.SetDeadline(deadline)
 }
 
 func (h *honeypot) persist(save func() error) {
@@ -151,7 +229,7 @@ func (h *honeypot) persist(save func() error) {
 }
 
 func responseForQuery(query string) []byte {
-	normalized := strings.ToLower(strings.Join(strings.Fields(query), " "))
+	normalized := normalizeQuery(query)
 	switch {
 	case strings.Contains(normalized, "@@version"):
 		return resultResponse("", []string{"Microsoft SQL Server 2022 (RTM-CU14) (KB5038325) - 16.0.4135.4 (X64)\n\tEnterprise Edition on Linux"})
@@ -172,4 +250,8 @@ func responseForQuery(query string) []byte {
 	default:
 		return errorResponse(102, "Incorrect syntax near the specified token.")
 	}
+}
+
+func normalizeQuery(query string) string {
+	return strings.ToLower(strings.Join(strings.Fields(query), " "))
 }

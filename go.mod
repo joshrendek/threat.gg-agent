@@ -8,6 +8,7 @@ replace github.com/jeroenrinzema/psql-wire => github.com/joshrendek/psql-wire v0
 
 require (
 	github.com/cretz/bine v0.0.0-20181016150912-25e2ee8b213c
+	github.com/denisenkom/go-mssqldb v0.12.3
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.0.3
@@ -28,7 +29,6 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/denisenkom/go-mssqldb v0.12.3 // indirect
 	github.com/golang-sql/civil v0.0.0-20190719163853-cb61b32ac6fe // indirect
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
