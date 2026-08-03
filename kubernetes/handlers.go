@@ -14,6 +14,12 @@ import (
 
 const maxKubernetesBodyBytes = 64 << 10
 
+const (
+	maxRoleNamespaces    = 64
+	maxRolesPerNamespace = 16
+	maxRolesTotal        = 128
+)
+
 //go:embed swagger.json
 var openAPISpec string
 
@@ -947,17 +953,43 @@ func (h *honeypot) rolesHandler(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodPost {
 		var role Role
 		r.Body = http.MaxBytesReader(w, r.Body, maxKubernetesBodyBytes)
-		err := json.NewDecoder(r.Body).Decode(&role)
+		decoder := json.NewDecoder(r.Body)
+		err := decoder.Decode(&role)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := requireJSONEOF(decoder); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		roleStoreMu.Lock()
-		roleStore[namespace] = append(roleStore[namespace], role)
+		roles := roleStore[namespace]
+		total := 0
+		for _, stored := range roleStore {
+			total += len(stored)
+		}
+		if (len(roles) == 0 && len(roleStore) >= maxRoleNamespaces) || len(roles) >= maxRolesPerNamespace || total >= maxRolesTotal {
+			roleStoreMu.Unlock()
+			http.Error(w, "role store limit reached", http.StatusTooManyRequests)
+			return
+		}
+		roleStore[namespace] = append(roles, role)
 		roleStoreMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(role)
 	}
+}
+
+func requireJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("request body contains trailing JSON")
+		}
+		return err
+	}
+	return nil
 }
 
 func (h *honeypot) apiRBACV1Handler(w http.ResponseWriter, r *http.Request) {

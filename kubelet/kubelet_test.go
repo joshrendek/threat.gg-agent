@@ -48,7 +48,7 @@ func TestCaptureFingerprintsBearerAndPreservesCommandOrder(t *testing.T) {
 	saveRequest = func(in *proto.KubeletRequest) error { captured <- in; return nil }
 	t.Cleanup(func() { saveRequest = oldSave })
 
-	req := httptest.NewRequest(http.MethodPost, "https://node/exec/default/web/nginx?command=/bin/sh&command=-c&command=id&token=secret-query", strings.NewReader("stdin-data"))
+	req := httptest.NewRequest(http.MethodPost, "https://node/exec/default/web/nginx?command=/bin/sh&command=-c&command=id&command=Authorization%3A+Bearer+command-secret&token=secret-query", strings.NewReader("stdin-data"))
 	req.Header.Set("Authorization", "Bearer super-secret-token")
 	req.Header.Set("User-Agent", "curl/8.10")
 	rec := httptest.NewRecorder()
@@ -60,9 +60,10 @@ func TestCaptureFingerprintsBearerAndPreservesCommandOrder(t *testing.T) {
 		require.Equal(t, "bearer", got.AuthScheme)
 		require.Regexp(t, `^sha256:[0-9a-f]{16}$`, got.TokenFingerprint)
 		require.NotContains(t, got.TokenFingerprint, "super-secret")
-		require.Equal(t, []string{"/bin/sh", "-c", "id"}, got.Commands)
+		require.Equal(t, []string{"/bin/sh", "-c", "id", "[REDACTED]"}, got.Commands)
 		require.Contains(t, got.Query, "token=%5BREDACTED%5D")
 		require.NotContains(t, got.Query, "secret-query")
+		require.NotContains(t, got.Query, "command-secret")
 		require.Equal(t, "stdin-data", got.Body)
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for Kubelet capture")
@@ -78,12 +79,12 @@ func TestAnonymousCaptureAndOversizedBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	newHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://node/healthz", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "anonymous", (<-captured).AuthScheme)
+	require.Equal(t, "anonymous", awaitCapture(t, captured).AuthScheme)
 
 	rec = httptest.NewRecorder()
 	newHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "https://node/run/default/web/nginx?command=id", strings.NewReader(strings.Repeat("x", maxBodyBytes+1))))
 	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
-	got := <-captured
+	got := awaitCapture(t, captured)
 	require.Len(t, got.Body, maxBodyBytes)
 }
 
@@ -97,7 +98,7 @@ func TestCaptureRedactsJSONSecrets(t *testing.T) {
 	body := `{"spec":{"token":"secret-value","password":"hunter2"},"command":"id"}`
 	newHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "https://node/run/default/web/nginx?command=id", strings.NewReader(body)))
 	require.Equal(t, http.StatusOK, rec.Code)
-	got := <-captured
+	got := awaitCapture(t, captured)
 	require.NotContains(t, got.Body, "secret-value")
 	require.NotContains(t, got.Body, "hunter2")
 	require.Contains(t, got.Body, `"token":"[REDACTED]"`)
@@ -124,6 +125,7 @@ func TestCaptureBoundsAndRedactsNonJSONSecrets(t *testing.T) {
 	require.Equal(t, "password=%5BREDACTED%5D&safe=visible", redactedBody([]byte("password=hunter2&safe=visible")))
 	require.Equal(t, "[REDACTED_MALFORMED_JSON_BODY]", redactedBody([]byte(`{"password":"hunter2"`)))
 	require.NotContains(t, redactedBody([]byte("authorization: bearer-secret")), "bearer-secret")
+	require.NotContains(t, redactedBody([]byte("Authorization: Bearer secret-token")), "secret-token")
 
 	commands := make([]string, maxCommands+4)
 	for i := range commands {
@@ -133,6 +135,46 @@ func TestCaptureBoundsAndRedactsNonJSONSecrets(t *testing.T) {
 	require.Len(t, got, maxCommands)
 	for _, command := range got {
 		require.Len(t, command, maxCommandBytes)
+	}
+}
+
+func TestPersistenceSlotsDropCaptureWhenSaturatedAndReleaseAfterSave(t *testing.T) {
+	oldSave, oldSlots := saveRequest, persistSlots
+	persistSlots = make(chan struct{}, 1)
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	saveRequest = func(*proto.KubeletRequest) error {
+		entered <- struct{}{}
+		<-release
+		return nil
+	}
+	t.Cleanup(func() { saveRequest, persistSlots = oldSave, oldSlots })
+
+	h := newHandler()
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "https://node/pods", nil))
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first save did not start")
+	}
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "https://node/stats/summary", nil))
+	select {
+	case <-entered:
+		t.Fatal("capture should be dropped while persistence slot is saturated")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	require.Eventually(t, func() bool { return len(persistSlots) == 0 }, time.Second, 10*time.Millisecond)
+}
+
+func awaitCapture(t *testing.T, ch <-chan *proto.KubeletRequest) *proto.KubeletRequest {
+	t.Helper()
+	select {
+	case got := <-ch:
+		return got
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Kubelet capture")
+		return nil
 	}
 }
 

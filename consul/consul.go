@@ -2,6 +2,7 @@
 package consul
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -37,10 +38,11 @@ const (
 
 var saveRequest = persistence.SaveConsulRequest
 var saveSlots = make(chan struct{}, maxSaves)
-var labeledSecretPattern = regexp.MustCompile(`(?i)(?:access[_-]?token|token|secret|password|authorization|api[_-]?key|cookie)\s*[:=]\s*["']?[^&,;\s"']+["']?`)
+var labeledSecretPattern = regexp.MustCompile(`(?i)(?:access[_-]?token|token|secret|password|authorization|api[_-]?key|cookie)\s*[:=]\s*(?:bearer\s+)?["']?[^&,;\s"']+["']?`)
 
 type honeypot struct{ logger zerolog.Logger }
 
+// New constructs the Consul HTTP honeypot.
 func New() honeypots.Honeypot {
 	return &honeypot{logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", "consul").Logger()}
 }
@@ -56,10 +58,12 @@ func (h *honeypot) Start() {
 }
 
 type clientState struct {
+	mu       sync.Mutex
 	kv       map[string][]byte
 	sessions map[string]session
 	touched  time.Time
 	index    uint64
+	active   int
 }
 type session struct{ ID, Name, Node, TTL, Behavior string }
 type stateStore struct {
@@ -70,25 +74,52 @@ type stateStore struct {
 var states = &stateStore{clients: make(map[string]*clientState)}
 
 func (s *stateStore) forClient(key string) *clientState {
+	state, release, _ := s.acquireClient(key)
+	if release != nil {
+		release()
+	}
+	return state
+}
+
+func (s *stateStore) acquireClient(key string) (*clientState, func(), bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if state := s.clients[key]; state != nil {
 		state.touched = time.Now()
-		return state
+		state.active++
+		s.mu.Unlock()
+		return state, s.releaseFunc(key, state), true
 	}
 	if len(s.clients) >= maxClients {
 		var oldest string
 		var at time.Time
 		for k, v := range s.clients {
+			if v.active != 0 {
+				continue
+			}
 			if oldest == "" || v.touched.Before(at) {
 				oldest, at = k, v.touched
 			}
 		}
+		if oldest == "" {
+			s.mu.Unlock()
+			return nil, nil, false
+		}
 		delete(s.clients, oldest)
 	}
-	state := &clientState{kv: map[string][]byte{"config/database/host": []byte("postgres.service.consul"), "config/database/port": []byte("5432")}, sessions: make(map[string]session), touched: time.Now(), index: 42}
+	state := &clientState{kv: map[string][]byte{"config/database/host": []byte("postgres.service.consul"), "config/database/port": []byte("5432")}, sessions: make(map[string]session), touched: time.Now(), index: 42, active: 1}
 	s.clients[key] = state
-	return state
+	s.mu.Unlock()
+	return state, s.releaseFunc(key, state), true
+}
+
+func (s *stateStore) releaseFunc(key string, state *clientState) func() {
+	return func() {
+		s.mu.Lock()
+		if s.clients[key] == state && state.active > 0 {
+			state.active--
+		}
+		s.mu.Unlock()
+	}
 }
 
 func newHandler() http.Handler {
@@ -108,7 +139,7 @@ func capture(next http.Handler) http.Handler {
 			persist(r, body, 413)
 			return
 		}
-		r.Body = io.NopCloser(strings.NewReader(string(body)))
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		rw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(rw, r)
 		if rw.status == 0 {
@@ -139,15 +170,17 @@ func (w *statusWriter) Write(body []byte) (int, error) {
 }
 
 func persist(r *http.Request, body []byte, status int) {
+	slots := saveSlots
+	select {
+	case slots <- struct{}{}:
+	default:
+		return
+	}
 	source, fp := tokenMetadata(r)
 	q := redactedQuery(r.URL.Query()).Encode()
-	in := &proto.ConsulRequest{RemoteAddr: bounded(r.RemoteAddr, 128), Guid: uuid.NewV4().String(), Method: bounded(r.Method, 16), Path: bounded(r.URL.EscapedPath(), 8192), Query: bounded(q, 16384), TokenSource: source, TokenFingerprint: fp, UserAgent: bounded(r.UserAgent(), 4096), Body: bounded(redactedBody(body), maxBody), ResponseStatus: int32(status)}
-	select {
-	case saveSlots <- struct{}{}:
-		save := saveRequest
-		go func() { defer func() { <-saveSlots }(); _ = save(in) }()
-	default:
-	}
+	in := &proto.ConsulRequest{RemoteAddr: bounded(r.RemoteAddr, 128), Guid: uuid.NewV4().String(), Method: bounded(r.Method, 16), Path: bounded(r.URL.EscapedPath(), 8192), Query: bounded(q, 16384), TokenSource: source, TokenFingerprint: fp, UserAgent: bounded(r.UserAgent(), 4096), Body: bounded(redactedCaptureBody(r, body), maxBody), ResponseStatus: int32(status)}
+	save := saveRequest
+	go func() { defer func() { <-slots }(); _ = save(in) }()
 }
 
 func tokenMetadata(r *http.Request) (string, string) {
@@ -179,10 +212,17 @@ func redactedQuery(q url.Values) url.Values {
 	return out
 }
 func isSecretKey(key string) bool {
-	normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+	normalized := strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(key))
 	return strings.Contains(normalized, "token") || strings.Contains(normalized, "secret") ||
 		strings.Contains(normalized, "password") || strings.Contains(normalized, "authorization") ||
-		normalized == "api_key" || strings.Contains(normalized, "cookie")
+		strings.Contains(normalized, "apikey") || strings.Contains(normalized, "credential") ||
+		strings.Contains(normalized, "passphrase") || strings.Contains(normalized, "cookie")
+}
+func redactedCaptureBody(r *http.Request, body []byte) string {
+	if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/kv/") && len(body) > 0 {
+		return "[REDACTED_KV_VALUE]"
+	}
+	return redactedBody(body)
 }
 func redactedBody(body []byte) string {
 	var v any
@@ -234,10 +274,15 @@ func clientKey(r *http.Request) string {
 }
 
 func serveHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("X-Consul-Index", "42")
 	w.Header().Set("X-Consul-KnownLeader", "true")
 	w.Header().Set("X-Consul-LastContact", "0")
-	state := states.forClient(clientKey(r))
+	state, release, ok := states.acquireClient(clientKey(r))
+	if !ok {
+		http.Error(w, "client state capacity reached", http.StatusTooManyRequests)
+		return
+	}
+	defer release()
+	setIndexHeader(w, state)
 	p := r.URL.Path
 	switch {
 	case r.Method == "GET" && p == "/v1/agent/self":
@@ -277,12 +322,18 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func setIndexHeader(w http.ResponseWriter, state *clientState) {
+	state.mu.Lock()
+	index := state.index
+	state.mu.Unlock()
+	w.Header().Set("X-Consul-Index", fmt.Sprint(index))
+}
+
 func handleKV(w http.ResponseWriter, r *http.Request, s *clientState, key string) {
-	states.mu.Lock()
-	defer states.mu.Unlock()
 	switch r.Method {
 	case "GET":
 		if _, ok := r.URL.Query()["keys"]; ok {
+			s.mu.Lock()
 			keys := make([]string, 0, len(s.kv))
 			for k := range s.kv {
 				if strings.HasPrefix(k, key) {
@@ -290,10 +341,18 @@ func handleKV(w http.ResponseWriter, r *http.Request, s *clientState, key string
 				}
 			}
 			sort.Strings(keys)
+			index := s.index
+			s.mu.Unlock()
+			w.Header().Set("X-Consul-Index", fmt.Sprint(index))
 			jsonOut(w, keys)
 			return
 		}
+		s.mu.Lock()
 		value, ok := s.kv[key]
+		value = append([]byte(nil), value...)
+		index := s.index
+		s.mu.Unlock()
+		w.Header().Set("X-Consul-Index", fmt.Sprint(index))
 		if !ok {
 			http.Error(w, "", 404)
 			return
@@ -302,19 +361,28 @@ func handleKV(w http.ResponseWriter, r *http.Request, s *clientState, key string
 			_, _ = w.Write(value)
 			return
 		}
-		jsonOut(w, []map[string]any{{"LockIndex": 0, "Key": key, "Flags": 0, "Value": base64.StdEncoding.EncodeToString(value), "CreateIndex": 1, "ModifyIndex": s.index}})
+		jsonOut(w, []map[string]any{{"LockIndex": 0, "Key": key, "Flags": 0, "Value": base64.StdEncoding.EncodeToString(value), "CreateIndex": 1, "ModifyIndex": index}})
 	case "PUT":
+		body, _ := io.ReadAll(r.Body)
+		s.mu.Lock()
 		if _, exists := s.kv[key]; !exists && len(s.kv) >= maxKeys {
+			s.mu.Unlock()
 			http.Error(w, "KV limit reached", 429)
 			return
 		}
-		body, _ := io.ReadAll(r.Body)
 		s.index++
 		s.kv[key] = append([]byte(nil), body...)
+		index := s.index
+		s.mu.Unlock()
+		w.Header().Set("X-Consul-Index", fmt.Sprint(index))
 		jsonOut(w, true)
 	case "DELETE":
+		s.mu.Lock()
 		delete(s.kv, key)
 		s.index++
+		index := s.index
+		s.mu.Unlock()
+		w.Header().Set("X-Consul-Index", fmt.Sprint(index))
 		jsonOut(w, true)
 	default:
 		http.Error(w, "method not allowed", 405)
@@ -323,9 +391,9 @@ func handleKV(w http.ResponseWriter, r *http.Request, s *clientState, key string
 func handleSessionCreate(w http.ResponseWriter, r *http.Request, s *clientState) {
 	var in struct{ Name, Node, TTL, Behavior string }
 	_ = json.NewDecoder(r.Body).Decode(&in)
-	states.mu.Lock()
-	defer states.mu.Unlock()
+	s.mu.Lock()
 	if len(s.sessions) >= maxSessions {
+		s.mu.Unlock()
 		http.Error(w, "session limit reached", 429)
 		return
 	}
@@ -337,30 +405,32 @@ func handleSessionCreate(w http.ResponseWriter, r *http.Request, s *clientState)
 		in.Behavior = "release"
 	}
 	s.sessions[id] = session{ID: id, Name: bounded(in.Name, 256), Node: bounded(in.Node, 256), TTL: bounded(in.TTL, 32), Behavior: bounded(in.Behavior, 32)}
+	s.mu.Unlock()
 	jsonOut(w, map[string]string{"ID": id})
 }
 func stateList(w http.ResponseWriter, s *clientState) {
-	states.mu.Lock()
-	defer states.mu.Unlock()
+	s.mu.Lock()
 	out := make([]session, 0, len(s.sessions))
 	for _, v := range s.sessions {
 		out = append(out, v)
 	}
+	s.mu.Unlock()
 	jsonOut(w, out)
 }
 func stateInfo(w http.ResponseWriter, s *clientState, id string) {
-	states.mu.Lock()
-	defer states.mu.Unlock()
-	if v, ok := s.sessions[id]; ok {
+	s.mu.Lock()
+	v, ok := s.sessions[id]
+	s.mu.Unlock()
+	if ok {
 		jsonOut(w, []session{v})
 	} else {
 		jsonOut(w, []session{})
 	}
 }
 func stateDestroy(w http.ResponseWriter, s *clientState, id string) {
-	states.mu.Lock()
-	defer states.mu.Unlock()
+	s.mu.Lock()
 	delete(s.sessions, id)
+	s.mu.Unlock()
 	jsonOut(w, true)
 }
 func jsonOut(w http.ResponseWriter, v any) {
