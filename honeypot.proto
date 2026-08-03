@@ -17,6 +17,7 @@ service Honeypot {
   rpc SaveSshLogin(SshLoginRequest) returns (SaveReply) {}
   rpc SavePostgresLogin(PostgresRequest) returns (SaveReply) {}
   rpc SaveMysqlLogin(MysqlRequest) returns (SaveReply) {}
+  rpc SaveMssqlLogin(MssqlRequest) returns (SaveReply) {}
   rpc SaveQuery(QueryRequest) returns (SaveReply) {}
   rpc SaveHttpHeaders(HttpHeaderRequest) returns (SaveReply) {}
   rpc SaveShellCommand(ShellCommandRequest) returns (SaveReply) {}
@@ -90,9 +91,23 @@ message MysqlRequest {
   string guid = 4;
 }
 
+message MssqlRequest {
+  string username = 1;
+  string password = 2;
+  string remote_addr = 3;
+  string guid = 4;
+  string hostname = 5;
+  string app_name = 6;
+  string server_name = 7;
+  string library = 8;
+  string database = 9;
+  uint32 tds_version = 10;
+}
+
 message QueryRequest {
  string Query = 1;
  string guid = 2;
+ string command_type = 3; // empty => postgres for backwards compatibility
 }
 
 message CommandResponse {

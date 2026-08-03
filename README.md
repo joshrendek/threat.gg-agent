@@ -12,6 +12,7 @@ The agent is a Go binary that runs on honeypot nodes and emulates multiple netwo
 |---------|-------------|-------------|
 | SSH | 22 | Captures brute-force credentials, shell commands, proxy requests, and malware drops |
 | PostgreSQL | 5432 | Emulates a PostgreSQL server, captures authentication attempts and SQL queries |
+| Microsoft SQL Server | 1433 | Emulates TDS 7.x, captures LOGIN7 credentials/client metadata and SQL batches |
 | FTP | 21 | Captures FTP login attempts and file transfer commands |
 | Elasticsearch | 9200 | Emulates an Elasticsearch REST API, captures search and index requests |
 | HTTP | 8080 | Web server honeypot capturing HTTP request payloads |
@@ -48,3 +49,9 @@ Environment variables:
 | `GO_ENV` | Set to `development` for local testing | `production` |
 | `SSH_PORT` | SSH honeypot port | `22` |
 | `KAFKA_PORT` | Kafka honeypot port | `9092` |
+| `MSSQL_HONEYPOT_PORT` | Microsoft SQL Server honeypot port | `1433` |
+
+The MSSQL honeypot intentionally advertises `ENCRYPT_NOT_SUP` so it can observe
+LOGIN7 reconnaissance and reversibly obfuscated SQL-auth attempts. Run honeypot
+nodes on an isolated capture network; do not place legitimate credentials or
+production database traffic on the listener's network path.

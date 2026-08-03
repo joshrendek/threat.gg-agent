@@ -134,6 +134,7 @@ const (
 	Honeypot_SaveSshLogin_FullMethodName         = "/honeypot.Honeypot/SaveSshLogin"
 	Honeypot_SavePostgresLogin_FullMethodName    = "/honeypot.Honeypot/SavePostgresLogin"
 	Honeypot_SaveMysqlLogin_FullMethodName       = "/honeypot.Honeypot/SaveMysqlLogin"
+	Honeypot_SaveMssqlLogin_FullMethodName       = "/honeypot.Honeypot/SaveMssqlLogin"
 	Honeypot_SaveQuery_FullMethodName            = "/honeypot.Honeypot/SaveQuery"
 	Honeypot_SaveHttpHeaders_FullMethodName      = "/honeypot.Honeypot/SaveHttpHeaders"
 	Honeypot_SaveShellCommand_FullMethodName     = "/honeypot.Honeypot/SaveShellCommand"
@@ -186,6 +187,7 @@ type HoneypotClient interface {
 	SaveSshLogin(ctx context.Context, in *SshLoginRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SavePostgresLogin(ctx context.Context, in *PostgresRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveMysqlLogin(ctx context.Context, in *MysqlRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	SaveMssqlLogin(ctx context.Context, in *MssqlRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveQuery(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveHttpHeaders(ctx context.Context, in *HttpHeaderRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveShellCommand(ctx context.Context, in *ShellCommandRequest, opts ...grpc.CallOption) (*SaveReply, error)
@@ -308,6 +310,16 @@ func (c *honeypotClient) SaveMysqlLogin(ctx context.Context, in *MysqlRequest, o
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SaveReply)
 	err := c.cc.Invoke(ctx, Honeypot_SaveMysqlLogin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *honeypotClient) SaveMssqlLogin(ctx context.Context, in *MssqlRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveMssqlLogin_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -715,6 +727,7 @@ type HoneypotServer interface {
 	SaveSshLogin(context.Context, *SshLoginRequest) (*SaveReply, error)
 	SavePostgresLogin(context.Context, *PostgresRequest) (*SaveReply, error)
 	SaveMysqlLogin(context.Context, *MysqlRequest) (*SaveReply, error)
+	SaveMssqlLogin(context.Context, *MssqlRequest) (*SaveReply, error)
 	SaveQuery(context.Context, *QueryRequest) (*SaveReply, error)
 	SaveHttpHeaders(context.Context, *HttpHeaderRequest) (*SaveReply, error)
 	SaveShellCommand(context.Context, *ShellCommandRequest) (*SaveReply, error)
@@ -793,6 +806,9 @@ func (UnimplementedHoneypotServer) SavePostgresLogin(context.Context, *PostgresR
 }
 func (UnimplementedHoneypotServer) SaveMysqlLogin(context.Context, *MysqlRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveMysqlLogin not implemented")
+}
+func (UnimplementedHoneypotServer) SaveMssqlLogin(context.Context, *MssqlRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveMssqlLogin not implemented")
 }
 func (UnimplementedHoneypotServer) SaveQuery(context.Context, *QueryRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveQuery not implemented")
@@ -1054,6 +1070,24 @@ func _Honeypot_SaveMysqlLogin_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HoneypotServer).SaveMysqlLogin(ctx, req.(*MysqlRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Honeypot_SaveMssqlLogin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MssqlRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveMssqlLogin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveMssqlLogin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveMssqlLogin(ctx, req.(*MssqlRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1794,6 +1828,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveMysqlLogin",
 			Handler:    _Honeypot_SaveMysqlLogin_Handler,
+		},
+		{
+			MethodName: "SaveMssqlLogin",
+			Handler:    _Honeypot_SaveMssqlLogin_Handler,
 		},
 		{
 			MethodName: "SaveQuery",

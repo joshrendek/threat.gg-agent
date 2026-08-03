@@ -89,7 +89,11 @@ func SaveSshLogin(in *proto.SshLoginRequest) error {
 }
 
 func SaveQuery(in *proto.QueryRequest) error {
-	ctx := context.Background()
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveQuery(ctx, in)
 	return err
@@ -141,6 +145,17 @@ func SaveMysqlLogin(in *proto.MysqlRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveMysqlLogin(ctx, in)
+	return err
+}
+
+func SaveMssqlLogin(in *proto.MssqlRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveMssqlLogin(ctx, in)
 	return err
 }
 

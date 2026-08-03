@@ -463,19 +463,139 @@ func (x *MysqlRequest) GetGuid() string {
 	return ""
 }
 
+type MssqlRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Username   string `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Password   string `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	RemoteAddr string `protobuf:"bytes,3,opt,name=remote_addr,json=remoteAddr,proto3" json:"remote_addr,omitempty"`
+	Guid       string `protobuf:"bytes,4,opt,name=guid,proto3" json:"guid,omitempty"`
+	Hostname   string `protobuf:"bytes,5,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	AppName    string `protobuf:"bytes,6,opt,name=app_name,json=appName,proto3" json:"app_name,omitempty"`
+	ServerName string `protobuf:"bytes,7,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
+	Library    string `protobuf:"bytes,8,opt,name=library,proto3" json:"library,omitempty"`
+	Database   string `protobuf:"bytes,9,opt,name=database,proto3" json:"database,omitempty"`
+	TdsVersion uint32 `protobuf:"varint,10,opt,name=tds_version,json=tdsVersion,proto3" json:"tds_version,omitempty"`
+}
+
+func (x *MssqlRequest) Reset() {
+	*x = MssqlRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_honeypot_proto_msgTypes[4]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *MssqlRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MssqlRequest) ProtoMessage() {}
+
+func (x *MssqlRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_honeypot_proto_msgTypes[4]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MssqlRequest.ProtoReflect.Descriptor instead.
+func (*MssqlRequest) Descriptor() ([]byte, []int) {
+	return file_honeypot_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *MssqlRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *MssqlRequest) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+func (x *MssqlRequest) GetRemoteAddr() string {
+	if x != nil {
+		return x.RemoteAddr
+	}
+	return ""
+}
+
+func (x *MssqlRequest) GetGuid() string {
+	if x != nil {
+		return x.Guid
+	}
+	return ""
+}
+
+func (x *MssqlRequest) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *MssqlRequest) GetAppName() string {
+	if x != nil {
+		return x.AppName
+	}
+	return ""
+}
+
+func (x *MssqlRequest) GetServerName() string {
+	if x != nil {
+		return x.ServerName
+	}
+	return ""
+}
+
+func (x *MssqlRequest) GetLibrary() string {
+	if x != nil {
+		return x.Library
+	}
+	return ""
+}
+
+func (x *MssqlRequest) GetDatabase() string {
+	if x != nil {
+		return x.Database
+	}
+	return ""
+}
+
+func (x *MssqlRequest) GetTdsVersion() uint32 {
+	if x != nil {
+		return x.TdsVersion
+	}
+	return 0
+}
+
 type QueryRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Query string `protobuf:"bytes,1,opt,name=Query,proto3" json:"Query,omitempty"`
-	Guid  string `protobuf:"bytes,2,opt,name=guid,proto3" json:"guid,omitempty"`
+	Query       string `protobuf:"bytes,1,opt,name=Query,proto3" json:"Query,omitempty"`
+	Guid        string `protobuf:"bytes,2,opt,name=guid,proto3" json:"guid,omitempty"`
+	CommandType string `protobuf:"bytes,3,opt,name=command_type,json=commandType,proto3" json:"command_type,omitempty"` // empty => postgres for backwards compatibility
 }
 
 func (x *QueryRequest) Reset() {
 	*x = QueryRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[4]
+		mi := &file_honeypot_proto_msgTypes[5]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -488,7 +608,7 @@ func (x *QueryRequest) String() string {
 func (*QueryRequest) ProtoMessage() {}
 
 func (x *QueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[4]
+	mi := &file_honeypot_proto_msgTypes[5]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -501,7 +621,7 @@ func (x *QueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest.ProtoReflect.Descriptor instead.
 func (*QueryRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{4}
+	return file_honeypot_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *QueryRequest) GetQuery() string {
@@ -518,6 +638,13 @@ func (x *QueryRequest) GetGuid() string {
 	return ""
 }
 
+func (x *QueryRequest) GetCommandType() string {
+	if x != nil {
+		return x.CommandType
+	}
+	return ""
+}
+
 type CommandResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -530,7 +657,7 @@ type CommandResponse struct {
 func (x *CommandResponse) Reset() {
 	*x = CommandResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[5]
+		mi := &file_honeypot_proto_msgTypes[6]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -543,7 +670,7 @@ func (x *CommandResponse) String() string {
 func (*CommandResponse) ProtoMessage() {}
 
 func (x *CommandResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[5]
+	mi := &file_honeypot_proto_msgTypes[6]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -556,7 +683,7 @@ func (x *CommandResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandResponse.ProtoReflect.Descriptor instead.
 func (*CommandResponse) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{5}
+	return file_honeypot_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CommandResponse) GetResponse() string {
@@ -587,7 +714,7 @@ type FtpRequest struct {
 func (x *FtpRequest) Reset() {
 	*x = FtpRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[6]
+		mi := &file_honeypot_proto_msgTypes[7]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -600,7 +727,7 @@ func (x *FtpRequest) String() string {
 func (*FtpRequest) ProtoMessage() {}
 
 func (x *FtpRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[6]
+	mi := &file_honeypot_proto_msgTypes[7]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -613,7 +740,7 @@ func (x *FtpRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FtpRequest.ProtoReflect.Descriptor instead.
 func (*FtpRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{6}
+	return file_honeypot_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *FtpRequest) GetUsername() string {
@@ -664,7 +791,7 @@ type ElasticsearchRequest struct {
 func (x *ElasticsearchRequest) Reset() {
 	*x = ElasticsearchRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[7]
+		mi := &file_honeypot_proto_msgTypes[8]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -677,7 +804,7 @@ func (x *ElasticsearchRequest) String() string {
 func (*ElasticsearchRequest) ProtoMessage() {}
 
 func (x *ElasticsearchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[7]
+	mi := &file_honeypot_proto_msgTypes[8]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -690,7 +817,7 @@ func (x *ElasticsearchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ElasticsearchRequest.ProtoReflect.Descriptor instead.
 func (*ElasticsearchRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{7}
+	return file_honeypot_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ElasticsearchRequest) GetUsername() string {
@@ -792,7 +919,7 @@ type LlmRequest struct {
 func (x *LlmRequest) Reset() {
 	*x = LlmRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[8]
+		mi := &file_honeypot_proto_msgTypes[9]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -805,7 +932,7 @@ func (x *LlmRequest) String() string {
 func (*LlmRequest) ProtoMessage() {}
 
 func (x *LlmRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[8]
+	mi := &file_honeypot_proto_msgTypes[9]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -818,7 +945,7 @@ func (x *LlmRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LlmRequest.ProtoReflect.Descriptor instead.
 func (*LlmRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{8}
+	return file_honeypot_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *LlmRequest) GetRemoteAddr() string {
@@ -940,7 +1067,7 @@ type LlmBundleRequest struct {
 func (x *LlmBundleRequest) Reset() {
 	*x = LlmBundleRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[9]
+		mi := &file_honeypot_proto_msgTypes[10]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -953,7 +1080,7 @@ func (x *LlmBundleRequest) String() string {
 func (*LlmBundleRequest) ProtoMessage() {}
 
 func (x *LlmBundleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[9]
+	mi := &file_honeypot_proto_msgTypes[10]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -966,7 +1093,7 @@ func (x *LlmBundleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LlmBundleRequest.ProtoReflect.Descriptor instead.
 func (*LlmBundleRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{9}
+	return file_honeypot_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *LlmBundleRequest) GetKnownVersion() string {
@@ -993,7 +1120,7 @@ type LlmBundleReply struct {
 func (x *LlmBundleReply) Reset() {
 	*x = LlmBundleReply{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[10]
+		mi := &file_honeypot_proto_msgTypes[11]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1006,7 +1133,7 @@ func (x *LlmBundleReply) String() string {
 func (*LlmBundleReply) ProtoMessage() {}
 
 func (x *LlmBundleReply) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[10]
+	mi := &file_honeypot_proto_msgTypes[11]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1019,7 +1146,7 @@ func (x *LlmBundleReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LlmBundleReply.ProtoReflect.Descriptor instead.
 func (*LlmBundleReply) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{10}
+	return file_honeypot_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *LlmBundleReply) GetVersion() string {
@@ -1072,7 +1199,7 @@ type LlmPromptRule struct {
 func (x *LlmPromptRule) Reset() {
 	*x = LlmPromptRule{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[11]
+		mi := &file_honeypot_proto_msgTypes[12]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1085,7 +1212,7 @@ func (x *LlmPromptRule) String() string {
 func (*LlmPromptRule) ProtoMessage() {}
 
 func (x *LlmPromptRule) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[11]
+	mi := &file_honeypot_proto_msgTypes[12]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1098,7 +1225,7 @@ func (x *LlmPromptRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LlmPromptRule.ProtoReflect.Descriptor instead.
 func (*LlmPromptRule) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{11}
+	return file_honeypot_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *LlmPromptRule) GetId() string {
@@ -1188,7 +1315,7 @@ type LlmCatalogModel struct {
 func (x *LlmCatalogModel) Reset() {
 	*x = LlmCatalogModel{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[12]
+		mi := &file_honeypot_proto_msgTypes[13]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1201,7 +1328,7 @@ func (x *LlmCatalogModel) String() string {
 func (*LlmCatalogModel) ProtoMessage() {}
 
 func (x *LlmCatalogModel) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[12]
+	mi := &file_honeypot_proto_msgTypes[13]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1214,7 +1341,7 @@ func (x *LlmCatalogModel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LlmCatalogModel.ProtoReflect.Descriptor instead.
 func (*LlmCatalogModel) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{12}
+	return file_honeypot_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LlmCatalogModel) GetName() string {
@@ -1312,7 +1439,7 @@ type McpRequest struct {
 func (x *McpRequest) Reset() {
 	*x = McpRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[13]
+		mi := &file_honeypot_proto_msgTypes[14]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1325,7 +1452,7 @@ func (x *McpRequest) String() string {
 func (*McpRequest) ProtoMessage() {}
 
 func (x *McpRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[13]
+	mi := &file_honeypot_proto_msgTypes[14]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1338,7 +1465,7 @@ func (x *McpRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use McpRequest.ProtoReflect.Descriptor instead.
 func (*McpRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{13}
+	return file_honeypot_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *McpRequest) GetRemoteAddr() string {
@@ -1419,7 +1546,7 @@ type HttpRequest struct {
 func (x *HttpRequest) Reset() {
 	*x = HttpRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[14]
+		mi := &file_honeypot_proto_msgTypes[15]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1432,7 +1559,7 @@ func (x *HttpRequest) String() string {
 func (*HttpRequest) ProtoMessage() {}
 
 func (x *HttpRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[14]
+	mi := &file_honeypot_proto_msgTypes[15]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1445,7 +1572,7 @@ func (x *HttpRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpRequest.ProtoReflect.Descriptor instead.
 func (*HttpRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{14}
+	return file_honeypot_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *HttpRequest) GetUsername() string {
@@ -1551,7 +1678,7 @@ type SshLoginRequest struct {
 func (x *SshLoginRequest) Reset() {
 	*x = SshLoginRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[15]
+		mi := &file_honeypot_proto_msgTypes[16]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1564,7 +1691,7 @@ func (x *SshLoginRequest) String() string {
 func (*SshLoginRequest) ProtoMessage() {}
 
 func (x *SshLoginRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[15]
+	mi := &file_honeypot_proto_msgTypes[16]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1577,7 +1704,7 @@ func (x *SshLoginRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SshLoginRequest.ProtoReflect.Descriptor instead.
 func (*SshLoginRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{15}
+	return file_honeypot_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SshLoginRequest) GetRemoteAddr() string {
@@ -1660,7 +1787,7 @@ type HttpHeaderRequest struct {
 func (x *HttpHeaderRequest) Reset() {
 	*x = HttpHeaderRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[16]
+		mi := &file_honeypot_proto_msgTypes[17]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1673,7 +1800,7 @@ func (x *HttpHeaderRequest) String() string {
 func (*HttpHeaderRequest) ProtoMessage() {}
 
 func (x *HttpHeaderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[16]
+	mi := &file_honeypot_proto_msgTypes[17]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1686,7 +1813,7 @@ func (x *HttpHeaderRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpHeaderRequest.ProtoReflect.Descriptor instead.
 func (*HttpHeaderRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{16}
+	return file_honeypot_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *HttpHeaderRequest) GetHeaders() map[string]string {
@@ -1750,7 +1877,7 @@ type ShellCommandRequest struct {
 func (x *ShellCommandRequest) Reset() {
 	*x = ShellCommandRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[17]
+		mi := &file_honeypot_proto_msgTypes[18]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1763,7 +1890,7 @@ func (x *ShellCommandRequest) String() string {
 func (*ShellCommandRequest) ProtoMessage() {}
 
 func (x *ShellCommandRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[17]
+	mi := &file_honeypot_proto_msgTypes[18]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1776,7 +1903,7 @@ func (x *ShellCommandRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShellCommandRequest.ProtoReflect.Descriptor instead.
 func (*ShellCommandRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{17}
+	return file_honeypot_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ShellCommandRequest) GetCmd() string {
@@ -1817,7 +1944,7 @@ type OpenclawRequest struct {
 func (x *OpenclawRequest) Reset() {
 	*x = OpenclawRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[18]
+		mi := &file_honeypot_proto_msgTypes[19]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1830,7 +1957,7 @@ func (x *OpenclawRequest) String() string {
 func (*OpenclawRequest) ProtoMessage() {}
 
 func (x *OpenclawRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[18]
+	mi := &file_honeypot_proto_msgTypes[19]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1843,7 +1970,7 @@ func (x *OpenclawRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenclawRequest.ProtoReflect.Descriptor instead.
 func (*OpenclawRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{18}
+	return file_honeypot_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *OpenclawRequest) GetRemoteAddr() string {
@@ -1959,7 +2086,7 @@ type KafkaRequest struct {
 func (x *KafkaRequest) Reset() {
 	*x = KafkaRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[19]
+		mi := &file_honeypot_proto_msgTypes[20]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1972,7 +2099,7 @@ func (x *KafkaRequest) String() string {
 func (*KafkaRequest) ProtoMessage() {}
 
 func (x *KafkaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[19]
+	mi := &file_honeypot_proto_msgTypes[20]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1985,7 +2112,7 @@ func (x *KafkaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KafkaRequest.ProtoReflect.Descriptor instead.
 func (*KafkaRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{19}
+	return file_honeypot_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *KafkaRequest) GetRemoteAddr() string {
@@ -2036,7 +2163,7 @@ type KafkaApiRequest struct {
 func (x *KafkaApiRequest) Reset() {
 	*x = KafkaApiRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[20]
+		mi := &file_honeypot_proto_msgTypes[21]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2049,7 +2176,7 @@ func (x *KafkaApiRequest) String() string {
 func (*KafkaApiRequest) ProtoMessage() {}
 
 func (x *KafkaApiRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[20]
+	mi := &file_honeypot_proto_msgTypes[21]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2062,7 +2189,7 @@ func (x *KafkaApiRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KafkaApiRequest.ProtoReflect.Descriptor instead.
 func (*KafkaApiRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{20}
+	return file_honeypot_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *KafkaApiRequest) GetGuid() string {
@@ -2100,7 +2227,7 @@ type RedisConnectRequest struct {
 func (x *RedisConnectRequest) Reset() {
 	*x = RedisConnectRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[21]
+		mi := &file_honeypot_proto_msgTypes[22]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2113,7 +2240,7 @@ func (x *RedisConnectRequest) String() string {
 func (*RedisConnectRequest) ProtoMessage() {}
 
 func (x *RedisConnectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[21]
+	mi := &file_honeypot_proto_msgTypes[22]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2126,7 +2253,7 @@ func (x *RedisConnectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RedisConnectRequest.ProtoReflect.Descriptor instead.
 func (*RedisConnectRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{21}
+	return file_honeypot_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *RedisConnectRequest) GetRemoteAddr() string {
@@ -2169,7 +2296,7 @@ type RedisCommandRequest struct {
 func (x *RedisCommandRequest) Reset() {
 	*x = RedisCommandRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[22]
+		mi := &file_honeypot_proto_msgTypes[23]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2182,7 +2309,7 @@ func (x *RedisCommandRequest) String() string {
 func (*RedisCommandRequest) ProtoMessage() {}
 
 func (x *RedisCommandRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[22]
+	mi := &file_honeypot_proto_msgTypes[23]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2195,7 +2322,7 @@ func (x *RedisCommandRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RedisCommandRequest.ProtoReflect.Descriptor instead.
 func (*RedisCommandRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{22}
+	return file_honeypot_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *RedisCommandRequest) GetGuid() string {
@@ -2231,7 +2358,7 @@ type MqttConnectRequest struct {
 func (x *MqttConnectRequest) Reset() {
 	*x = MqttConnectRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[23]
+		mi := &file_honeypot_proto_msgTypes[24]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2244,7 +2371,7 @@ func (x *MqttConnectRequest) String() string {
 func (*MqttConnectRequest) ProtoMessage() {}
 
 func (x *MqttConnectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[23]
+	mi := &file_honeypot_proto_msgTypes[24]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2257,7 +2384,7 @@ func (x *MqttConnectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MqttConnectRequest.ProtoReflect.Descriptor instead.
 func (*MqttConnectRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{23}
+	return file_honeypot_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *MqttConnectRequest) GetRemoteAddr() string {
@@ -2335,7 +2462,7 @@ type MqttCommandRequest struct {
 func (x *MqttCommandRequest) Reset() {
 	*x = MqttCommandRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[24]
+		mi := &file_honeypot_proto_msgTypes[25]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2348,7 +2475,7 @@ func (x *MqttCommandRequest) String() string {
 func (*MqttCommandRequest) ProtoMessage() {}
 
 func (x *MqttCommandRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[24]
+	mi := &file_honeypot_proto_msgTypes[25]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2361,7 +2488,7 @@ func (x *MqttCommandRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MqttCommandRequest.ProtoReflect.Descriptor instead.
 func (*MqttCommandRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{24}
+	return file_honeypot_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *MqttCommandRequest) GetGuid() string {
@@ -2398,7 +2525,7 @@ type DockerRequest struct {
 func (x *DockerRequest) Reset() {
 	*x = DockerRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[25]
+		mi := &file_honeypot_proto_msgTypes[26]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2411,7 +2538,7 @@ func (x *DockerRequest) String() string {
 func (*DockerRequest) ProtoMessage() {}
 
 func (x *DockerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[25]
+	mi := &file_honeypot_proto_msgTypes[26]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2424,7 +2551,7 @@ func (x *DockerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DockerRequest.ProtoReflect.Descriptor instead.
 func (*DockerRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{25}
+	return file_honeypot_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DockerRequest) GetRemoteAddr() string {
@@ -2517,7 +2644,7 @@ type S3Request struct {
 func (x *S3Request) Reset() {
 	*x = S3Request{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[26]
+		mi := &file_honeypot_proto_msgTypes[27]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2530,7 +2657,7 @@ func (x *S3Request) String() string {
 func (*S3Request) ProtoMessage() {}
 
 func (x *S3Request) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[26]
+	mi := &file_honeypot_proto_msgTypes[27]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2543,7 +2670,7 @@ func (x *S3Request) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use S3Request.ProtoReflect.Descriptor instead.
 func (*S3Request) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{26}
+	return file_honeypot_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *S3Request) GetRemoteAddr() string {
@@ -2631,7 +2758,7 @@ type MongoConnectRequest struct {
 func (x *MongoConnectRequest) Reset() {
 	*x = MongoConnectRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[27]
+		mi := &file_honeypot_proto_msgTypes[28]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2644,7 +2771,7 @@ func (x *MongoConnectRequest) String() string {
 func (*MongoConnectRequest) ProtoMessage() {}
 
 func (x *MongoConnectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[27]
+	mi := &file_honeypot_proto_msgTypes[28]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2657,7 +2784,7 @@ func (x *MongoConnectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MongoConnectRequest.ProtoReflect.Descriptor instead.
 func (*MongoConnectRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{27}
+	return file_honeypot_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *MongoConnectRequest) GetRemoteAddr() string {
@@ -2707,7 +2834,7 @@ type MongoCommandRequest struct {
 func (x *MongoCommandRequest) Reset() {
 	*x = MongoCommandRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[28]
+		mi := &file_honeypot_proto_msgTypes[29]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2720,7 +2847,7 @@ func (x *MongoCommandRequest) String() string {
 func (*MongoCommandRequest) ProtoMessage() {}
 
 func (x *MongoCommandRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[28]
+	mi := &file_honeypot_proto_msgTypes[29]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2733,7 +2860,7 @@ func (x *MongoCommandRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MongoCommandRequest.ProtoReflect.Descriptor instead.
 func (*MongoCommandRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{28}
+	return file_honeypot_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *MongoCommandRequest) GetGuid() string {
@@ -2763,7 +2890,7 @@ type MemcachedConnectRequest struct {
 func (x *MemcachedConnectRequest) Reset() {
 	*x = MemcachedConnectRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[29]
+		mi := &file_honeypot_proto_msgTypes[30]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2776,7 +2903,7 @@ func (x *MemcachedConnectRequest) String() string {
 func (*MemcachedConnectRequest) ProtoMessage() {}
 
 func (x *MemcachedConnectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[29]
+	mi := &file_honeypot_proto_msgTypes[30]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2789,7 +2916,7 @@ func (x *MemcachedConnectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemcachedConnectRequest.ProtoReflect.Descriptor instead.
 func (*MemcachedConnectRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{29}
+	return file_honeypot_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *MemcachedConnectRequest) GetRemoteAddr() string {
@@ -2825,7 +2952,7 @@ type MemcachedCommandRequest struct {
 func (x *MemcachedCommandRequest) Reset() {
 	*x = MemcachedCommandRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[30]
+		mi := &file_honeypot_proto_msgTypes[31]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2838,7 +2965,7 @@ func (x *MemcachedCommandRequest) String() string {
 func (*MemcachedCommandRequest) ProtoMessage() {}
 
 func (x *MemcachedCommandRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[30]
+	mi := &file_honeypot_proto_msgTypes[31]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2851,7 +2978,7 @@ func (x *MemcachedCommandRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemcachedCommandRequest.ProtoReflect.Descriptor instead.
 func (*MemcachedCommandRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{30}
+	return file_honeypot_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *MemcachedCommandRequest) GetGuid() string {
@@ -2881,7 +3008,7 @@ type EtcdRequest struct {
 func (x *EtcdRequest) Reset() {
 	*x = EtcdRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[31]
+		mi := &file_honeypot_proto_msgTypes[32]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2894,7 +3021,7 @@ func (x *EtcdRequest) String() string {
 func (*EtcdRequest) ProtoMessage() {}
 
 func (x *EtcdRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[31]
+	mi := &file_honeypot_proto_msgTypes[32]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2907,7 +3034,7 @@ func (x *EtcdRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EtcdRequest.ProtoReflect.Descriptor instead.
 func (*EtcdRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{31}
+	return file_honeypot_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *EtcdRequest) GetRemoteAddr() string {
@@ -2951,7 +3078,7 @@ type SmbRequest struct {
 func (x *SmbRequest) Reset() {
 	*x = SmbRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[32]
+		mi := &file_honeypot_proto_msgTypes[33]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2964,7 +3091,7 @@ func (x *SmbRequest) String() string {
 func (*SmbRequest) ProtoMessage() {}
 
 func (x *SmbRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[32]
+	mi := &file_honeypot_proto_msgTypes[33]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2977,7 +3104,7 @@ func (x *SmbRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SmbRequest.ProtoReflect.Descriptor instead.
 func (*SmbRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{32}
+	return file_honeypot_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *SmbRequest) GetRemoteAddr() string {
@@ -3066,7 +3193,7 @@ type LdapBindRequest struct {
 func (x *LdapBindRequest) Reset() {
 	*x = LdapBindRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[33]
+		mi := &file_honeypot_proto_msgTypes[34]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3079,7 +3206,7 @@ func (x *LdapBindRequest) String() string {
 func (*LdapBindRequest) ProtoMessage() {}
 
 func (x *LdapBindRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[33]
+	mi := &file_honeypot_proto_msgTypes[34]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3092,7 +3219,7 @@ func (x *LdapBindRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LdapBindRequest.ProtoReflect.Descriptor instead.
 func (*LdapBindRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{33}
+	return file_honeypot_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *LdapBindRequest) GetRemoteAddr() string {
@@ -3152,7 +3279,7 @@ type LdapSearchRequest struct {
 func (x *LdapSearchRequest) Reset() {
 	*x = LdapSearchRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[34]
+		mi := &file_honeypot_proto_msgTypes[35]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3165,7 +3292,7 @@ func (x *LdapSearchRequest) String() string {
 func (*LdapSearchRequest) ProtoMessage() {}
 
 func (x *LdapSearchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[34]
+	mi := &file_honeypot_proto_msgTypes[35]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3178,7 +3305,7 @@ func (x *LdapSearchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LdapSearchRequest.ProtoReflect.Descriptor instead.
 func (*LdapSearchRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{34}
+	return file_honeypot_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *LdapSearchRequest) GetGuid() string {
@@ -3230,7 +3357,7 @@ type TelnetLoginRequest struct {
 func (x *TelnetLoginRequest) Reset() {
 	*x = TelnetLoginRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[35]
+		mi := &file_honeypot_proto_msgTypes[36]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3243,7 +3370,7 @@ func (x *TelnetLoginRequest) String() string {
 func (*TelnetLoginRequest) ProtoMessage() {}
 
 func (x *TelnetLoginRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[35]
+	mi := &file_honeypot_proto_msgTypes[36]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3256,7 +3383,7 @@ func (x *TelnetLoginRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TelnetLoginRequest.ProtoReflect.Descriptor instead.
 func (*TelnetLoginRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{35}
+	return file_honeypot_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *TelnetLoginRequest) GetRemoteAddr() string {
@@ -3299,7 +3426,7 @@ type TelnetCommandRequest struct {
 func (x *TelnetCommandRequest) Reset() {
 	*x = TelnetCommandRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[36]
+		mi := &file_honeypot_proto_msgTypes[37]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3312,7 +3439,7 @@ func (x *TelnetCommandRequest) String() string {
 func (*TelnetCommandRequest) ProtoMessage() {}
 
 func (x *TelnetCommandRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[36]
+	mi := &file_honeypot_proto_msgTypes[37]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3325,7 +3452,7 @@ func (x *TelnetCommandRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TelnetCommandRequest.ProtoReflect.Descriptor instead.
 func (*TelnetCommandRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{36}
+	return file_honeypot_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *TelnetCommandRequest) GetGuid() string {
@@ -3361,7 +3488,7 @@ type RdpRequest struct {
 func (x *RdpRequest) Reset() {
 	*x = RdpRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[37]
+		mi := &file_honeypot_proto_msgTypes[38]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3374,7 +3501,7 @@ func (x *RdpRequest) String() string {
 func (*RdpRequest) ProtoMessage() {}
 
 func (x *RdpRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[37]
+	mi := &file_honeypot_proto_msgTypes[38]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3387,7 +3514,7 @@ func (x *RdpRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RdpRequest.ProtoReflect.Descriptor instead.
 func (*RdpRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{37}
+	return file_honeypot_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *RdpRequest) GetRemoteAddr() string {
@@ -3469,7 +3596,7 @@ type VncRequest struct {
 func (x *VncRequest) Reset() {
 	*x = VncRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[38]
+		mi := &file_honeypot_proto_msgTypes[39]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3482,7 +3609,7 @@ func (x *VncRequest) String() string {
 func (*VncRequest) ProtoMessage() {}
 
 func (x *VncRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[38]
+	mi := &file_honeypot_proto_msgTypes[39]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3495,7 +3622,7 @@ func (x *VncRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VncRequest.ProtoReflect.Descriptor instead.
 func (*VncRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{38}
+	return file_honeypot_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *VncRequest) GetRemoteAddr() string {
@@ -3558,7 +3685,7 @@ type JenkinsRequest struct {
 func (x *JenkinsRequest) Reset() {
 	*x = JenkinsRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[39]
+		mi := &file_honeypot_proto_msgTypes[40]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3571,7 +3698,7 @@ func (x *JenkinsRequest) String() string {
 func (*JenkinsRequest) ProtoMessage() {}
 
 func (x *JenkinsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[39]
+	mi := &file_honeypot_proto_msgTypes[40]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3584,7 +3711,7 @@ func (x *JenkinsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JenkinsRequest.ProtoReflect.Descriptor instead.
 func (*JenkinsRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{39}
+	return file_honeypot_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *JenkinsRequest) GetRemoteAddr() string {
@@ -3659,7 +3786,7 @@ type SmtpLoginRequest struct {
 func (x *SmtpLoginRequest) Reset() {
 	*x = SmtpLoginRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[40]
+		mi := &file_honeypot_proto_msgTypes[41]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3672,7 +3799,7 @@ func (x *SmtpLoginRequest) String() string {
 func (*SmtpLoginRequest) ProtoMessage() {}
 
 func (x *SmtpLoginRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[40]
+	mi := &file_honeypot_proto_msgTypes[41]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3685,7 +3812,7 @@ func (x *SmtpLoginRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SmtpLoginRequest.ProtoReflect.Descriptor instead.
 func (*SmtpLoginRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{40}
+	return file_honeypot_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *SmtpLoginRequest) GetRemoteAddr() string {
@@ -3745,7 +3872,7 @@ type SmtpEmailRequest struct {
 func (x *SmtpEmailRequest) Reset() {
 	*x = SmtpEmailRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[41]
+		mi := &file_honeypot_proto_msgTypes[42]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3758,7 +3885,7 @@ func (x *SmtpEmailRequest) String() string {
 func (*SmtpEmailRequest) ProtoMessage() {}
 
 func (x *SmtpEmailRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[41]
+	mi := &file_honeypot_proto_msgTypes[42]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3771,7 +3898,7 @@ func (x *SmtpEmailRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SmtpEmailRequest.ProtoReflect.Descriptor instead.
 func (*SmtpEmailRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{41}
+	return file_honeypot_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *SmtpEmailRequest) GetGuid() string {
@@ -3823,7 +3950,7 @@ type FileUploadRequest struct {
 func (x *FileUploadRequest) Reset() {
 	*x = FileUploadRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[42]
+		mi := &file_honeypot_proto_msgTypes[43]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3836,7 +3963,7 @@ func (x *FileUploadRequest) String() string {
 func (*FileUploadRequest) ProtoMessage() {}
 
 func (x *FileUploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[42]
+	mi := &file_honeypot_proto_msgTypes[43]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3849,7 +3976,7 @@ func (x *FileUploadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileUploadRequest.ProtoReflect.Descriptor instead.
 func (*FileUploadRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{42}
+	return file_honeypot_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *FileUploadRequest) GetData() []byte {
@@ -3891,7 +4018,7 @@ type ConnectRequest struct {
 func (x *ConnectRequest) Reset() {
 	*x = ConnectRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[43]
+		mi := &file_honeypot_proto_msgTypes[44]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3904,7 +4031,7 @@ func (x *ConnectRequest) String() string {
 func (*ConnectRequest) ProtoMessage() {}
 
 func (x *ConnectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[43]
+	mi := &file_honeypot_proto_msgTypes[44]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3917,7 +4044,7 @@ func (x *ConnectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectRequest.ProtoReflect.Descriptor instead.
 func (*ConnectRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{43}
+	return file_honeypot_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ConnectRequest) GetVersion() string {
@@ -3938,7 +4065,7 @@ type ConnectReply struct {
 func (x *ConnectReply) Reset() {
 	*x = ConnectReply{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[44]
+		mi := &file_honeypot_proto_msgTypes[45]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3951,7 +4078,7 @@ func (x *ConnectReply) String() string {
 func (*ConnectReply) ProtoMessage() {}
 
 func (x *ConnectReply) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[44]
+	mi := &file_honeypot_proto_msgTypes[45]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3964,7 +4091,7 @@ func (x *ConnectReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectReply.ProtoReflect.Descriptor instead.
 func (*ConnectReply) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{44}
+	return file_honeypot_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ConnectReply) GetMessage() string {
@@ -3986,7 +4113,7 @@ type HelloRequest struct {
 func (x *HelloRequest) Reset() {
 	*x = HelloRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[45]
+		mi := &file_honeypot_proto_msgTypes[46]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3999,7 +4126,7 @@ func (x *HelloRequest) String() string {
 func (*HelloRequest) ProtoMessage() {}
 
 func (x *HelloRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[45]
+	mi := &file_honeypot_proto_msgTypes[46]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4012,7 +4139,7 @@ func (x *HelloRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HelloRequest.ProtoReflect.Descriptor instead.
 func (*HelloRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{45}
+	return file_honeypot_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *HelloRequest) GetName() string {
@@ -4034,7 +4161,7 @@ type HelloReply struct {
 func (x *HelloReply) Reset() {
 	*x = HelloReply{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[46]
+		mi := &file_honeypot_proto_msgTypes[47]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4047,7 +4174,7 @@ func (x *HelloReply) String() string {
 func (*HelloReply) ProtoMessage() {}
 
 func (x *HelloReply) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[46]
+	mi := &file_honeypot_proto_msgTypes[47]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4060,7 +4187,7 @@ func (x *HelloReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HelloReply.ProtoReflect.Descriptor instead.
 func (*HelloReply) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{46}
+	return file_honeypot_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *HelloReply) GetMessage() string {
@@ -4083,7 +4210,7 @@ type ResponseLookupRequest struct {
 func (x *ResponseLookupRequest) Reset() {
 	*x = ResponseLookupRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_honeypot_proto_msgTypes[47]
+		mi := &file_honeypot_proto_msgTypes[48]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4096,7 +4223,7 @@ func (x *ResponseLookupRequest) String() string {
 func (*ResponseLookupRequest) ProtoMessage() {}
 
 func (x *ResponseLookupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_honeypot_proto_msgTypes[47]
+	mi := &file_honeypot_proto_msgTypes[48]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4109,7 +4236,7 @@ func (x *ResponseLookupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResponseLookupRequest.ProtoReflect.Descriptor instead.
 func (*ResponseLookupRequest) Descriptor() ([]byte, []int) {
-	return file_honeypot_proto_rawDescGZIP(), []int{47}
+	return file_honeypot_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ResponseLookupRequest) GetGuid() string {
@@ -4160,11 +4287,32 @@ var file_honeypot_proto_rawDesc = []byte{
 	0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x12, 0x1f, 0x0a, 0x0b, 0x72, 0x65, 0x6d, 0x6f, 0x74,
 	0x65, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x72, 0x65,
 	0x6d, 0x6f, 0x74, 0x65, 0x41, 0x64, 0x64, 0x72, 0x12, 0x12, 0x0a, 0x04, 0x67, 0x75, 0x69, 0x64,
-	0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x67, 0x75, 0x69, 0x64, 0x22, 0x38, 0x0a, 0x0c,
-	0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x14, 0x0a, 0x05,
-	0x51, 0x75, 0x65, 0x72, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x51, 0x75, 0x65,
-	0x72, 0x79, 0x12, 0x12, 0x0a, 0x04, 0x67, 0x75, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x04, 0x67, 0x75, 0x69, 0x64, 0x22, 0x47, 0x0a, 0x0f, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e,
+	0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x67, 0x75, 0x69, 0x64, 0x22, 0xaa, 0x02, 0x0a,
+	0x0c, 0x4d, 0x73, 0x73, 0x71, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1a, 0x0a,
+	0x08, 0x75, 0x73, 0x65, 0x72, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x08, 0x75, 0x73, 0x65, 0x72, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x1a, 0x0a, 0x08, 0x70, 0x61, 0x73,
+	0x73, 0x77, 0x6f, 0x72, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x70, 0x61, 0x73,
+	0x73, 0x77, 0x6f, 0x72, 0x64, 0x12, 0x1f, 0x0a, 0x0b, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x5f,
+	0x61, 0x64, 0x64, 0x72, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x72, 0x65, 0x6d, 0x6f,
+	0x74, 0x65, 0x41, 0x64, 0x64, 0x72, 0x12, 0x12, 0x0a, 0x04, 0x67, 0x75, 0x69, 0x64, 0x18, 0x04,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x67, 0x75, 0x69, 0x64, 0x12, 0x1a, 0x0a, 0x08, 0x68, 0x6f,
+	0x73, 0x74, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x68, 0x6f,
+	0x73, 0x74, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x19, 0x0a, 0x08, 0x61, 0x70, 0x70, 0x5f, 0x6e, 0x61,
+	0x6d, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x61, 0x70, 0x70, 0x4e, 0x61, 0x6d,
+	0x65, 0x12, 0x1f, 0x0a, 0x0b, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x6e, 0x61, 0x6d, 0x65,
+	0x18, 0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4e, 0x61,
+	0x6d, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x6c, 0x69, 0x62, 0x72, 0x61, 0x72, 0x79, 0x18, 0x08, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x07, 0x6c, 0x69, 0x62, 0x72, 0x61, 0x72, 0x79, 0x12, 0x1a, 0x0a, 0x08,
+	0x64, 0x61, 0x74, 0x61, 0x62, 0x61, 0x73, 0x65, 0x18, 0x09, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08,
+	0x64, 0x61, 0x74, 0x61, 0x62, 0x61, 0x73, 0x65, 0x12, 0x1f, 0x0a, 0x0b, 0x74, 0x64, 0x73, 0x5f,
+	0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0a, 0x74,
+	0x64, 0x73, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x22, 0x5b, 0x0a, 0x0c, 0x51, 0x75, 0x65,
+	0x72, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x14, 0x0a, 0x05, 0x51, 0x75, 0x65,
+	0x72, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12,
+	0x12, 0x0a, 0x04, 0x67, 0x75, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x67,
+	0x75, 0x69, 0x64, 0x12, 0x21, 0x0a, 0x0c, 0x63, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x5f, 0x74,
+	0x79, 0x70, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x63, 0x6f, 0x6d, 0x6d, 0x61,
+	0x6e, 0x64, 0x54, 0x79, 0x70, 0x65, 0x22, 0x47, 0x0a, 0x0f, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e,
 	0x64, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x1a, 0x0a, 0x08, 0x52, 0x65, 0x73,
 	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x52, 0x65, 0x73,
 	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x4d, 0x61, 0x74, 0x63, 0x68, 0x65, 0x64,
@@ -4761,7 +4909,7 @@ var file_honeypot_proto_rawDesc = []byte{
 	0x6c, 0x6f, 0x12, 0x16, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x48, 0x65,
 	0x6c, 0x6c, 0x6f, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x14, 0x2e, 0x68, 0x6f, 0x6e,
 	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x52, 0x65, 0x70, 0x6c, 0x79,
-	0x22, 0x00, 0x32, 0xb8, 0x18, 0x0a, 0x08, 0x48, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x12,
+	0x22, 0x00, 0x32, 0xf9, 0x18, 0x0a, 0x08, 0x48, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x12,
 	0x3d, 0x0a, 0x07, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x18, 0x2e, 0x68, 0x6f, 0x6e,
 	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71,
 	0x75, 0x65, 0x73, 0x74, 0x1a, 0x16, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
@@ -4790,176 +4938,180 @@ var file_honeypot_proto_rawDesc = []byte{
 	0x76, 0x65, 0x4d, 0x79, 0x73, 0x71, 0x6c, 0x4c, 0x6f, 0x67, 0x69, 0x6e, 0x12, 0x16, 0x2e, 0x68,
 	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x79, 0x73, 0x71, 0x6c, 0x52, 0x65, 0x71,
 	0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
-	0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3a, 0x0a, 0x09, 0x53,
-	0x61, 0x76, 0x65, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x16, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79,
-	0x70, 0x6f, 0x74, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65,
-	0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x45, 0x0a, 0x0f, 0x53, 0x61, 0x76, 0x65, 0x48,
-	0x74, 0x74, 0x70, 0x48, 0x65, 0x61, 0x64, 0x65, 0x72, 0x73, 0x12, 0x1b, 0x2e, 0x68, 0x6f, 0x6e,
-	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x48, 0x74, 0x74, 0x70, 0x48, 0x65, 0x61, 0x64, 0x65, 0x72,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
-	0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x48,
-	0x0a, 0x10, 0x53, 0x61, 0x76, 0x65, 0x53, 0x68, 0x65, 0x6c, 0x6c, 0x43, 0x6f, 0x6d, 0x6d, 0x61,
-	0x6e, 0x64, 0x12, 0x1d, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x68,
-	0x65, 0x6c, 0x6c, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76,
-	0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x4b, 0x0a, 0x12, 0x47, 0x65, 0x74, 0x43,
-	0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x18,
-	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e,
-	0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x19, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79,
-	0x70, 0x6f, 0x74, 0x2e, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x4c, 0x0a, 0x12, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x73,
-	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x4c, 0x6f, 0x6f, 0x6b, 0x75, 0x70, 0x12, 0x1f, 0x2e, 0x68, 0x6f,
-	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x4c,
-	0x6f, 0x6f, 0x6b, 0x75, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68,
-	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c,
-	0x79, 0x22, 0x00, 0x12, 0x47, 0x0a, 0x13, 0x53, 0x61, 0x76, 0x65, 0x4f, 0x70, 0x65, 0x6e, 0x63,
-	0x6c, 0x61, 0x77, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x19, 0x2e, 0x68, 0x6f, 0x6e,
-	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4f, 0x70, 0x65, 0x6e, 0x63, 0x6c, 0x61, 0x77, 0x52, 0x65,
+	0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3f, 0x0a, 0x0e, 0x53,
+	0x61, 0x76, 0x65, 0x4d, 0x73, 0x73, 0x71, 0x6c, 0x4c, 0x6f, 0x67, 0x69, 0x6e, 0x12, 0x16, 0x2e,
+	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x73, 0x73, 0x71, 0x6c, 0x52, 0x65,
 	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
-	0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x41, 0x0a, 0x10,
-	0x53, 0x61, 0x76, 0x65, 0x4b, 0x61, 0x66, 0x6b, 0x61, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74,
-	0x12, 0x16, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4b, 0x61, 0x66, 0x6b,
-	0x61, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79,
+	0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3a, 0x0a, 0x09,
+	0x53, 0x61, 0x76, 0x65, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x16, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
+	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76,
+	0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x45, 0x0a, 0x0f, 0x53, 0x61, 0x76, 0x65,
+	0x48, 0x74, 0x74, 0x70, 0x48, 0x65, 0x61, 0x64, 0x65, 0x72, 0x73, 0x12, 0x1b, 0x2e, 0x68, 0x6f,
+	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x48, 0x74, 0x74, 0x70, 0x48, 0x65, 0x61, 0x64, 0x65,
+	0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79,
 	0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12,
-	0x47, 0x0a, 0x13, 0x53, 0x61, 0x76, 0x65, 0x4b, 0x61, 0x66, 0x6b, 0x61, 0x41, 0x70, 0x69, 0x52,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x19, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f,
-	0x74, 0x2e, 0x4b, 0x61, 0x66, 0x6b, 0x61, 0x41, 0x70, 0x69, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76,
-	0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x48, 0x0a, 0x10, 0x53, 0x61, 0x76, 0x65,
-	0x52, 0x65, 0x64, 0x69, 0x73, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x1d, 0x2e, 0x68,
-	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x52, 0x65, 0x64, 0x69, 0x73, 0x43, 0x6f, 0x6e,
-	0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f,
-	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79,
-	0x22, 0x00, 0x12, 0x48, 0x0a, 0x10, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x64, 0x69, 0x73, 0x43,
-	0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x12, 0x1d, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f,
-	0x74, 0x2e, 0x52, 0x65, 0x64, 0x69, 0x73, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
-	0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x46, 0x0a, 0x0f,
-	0x53, 0x61, 0x76, 0x65, 0x4d, 0x71, 0x74, 0x74, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12,
-	0x1c, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x71, 0x74, 0x74, 0x43,
-	0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e,
+	0x48, 0x0a, 0x10, 0x53, 0x61, 0x76, 0x65, 0x53, 0x68, 0x65, 0x6c, 0x6c, 0x43, 0x6f, 0x6d, 0x6d,
+	0x61, 0x6e, 0x64, 0x12, 0x1d, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53,
+	0x68, 0x65, 0x6c, 0x6c, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61,
+	0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x4b, 0x0a, 0x12, 0x47, 0x65, 0x74,
+	0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
+	0x18, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x43, 0x6f, 0x6d, 0x6d, 0x61,
+	0x6e, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x19, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
+	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x4c, 0x0a, 0x12, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x4c, 0x6f, 0x6f, 0x6b, 0x75, 0x70, 0x12, 0x1f, 0x2e, 0x68,
+	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x4c, 0x6f, 0x6f, 0x6b, 0x75, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e,
 	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70,
-	0x6c, 0x79, 0x22, 0x00, 0x12, 0x46, 0x0a, 0x0f, 0x53, 0x61, 0x76, 0x65, 0x4d, 0x71, 0x74, 0x74,
-	0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x12, 0x1c, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
-	0x6f, 0x74, 0x2e, 0x4d, 0x71, 0x74, 0x74, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
-	0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x43, 0x0a, 0x11,
-	0x53, 0x61, 0x76, 0x65, 0x44, 0x6f, 0x63, 0x6b, 0x65, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x12, 0x17, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x44, 0x6f, 0x63,
-	0x6b, 0x65, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e,
-	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22,
-	0x00, 0x12, 0x48, 0x0a, 0x10, 0x53, 0x61, 0x76, 0x65, 0x4d, 0x6f, 0x6e, 0x67, 0x6f, 0x43, 0x6f,
-	0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x1d, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
-	0x2e, 0x4d, 0x6f, 0x6e, 0x67, 0x6f, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
-	0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x48, 0x0a, 0x10, 0x53,
-	0x61, 0x76, 0x65, 0x4d, 0x6f, 0x6e, 0x67, 0x6f, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x12,
-	0x1d, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x6f, 0x6e, 0x67, 0x6f,
-	0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13,
-	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65,
-	0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x50, 0x0a, 0x14, 0x53, 0x61, 0x76, 0x65, 0x4d, 0x65, 0x6d,
-	0x63, 0x61, 0x63, 0x68, 0x65, 0x64, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x21, 0x2e,
-	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x65, 0x6d, 0x63, 0x61, 0x63, 0x68,
-	0x65, 0x64, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65,
-	0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x50, 0x0a, 0x14, 0x53, 0x61, 0x76, 0x65, 0x4d,
-	0x65, 0x6d, 0x63, 0x61, 0x63, 0x68, 0x65, 0x64, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x12,
-	0x21, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x65, 0x6d, 0x63, 0x61,
-	0x63, 0x68, 0x65, 0x64, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x6c, 0x79, 0x22, 0x00, 0x12, 0x47, 0x0a, 0x13, 0x53, 0x61, 0x76, 0x65, 0x4f, 0x70, 0x65, 0x6e,
+	0x63, 0x6c, 0x61, 0x77, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x19, 0x2e, 0x68, 0x6f,
+	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4f, 0x70, 0x65, 0x6e, 0x63, 0x6c, 0x61, 0x77, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f,
+	0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x41, 0x0a,
+	0x10, 0x53, 0x61, 0x76, 0x65, 0x4b, 0x61, 0x66, 0x6b, 0x61, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63,
+	0x74, 0x12, 0x16, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4b, 0x61, 0x66,
+	0x6b, 0x61, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
+	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00,
+	0x12, 0x47, 0x0a, 0x13, 0x53, 0x61, 0x76, 0x65, 0x4b, 0x61, 0x66, 0x6b, 0x61, 0x41, 0x70, 0x69,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x19, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
+	0x6f, 0x74, 0x2e, 0x4b, 0x61, 0x66, 0x6b, 0x61, 0x41, 0x70, 0x69, 0x52, 0x65, 0x71, 0x75, 0x65,
 	0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61,
-	0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3f, 0x0a, 0x0f, 0x53, 0x61, 0x76,
-	0x65, 0x45, 0x74, 0x63, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x15, 0x2e, 0x68,
-	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x45, 0x74, 0x63, 0x64, 0x52, 0x65, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53,
-	0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3d, 0x0a, 0x0e, 0x53, 0x61,
-	0x76, 0x65, 0x53, 0x6d, 0x62, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x14, 0x2e, 0x68,
-	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x6d, 0x62, 0x52, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61,
-	0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x40, 0x0a, 0x0c, 0x53, 0x61, 0x76,
-	0x65, 0x4c, 0x64, 0x61, 0x70, 0x42, 0x69, 0x6e, 0x64, 0x12, 0x19, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
-	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x64, 0x61, 0x70, 0x42, 0x69, 0x6e, 0x64, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
-	0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x44, 0x0a, 0x0e, 0x53,
-	0x61, 0x76, 0x65, 0x4c, 0x64, 0x61, 0x70, 0x53, 0x65, 0x61, 0x72, 0x63, 0x68, 0x12, 0x1b, 0x2e,
-	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x64, 0x61, 0x70, 0x53, 0x65, 0x61,
-	0x72, 0x63, 0x68, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e,
-	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22,
-	0x00, 0x12, 0x46, 0x0a, 0x0f, 0x53, 0x61, 0x76, 0x65, 0x54, 0x65, 0x6c, 0x6e, 0x65, 0x74, 0x4c,
-	0x6f, 0x67, 0x69, 0x6e, 0x12, 0x1c, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
-	0x54, 0x65, 0x6c, 0x6e, 0x65, 0x74, 0x4c, 0x6f, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61,
-	0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x4a, 0x0a, 0x11, 0x53, 0x61, 0x76,
-	0x65, 0x54, 0x65, 0x6c, 0x6e, 0x65, 0x74, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x12, 0x1e,
-	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x54, 0x65, 0x6c, 0x6e, 0x65, 0x74,
-	0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13,
-	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65,
-	0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3d, 0x0a, 0x0e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x64, 0x70,
-	0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
-	0x6f, 0x74, 0x2e, 0x52, 0x64, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e,
-	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70,
-	0x6c, 0x79, 0x22, 0x00, 0x12, 0x3d, 0x0a, 0x0e, 0x53, 0x61, 0x76, 0x65, 0x56, 0x6e, 0x63, 0x43,
-	0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f,
-	0x74, 0x2e, 0x56, 0x6e, 0x63, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68,
+	0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x48, 0x0a, 0x10, 0x53, 0x61, 0x76,
+	0x65, 0x52, 0x65, 0x64, 0x69, 0x73, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x1d, 0x2e,
+	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x52, 0x65, 0x64, 0x69, 0x73, 0x43, 0x6f,
+	0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68,
 	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c,
-	0x79, 0x22, 0x00, 0x12, 0x45, 0x0a, 0x12, 0x53, 0x61, 0x76, 0x65, 0x4a, 0x65, 0x6e, 0x6b, 0x69,
-	0x6e, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x18, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
-	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4a, 0x65, 0x6e, 0x6b, 0x69, 0x6e, 0x73, 0x52, 0x65, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53,
-	0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x42, 0x0a, 0x0d, 0x53, 0x61,
-	0x76, 0x65, 0x53, 0x6d, 0x74, 0x70, 0x4c, 0x6f, 0x67, 0x69, 0x6e, 0x12, 0x1a, 0x2e, 0x68, 0x6f,
-	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x6d, 0x74, 0x70, 0x4c, 0x6f, 0x67, 0x69, 0x6e,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
-	0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x42,
-	0x0a, 0x0d, 0x53, 0x61, 0x76, 0x65, 0x53, 0x6d, 0x74, 0x70, 0x45, 0x6d, 0x61, 0x69, 0x6c, 0x12,
-	0x1a, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x6d, 0x74, 0x70, 0x45,
-	0x6d, 0x61, 0x69, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f,
+	0x79, 0x22, 0x00, 0x12, 0x48, 0x0a, 0x10, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x64, 0x69, 0x73,
+	0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x12, 0x1d, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
+	0x6f, 0x74, 0x2e, 0x52, 0x65, 0x64, 0x69, 0x73, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f,
+	0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x46, 0x0a,
+	0x0f, 0x53, 0x61, 0x76, 0x65, 0x4d, 0x71, 0x74, 0x74, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74,
+	0x12, 0x1c, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x71, 0x74, 0x74,
+	0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13,
+	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65,
+	0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x46, 0x0a, 0x0f, 0x53, 0x61, 0x76, 0x65, 0x4d, 0x71, 0x74,
+	0x74, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x12, 0x1c, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79,
+	0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x71, 0x74, 0x74, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f,
+	0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x43, 0x0a,
+	0x11, 0x53, 0x61, 0x76, 0x65, 0x44, 0x6f, 0x63, 0x6b, 0x65, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x12, 0x17, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x44, 0x6f,
+	0x63, 0x6b, 0x65, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f,
 	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79,
-	0x22, 0x00, 0x12, 0x37, 0x0a, 0x08, 0x53, 0x61, 0x76, 0x65, 0x56, 0x6c, 0x6c, 0x6d, 0x12, 0x14,
-	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
-	0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x39, 0x0a, 0x0a, 0x53,
-	0x61, 0x76, 0x65, 0x4f, 0x6c, 0x6c, 0x61, 0x6d, 0x61, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
-	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x22, 0x00, 0x12, 0x48, 0x0a, 0x10, 0x53, 0x61, 0x76, 0x65, 0x4d, 0x6f, 0x6e, 0x67, 0x6f, 0x43,
+	0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x1d, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f,
+	0x74, 0x2e, 0x4d, 0x6f, 0x6e, 0x67, 0x6f, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
+	0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x48, 0x0a, 0x10,
+	0x53, 0x61, 0x76, 0x65, 0x4d, 0x6f, 0x6e, 0x67, 0x6f, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64,
+	0x12, 0x1d, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x6f, 0x6e, 0x67,
+	0x6f, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
 	0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52,
-	0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x36, 0x0a, 0x07, 0x53, 0x61, 0x76, 0x65, 0x52, 0x61,
-	0x79, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
-	0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3a,
-	0x0a, 0x0b, 0x53, 0x61, 0x76, 0x65, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x61, 0x69, 0x12, 0x14, 0x2e,
-	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x50, 0x0a, 0x14, 0x53, 0x61, 0x76, 0x65, 0x4d, 0x65,
+	0x6d, 0x63, 0x61, 0x63, 0x68, 0x65, 0x64, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x21,
+	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x65, 0x6d, 0x63, 0x61, 0x63,
+	0x68, 0x65, 0x64, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76,
+	0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x50, 0x0a, 0x14, 0x53, 0x61, 0x76, 0x65,
+	0x4d, 0x65, 0x6d, 0x63, 0x61, 0x63, 0x68, 0x65, 0x64, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64,
+	0x12, 0x21, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x65, 0x6d, 0x63,
+	0x61, 0x63, 0x68, 0x65, 0x64, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x71, 0x75,
 	0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53,
-	0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3b, 0x0a, 0x0c, 0x53, 0x61,
-	0x76, 0x65, 0x4c, 0x6d, 0x73, 0x74, 0x75, 0x64, 0x69, 0x6f, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e,
+	0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3f, 0x0a, 0x0f, 0x53, 0x61,
+	0x76, 0x65, 0x45, 0x74, 0x63, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x15, 0x2e,
+	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x45, 0x74, 0x63, 0x64, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
+	0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3d, 0x0a, 0x0e, 0x53,
+	0x61, 0x76, 0x65, 0x53, 0x6d, 0x62, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x14, 0x2e,
+	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x6d, 0x62, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53,
+	0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x40, 0x0a, 0x0c, 0x53, 0x61,
+	0x76, 0x65, 0x4c, 0x64, 0x61, 0x70, 0x42, 0x69, 0x6e, 0x64, 0x12, 0x19, 0x2e, 0x68, 0x6f, 0x6e,
+	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x64, 0x61, 0x70, 0x42, 0x69, 0x6e, 0x64, 0x52, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
+	0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x44, 0x0a, 0x0e,
+	0x53, 0x61, 0x76, 0x65, 0x4c, 0x64, 0x61, 0x70, 0x53, 0x65, 0x61, 0x72, 0x63, 0x68, 0x12, 0x1b,
+	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x64, 0x61, 0x70, 0x53, 0x65,
+	0x61, 0x72, 0x63, 0x68, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f,
+	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79,
+	0x22, 0x00, 0x12, 0x46, 0x0a, 0x0f, 0x53, 0x61, 0x76, 0x65, 0x54, 0x65, 0x6c, 0x6e, 0x65, 0x74,
+	0x4c, 0x6f, 0x67, 0x69, 0x6e, 0x12, 0x1c, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
+	0x2e, 0x54, 0x65, 0x6c, 0x6e, 0x65, 0x74, 0x4c, 0x6f, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53,
+	0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x4a, 0x0a, 0x11, 0x53, 0x61,
+	0x76, 0x65, 0x54, 0x65, 0x6c, 0x6e, 0x65, 0x74, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x12,
+	0x1e, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x54, 0x65, 0x6c, 0x6e, 0x65,
+	0x74, 0x43, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52,
+	0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3d, 0x0a, 0x0e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x64,
+	0x70, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79,
+	0x70, 0x6f, 0x74, 0x2e, 0x52, 0x64, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13,
+	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65,
+	0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3d, 0x0a, 0x0e, 0x53, 0x61, 0x76, 0x65, 0x56, 0x6e, 0x63,
+	0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
+	0x6f, 0x74, 0x2e, 0x56, 0x6e, 0x63, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e,
+	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70,
+	0x6c, 0x79, 0x22, 0x00, 0x12, 0x45, 0x0a, 0x12, 0x53, 0x61, 0x76, 0x65, 0x4a, 0x65, 0x6e, 0x6b,
+	0x69, 0x6e, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x18, 0x2e, 0x68, 0x6f, 0x6e,
+	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4a, 0x65, 0x6e, 0x6b, 0x69, 0x6e, 0x73, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
+	0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x42, 0x0a, 0x0d, 0x53,
+	0x61, 0x76, 0x65, 0x53, 0x6d, 0x74, 0x70, 0x4c, 0x6f, 0x67, 0x69, 0x6e, 0x12, 0x1a, 0x2e, 0x68,
+	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x6d, 0x74, 0x70, 0x4c, 0x6f, 0x67, 0x69,
+	0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79,
+	0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12,
+	0x42, 0x0a, 0x0d, 0x53, 0x61, 0x76, 0x65, 0x53, 0x6d, 0x74, 0x70, 0x45, 0x6d, 0x61, 0x69, 0x6c,
+	0x12, 0x1a, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x6d, 0x74, 0x70,
+	0x45, 0x6d, 0x61, 0x69, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68,
+	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c,
+	0x79, 0x22, 0x00, 0x12, 0x37, 0x0a, 0x08, 0x53, 0x61, 0x76, 0x65, 0x56, 0x6c, 0x6c, 0x6d, 0x12,
+	0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x52, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
+	0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x39, 0x0a, 0x0a,
+	0x53, 0x61, 0x76, 0x65, 0x4f, 0x6c, 0x6c, 0x61, 0x6d, 0x61, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e,
 	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
 	0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65,
-	0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3b, 0x0a, 0x0c, 0x53, 0x61, 0x76, 0x65, 0x4c,
-	0x6c, 0x61, 0x6d, 0x61, 0x63, 0x70, 0x70, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
-	0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e,
-	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70,
-	0x6c, 0x79, 0x22, 0x00, 0x12, 0x3a, 0x0a, 0x0b, 0x53, 0x61, 0x76, 0x65, 0x43, 0x6f, 0x6d, 0x66,
-	0x79, 0x75, 0x69, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c,
-	0x6c, 0x6d, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
-	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00,
-	0x12, 0x3e, 0x0a, 0x08, 0x53, 0x61, 0x76, 0x65, 0x46, 0x69, 0x6c, 0x65, 0x12, 0x1b, 0x2e, 0x68,
-	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x46, 0x69, 0x6c, 0x65, 0x55, 0x70, 0x6c, 0x6f,
-	0x61, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
-	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00,
-	0x12, 0x36, 0x0a, 0x07, 0x53, 0x61, 0x76, 0x65, 0x4d, 0x63, 0x70, 0x12, 0x14, 0x2e, 0x68, 0x6f,
-	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x63, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x36, 0x0a, 0x07, 0x53, 0x61, 0x76, 0x65, 0x52,
+	0x61, 0x79, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c,
+	0x6d, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79,
+	0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12,
+	0x3a, 0x0a, 0x0b, 0x53, 0x61, 0x76, 0x65, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x61, 0x69, 0x12, 0x14,
+	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
+	0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3b, 0x0a, 0x0c, 0x53,
+	0x61, 0x76, 0x65, 0x4c, 0x6d, 0x73, 0x74, 0x75, 0x64, 0x69, 0x6f, 0x12, 0x14, 0x2e, 0x68, 0x6f,
+	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
 	0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76,
-	0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3b, 0x0a, 0x0d, 0x53, 0x61, 0x76, 0x65,
-	0x53, 0x33, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
-	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x33, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13,
+	0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3b, 0x0a, 0x0c, 0x53, 0x61, 0x76, 0x65,
+	0x4c, 0x6c, 0x61, 0x6d, 0x61, 0x63, 0x70, 0x70, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79,
+	0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13,
 	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65,
-	0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x46, 0x0a, 0x0c, 0x47, 0x65, 0x74, 0x4c, 0x6c, 0x6d, 0x42,
-	0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x1a, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
-	0x2e, 0x4c, 0x6c, 0x6d, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x1a, 0x18, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d,
-	0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x42, 0x27, 0x5a,
-	0x25, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6a, 0x6f, 0x73, 0x68,
-	0x72, 0x65, 0x6e, 0x64, 0x65, 0x6b, 0x2f, 0x74, 0x68, 0x72, 0x65, 0x61, 0x74, 0x2e, 0x67, 0x67,
-	0x3b, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3a, 0x0a, 0x0b, 0x53, 0x61, 0x76, 0x65, 0x43, 0x6f, 0x6d,
+	0x66, 0x79, 0x75, 0x69, 0x12, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e,
+	0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e,
+	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22,
+	0x00, 0x12, 0x3e, 0x0a, 0x08, 0x53, 0x61, 0x76, 0x65, 0x46, 0x69, 0x6c, 0x65, 0x12, 0x1b, 0x2e,
+	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x46, 0x69, 0x6c, 0x65, 0x55, 0x70, 0x6c,
+	0x6f, 0x61, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e,
+	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22,
+	0x00, 0x12, 0x36, 0x0a, 0x07, 0x53, 0x61, 0x76, 0x65, 0x4d, 0x63, 0x70, 0x12, 0x14, 0x2e, 0x68,
+	0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4d, 0x63, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61,
+	0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x3b, 0x0a, 0x0d, 0x53, 0x61, 0x76,
+	0x65, 0x53, 0x33, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x13, 0x2e, 0x68, 0x6f, 0x6e,
+	0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x33, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52,
+	0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x46, 0x0a, 0x0c, 0x47, 0x65, 0x74, 0x4c, 0x6c, 0x6d,
+	0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x1a, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f,
+	0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x1a, 0x18, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c,
+	0x6d, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x42, 0x27,
+	0x5a, 0x25, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6a, 0x6f, 0x73,
+	0x68, 0x72, 0x65, 0x6e, 0x64, 0x65, 0x6b, 0x2f, 0x74, 0x68, 0x72, 0x65, 0x61, 0x74, 0x2e, 0x67,
+	0x67, 0x3b, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -4975,7 +5127,7 @@ func file_honeypot_proto_rawDescGZIP() []byte {
 }
 
 var file_honeypot_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_honeypot_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
+var file_honeypot_proto_msgTypes = make([]protoimpl.MessageInfo, 58)
 var file_honeypot_proto_goTypes = []interface{}{
 	(LlmResponseSource)(0),          // 0: honeypot.LlmResponseSource
 	(LlmStreamOutcome)(0),           // 1: honeypot.LlmStreamOutcome
@@ -4984,171 +5136,174 @@ var file_honeypot_proto_goTypes = []interface{}{
 	(*CommandRequest)(nil),          // 4: honeypot.CommandRequest
 	(*PostgresRequest)(nil),         // 5: honeypot.PostgresRequest
 	(*MysqlRequest)(nil),            // 6: honeypot.MysqlRequest
-	(*QueryRequest)(nil),            // 7: honeypot.QueryRequest
-	(*CommandResponse)(nil),         // 8: honeypot.CommandResponse
-	(*FtpRequest)(nil),              // 9: honeypot.FtpRequest
-	(*ElasticsearchRequest)(nil),    // 10: honeypot.ElasticsearchRequest
-	(*LlmRequest)(nil),              // 11: honeypot.LlmRequest
-	(*LlmBundleRequest)(nil),        // 12: honeypot.LlmBundleRequest
-	(*LlmBundleReply)(nil),          // 13: honeypot.LlmBundleReply
-	(*LlmPromptRule)(nil),           // 14: honeypot.LlmPromptRule
-	(*LlmCatalogModel)(nil),         // 15: honeypot.LlmCatalogModel
-	(*McpRequest)(nil),              // 16: honeypot.McpRequest
-	(*HttpRequest)(nil),             // 17: honeypot.HttpRequest
-	(*SshLoginRequest)(nil),         // 18: honeypot.SshLoginRequest
-	(*HttpHeaderRequest)(nil),       // 19: honeypot.HttpHeaderRequest
-	(*ShellCommandRequest)(nil),     // 20: honeypot.ShellCommandRequest
-	(*OpenclawRequest)(nil),         // 21: honeypot.OpenclawRequest
-	(*KafkaRequest)(nil),            // 22: honeypot.KafkaRequest
-	(*KafkaApiRequest)(nil),         // 23: honeypot.KafkaApiRequest
-	(*RedisConnectRequest)(nil),     // 24: honeypot.RedisConnectRequest
-	(*RedisCommandRequest)(nil),     // 25: honeypot.RedisCommandRequest
-	(*MqttConnectRequest)(nil),      // 26: honeypot.MqttConnectRequest
-	(*MqttCommandRequest)(nil),      // 27: honeypot.MqttCommandRequest
-	(*DockerRequest)(nil),           // 28: honeypot.DockerRequest
-	(*S3Request)(nil),               // 29: honeypot.S3Request
-	(*MongoConnectRequest)(nil),     // 30: honeypot.MongoConnectRequest
-	(*MongoCommandRequest)(nil),     // 31: honeypot.MongoCommandRequest
-	(*MemcachedConnectRequest)(nil), // 32: honeypot.MemcachedConnectRequest
-	(*MemcachedCommandRequest)(nil), // 33: honeypot.MemcachedCommandRequest
-	(*EtcdRequest)(nil),             // 34: honeypot.EtcdRequest
-	(*SmbRequest)(nil),              // 35: honeypot.SmbRequest
-	(*LdapBindRequest)(nil),         // 36: honeypot.LdapBindRequest
-	(*LdapSearchRequest)(nil),       // 37: honeypot.LdapSearchRequest
-	(*TelnetLoginRequest)(nil),      // 38: honeypot.TelnetLoginRequest
-	(*TelnetCommandRequest)(nil),    // 39: honeypot.TelnetCommandRequest
-	(*RdpRequest)(nil),              // 40: honeypot.RdpRequest
-	(*VncRequest)(nil),              // 41: honeypot.VncRequest
-	(*JenkinsRequest)(nil),          // 42: honeypot.JenkinsRequest
-	(*SmtpLoginRequest)(nil),        // 43: honeypot.SmtpLoginRequest
-	(*SmtpEmailRequest)(nil),        // 44: honeypot.SmtpEmailRequest
-	(*FileUploadRequest)(nil),       // 45: honeypot.FileUploadRequest
-	(*ConnectRequest)(nil),          // 46: honeypot.ConnectRequest
-	(*ConnectReply)(nil),            // 47: honeypot.ConnectReply
-	(*HelloRequest)(nil),            // 48: honeypot.HelloRequest
-	(*HelloReply)(nil),              // 49: honeypot.HelloReply
-	(*ResponseLookupRequest)(nil),   // 50: honeypot.ResponseLookupRequest
-	nil,                             // 51: honeypot.ElasticsearchRequest.HeadersEntry
-	nil,                             // 52: honeypot.ElasticsearchRequest.FormDataEntry
-	nil,                             // 53: honeypot.LlmRequest.HeadersEntry
-	nil,                             // 54: honeypot.McpRequest.HeadersEntry
-	nil,                             // 55: honeypot.HttpRequest.HeadersEntry
-	nil,                             // 56: honeypot.HttpRequest.FormDataEntry
-	nil,                             // 57: honeypot.HttpHeaderRequest.HeadersEntry
-	nil,                             // 58: honeypot.HttpHeaderRequest.FormDataEntry
-	nil,                             // 59: honeypot.DockerRequest.HeadersEntry
+	(*MssqlRequest)(nil),            // 7: honeypot.MssqlRequest
+	(*QueryRequest)(nil),            // 8: honeypot.QueryRequest
+	(*CommandResponse)(nil),         // 9: honeypot.CommandResponse
+	(*FtpRequest)(nil),              // 10: honeypot.FtpRequest
+	(*ElasticsearchRequest)(nil),    // 11: honeypot.ElasticsearchRequest
+	(*LlmRequest)(nil),              // 12: honeypot.LlmRequest
+	(*LlmBundleRequest)(nil),        // 13: honeypot.LlmBundleRequest
+	(*LlmBundleReply)(nil),          // 14: honeypot.LlmBundleReply
+	(*LlmPromptRule)(nil),           // 15: honeypot.LlmPromptRule
+	(*LlmCatalogModel)(nil),         // 16: honeypot.LlmCatalogModel
+	(*McpRequest)(nil),              // 17: honeypot.McpRequest
+	(*HttpRequest)(nil),             // 18: honeypot.HttpRequest
+	(*SshLoginRequest)(nil),         // 19: honeypot.SshLoginRequest
+	(*HttpHeaderRequest)(nil),       // 20: honeypot.HttpHeaderRequest
+	(*ShellCommandRequest)(nil),     // 21: honeypot.ShellCommandRequest
+	(*OpenclawRequest)(nil),         // 22: honeypot.OpenclawRequest
+	(*KafkaRequest)(nil),            // 23: honeypot.KafkaRequest
+	(*KafkaApiRequest)(nil),         // 24: honeypot.KafkaApiRequest
+	(*RedisConnectRequest)(nil),     // 25: honeypot.RedisConnectRequest
+	(*RedisCommandRequest)(nil),     // 26: honeypot.RedisCommandRequest
+	(*MqttConnectRequest)(nil),      // 27: honeypot.MqttConnectRequest
+	(*MqttCommandRequest)(nil),      // 28: honeypot.MqttCommandRequest
+	(*DockerRequest)(nil),           // 29: honeypot.DockerRequest
+	(*S3Request)(nil),               // 30: honeypot.S3Request
+	(*MongoConnectRequest)(nil),     // 31: honeypot.MongoConnectRequest
+	(*MongoCommandRequest)(nil),     // 32: honeypot.MongoCommandRequest
+	(*MemcachedConnectRequest)(nil), // 33: honeypot.MemcachedConnectRequest
+	(*MemcachedCommandRequest)(nil), // 34: honeypot.MemcachedCommandRequest
+	(*EtcdRequest)(nil),             // 35: honeypot.EtcdRequest
+	(*SmbRequest)(nil),              // 36: honeypot.SmbRequest
+	(*LdapBindRequest)(nil),         // 37: honeypot.LdapBindRequest
+	(*LdapSearchRequest)(nil),       // 38: honeypot.LdapSearchRequest
+	(*TelnetLoginRequest)(nil),      // 39: honeypot.TelnetLoginRequest
+	(*TelnetCommandRequest)(nil),    // 40: honeypot.TelnetCommandRequest
+	(*RdpRequest)(nil),              // 41: honeypot.RdpRequest
+	(*VncRequest)(nil),              // 42: honeypot.VncRequest
+	(*JenkinsRequest)(nil),          // 43: honeypot.JenkinsRequest
+	(*SmtpLoginRequest)(nil),        // 44: honeypot.SmtpLoginRequest
+	(*SmtpEmailRequest)(nil),        // 45: honeypot.SmtpEmailRequest
+	(*FileUploadRequest)(nil),       // 46: honeypot.FileUploadRequest
+	(*ConnectRequest)(nil),          // 47: honeypot.ConnectRequest
+	(*ConnectReply)(nil),            // 48: honeypot.ConnectReply
+	(*HelloRequest)(nil),            // 49: honeypot.HelloRequest
+	(*HelloReply)(nil),              // 50: honeypot.HelloReply
+	(*ResponseLookupRequest)(nil),   // 51: honeypot.ResponseLookupRequest
+	nil,                             // 52: honeypot.ElasticsearchRequest.HeadersEntry
+	nil,                             // 53: honeypot.ElasticsearchRequest.FormDataEntry
+	nil,                             // 54: honeypot.LlmRequest.HeadersEntry
+	nil,                             // 55: honeypot.McpRequest.HeadersEntry
+	nil,                             // 56: honeypot.HttpRequest.HeadersEntry
+	nil,                             // 57: honeypot.HttpRequest.FormDataEntry
+	nil,                             // 58: honeypot.HttpHeaderRequest.HeadersEntry
+	nil,                             // 59: honeypot.HttpHeaderRequest.FormDataEntry
+	nil,                             // 60: honeypot.DockerRequest.HeadersEntry
 }
 var file_honeypot_proto_depIdxs = []int32{
-	51, // 0: honeypot.ElasticsearchRequest.headers:type_name -> honeypot.ElasticsearchRequest.HeadersEntry
-	52, // 1: honeypot.ElasticsearchRequest.form_data:type_name -> honeypot.ElasticsearchRequest.FormDataEntry
-	53, // 2: honeypot.LlmRequest.headers:type_name -> honeypot.LlmRequest.HeadersEntry
+	52, // 0: honeypot.ElasticsearchRequest.headers:type_name -> honeypot.ElasticsearchRequest.HeadersEntry
+	53, // 1: honeypot.ElasticsearchRequest.form_data:type_name -> honeypot.ElasticsearchRequest.FormDataEntry
+	54, // 2: honeypot.LlmRequest.headers:type_name -> honeypot.LlmRequest.HeadersEntry
 	0,  // 3: honeypot.LlmRequest.response_source:type_name -> honeypot.LlmResponseSource
 	1,  // 4: honeypot.LlmRequest.stream_outcome:type_name -> honeypot.LlmStreamOutcome
 	2,  // 5: honeypot.LlmRequest.reply_kind:type_name -> honeypot.LlmReplyKind
-	14, // 6: honeypot.LlmBundleReply.rules:type_name -> honeypot.LlmPromptRule
-	15, // 7: honeypot.LlmBundleReply.catalog:type_name -> honeypot.LlmCatalogModel
-	54, // 8: honeypot.McpRequest.headers:type_name -> honeypot.McpRequest.HeadersEntry
-	55, // 9: honeypot.HttpRequest.headers:type_name -> honeypot.HttpRequest.HeadersEntry
-	56, // 10: honeypot.HttpRequest.form_data:type_name -> honeypot.HttpRequest.FormDataEntry
-	57, // 11: honeypot.HttpHeaderRequest.headers:type_name -> honeypot.HttpHeaderRequest.HeadersEntry
-	58, // 12: honeypot.HttpHeaderRequest.form_data:type_name -> honeypot.HttpHeaderRequest.FormDataEntry
-	59, // 13: honeypot.DockerRequest.headers:type_name -> honeypot.DockerRequest.HeadersEntry
-	48, // 14: honeypot.Greeter.SayHello:input_type -> honeypot.HelloRequest
-	46, // 15: honeypot.Honeypot.Connect:input_type -> honeypot.ConnectRequest
-	9,  // 16: honeypot.Honeypot.SaveFtpLogin:input_type -> honeypot.FtpRequest
-	10, // 17: honeypot.Honeypot.SaveElasticsearch:input_type -> honeypot.ElasticsearchRequest
-	17, // 18: honeypot.Honeypot.SaveHttp:input_type -> honeypot.HttpRequest
-	18, // 19: honeypot.Honeypot.SaveSshLogin:input_type -> honeypot.SshLoginRequest
+	15, // 6: honeypot.LlmBundleReply.rules:type_name -> honeypot.LlmPromptRule
+	16, // 7: honeypot.LlmBundleReply.catalog:type_name -> honeypot.LlmCatalogModel
+	55, // 8: honeypot.McpRequest.headers:type_name -> honeypot.McpRequest.HeadersEntry
+	56, // 9: honeypot.HttpRequest.headers:type_name -> honeypot.HttpRequest.HeadersEntry
+	57, // 10: honeypot.HttpRequest.form_data:type_name -> honeypot.HttpRequest.FormDataEntry
+	58, // 11: honeypot.HttpHeaderRequest.headers:type_name -> honeypot.HttpHeaderRequest.HeadersEntry
+	59, // 12: honeypot.HttpHeaderRequest.form_data:type_name -> honeypot.HttpHeaderRequest.FormDataEntry
+	60, // 13: honeypot.DockerRequest.headers:type_name -> honeypot.DockerRequest.HeadersEntry
+	49, // 14: honeypot.Greeter.SayHello:input_type -> honeypot.HelloRequest
+	47, // 15: honeypot.Honeypot.Connect:input_type -> honeypot.ConnectRequest
+	10, // 16: honeypot.Honeypot.SaveFtpLogin:input_type -> honeypot.FtpRequest
+	11, // 17: honeypot.Honeypot.SaveElasticsearch:input_type -> honeypot.ElasticsearchRequest
+	18, // 18: honeypot.Honeypot.SaveHttp:input_type -> honeypot.HttpRequest
+	19, // 19: honeypot.Honeypot.SaveSshLogin:input_type -> honeypot.SshLoginRequest
 	5,  // 20: honeypot.Honeypot.SavePostgresLogin:input_type -> honeypot.PostgresRequest
 	6,  // 21: honeypot.Honeypot.SaveMysqlLogin:input_type -> honeypot.MysqlRequest
-	7,  // 22: honeypot.Honeypot.SaveQuery:input_type -> honeypot.QueryRequest
-	19, // 23: honeypot.Honeypot.SaveHttpHeaders:input_type -> honeypot.HttpHeaderRequest
-	20, // 24: honeypot.Honeypot.SaveShellCommand:input_type -> honeypot.ShellCommandRequest
-	4,  // 25: honeypot.Honeypot.GetCommandResponse:input_type -> honeypot.CommandRequest
-	50, // 26: honeypot.Honeypot.SaveResponseLookup:input_type -> honeypot.ResponseLookupRequest
-	21, // 27: honeypot.Honeypot.SaveOpenclawConnect:input_type -> honeypot.OpenclawRequest
-	22, // 28: honeypot.Honeypot.SaveKafkaConnect:input_type -> honeypot.KafkaRequest
-	23, // 29: honeypot.Honeypot.SaveKafkaApiRequest:input_type -> honeypot.KafkaApiRequest
-	24, // 30: honeypot.Honeypot.SaveRedisConnect:input_type -> honeypot.RedisConnectRequest
-	25, // 31: honeypot.Honeypot.SaveRedisCommand:input_type -> honeypot.RedisCommandRequest
-	26, // 32: honeypot.Honeypot.SaveMqttConnect:input_type -> honeypot.MqttConnectRequest
-	27, // 33: honeypot.Honeypot.SaveMqttCommand:input_type -> honeypot.MqttCommandRequest
-	28, // 34: honeypot.Honeypot.SaveDockerRequest:input_type -> honeypot.DockerRequest
-	30, // 35: honeypot.Honeypot.SaveMongoConnect:input_type -> honeypot.MongoConnectRequest
-	31, // 36: honeypot.Honeypot.SaveMongoCommand:input_type -> honeypot.MongoCommandRequest
-	32, // 37: honeypot.Honeypot.SaveMemcachedConnect:input_type -> honeypot.MemcachedConnectRequest
-	33, // 38: honeypot.Honeypot.SaveMemcachedCommand:input_type -> honeypot.MemcachedCommandRequest
-	34, // 39: honeypot.Honeypot.SaveEtcdRequest:input_type -> honeypot.EtcdRequest
-	35, // 40: honeypot.Honeypot.SaveSmbConnect:input_type -> honeypot.SmbRequest
-	36, // 41: honeypot.Honeypot.SaveLdapBind:input_type -> honeypot.LdapBindRequest
-	37, // 42: honeypot.Honeypot.SaveLdapSearch:input_type -> honeypot.LdapSearchRequest
-	38, // 43: honeypot.Honeypot.SaveTelnetLogin:input_type -> honeypot.TelnetLoginRequest
-	39, // 44: honeypot.Honeypot.SaveTelnetCommand:input_type -> honeypot.TelnetCommandRequest
-	40, // 45: honeypot.Honeypot.SaveRdpConnect:input_type -> honeypot.RdpRequest
-	41, // 46: honeypot.Honeypot.SaveVncConnect:input_type -> honeypot.VncRequest
-	42, // 47: honeypot.Honeypot.SaveJenkinsRequest:input_type -> honeypot.JenkinsRequest
-	43, // 48: honeypot.Honeypot.SaveSmtpLogin:input_type -> honeypot.SmtpLoginRequest
-	44, // 49: honeypot.Honeypot.SaveSmtpEmail:input_type -> honeypot.SmtpEmailRequest
-	11, // 50: honeypot.Honeypot.SaveVllm:input_type -> honeypot.LlmRequest
-	11, // 51: honeypot.Honeypot.SaveOllama:input_type -> honeypot.LlmRequest
-	11, // 52: honeypot.Honeypot.SaveRay:input_type -> honeypot.LlmRequest
-	11, // 53: honeypot.Honeypot.SaveLocalai:input_type -> honeypot.LlmRequest
-	11, // 54: honeypot.Honeypot.SaveLmstudio:input_type -> honeypot.LlmRequest
-	11, // 55: honeypot.Honeypot.SaveLlamacpp:input_type -> honeypot.LlmRequest
-	11, // 56: honeypot.Honeypot.SaveComfyui:input_type -> honeypot.LlmRequest
-	45, // 57: honeypot.Honeypot.SaveFile:input_type -> honeypot.FileUploadRequest
-	16, // 58: honeypot.Honeypot.SaveMcp:input_type -> honeypot.McpRequest
-	29, // 59: honeypot.Honeypot.SaveS3Request:input_type -> honeypot.S3Request
-	12, // 60: honeypot.Honeypot.GetLlmBundle:input_type -> honeypot.LlmBundleRequest
-	49, // 61: honeypot.Greeter.SayHello:output_type -> honeypot.HelloReply
-	47, // 62: honeypot.Honeypot.Connect:output_type -> honeypot.ConnectReply
-	3,  // 63: honeypot.Honeypot.SaveFtpLogin:output_type -> honeypot.SaveReply
-	3,  // 64: honeypot.Honeypot.SaveElasticsearch:output_type -> honeypot.SaveReply
-	3,  // 65: honeypot.Honeypot.SaveHttp:output_type -> honeypot.SaveReply
-	3,  // 66: honeypot.Honeypot.SaveSshLogin:output_type -> honeypot.SaveReply
-	3,  // 67: honeypot.Honeypot.SavePostgresLogin:output_type -> honeypot.SaveReply
-	3,  // 68: honeypot.Honeypot.SaveMysqlLogin:output_type -> honeypot.SaveReply
-	3,  // 69: honeypot.Honeypot.SaveQuery:output_type -> honeypot.SaveReply
-	3,  // 70: honeypot.Honeypot.SaveHttpHeaders:output_type -> honeypot.SaveReply
-	3,  // 71: honeypot.Honeypot.SaveShellCommand:output_type -> honeypot.SaveReply
-	8,  // 72: honeypot.Honeypot.GetCommandResponse:output_type -> honeypot.CommandResponse
-	3,  // 73: honeypot.Honeypot.SaveResponseLookup:output_type -> honeypot.SaveReply
-	3,  // 74: honeypot.Honeypot.SaveOpenclawConnect:output_type -> honeypot.SaveReply
-	3,  // 75: honeypot.Honeypot.SaveKafkaConnect:output_type -> honeypot.SaveReply
-	3,  // 76: honeypot.Honeypot.SaveKafkaApiRequest:output_type -> honeypot.SaveReply
-	3,  // 77: honeypot.Honeypot.SaveRedisConnect:output_type -> honeypot.SaveReply
-	3,  // 78: honeypot.Honeypot.SaveRedisCommand:output_type -> honeypot.SaveReply
-	3,  // 79: honeypot.Honeypot.SaveMqttConnect:output_type -> honeypot.SaveReply
-	3,  // 80: honeypot.Honeypot.SaveMqttCommand:output_type -> honeypot.SaveReply
-	3,  // 81: honeypot.Honeypot.SaveDockerRequest:output_type -> honeypot.SaveReply
-	3,  // 82: honeypot.Honeypot.SaveMongoConnect:output_type -> honeypot.SaveReply
-	3,  // 83: honeypot.Honeypot.SaveMongoCommand:output_type -> honeypot.SaveReply
-	3,  // 84: honeypot.Honeypot.SaveMemcachedConnect:output_type -> honeypot.SaveReply
-	3,  // 85: honeypot.Honeypot.SaveMemcachedCommand:output_type -> honeypot.SaveReply
-	3,  // 86: honeypot.Honeypot.SaveEtcdRequest:output_type -> honeypot.SaveReply
-	3,  // 87: honeypot.Honeypot.SaveSmbConnect:output_type -> honeypot.SaveReply
-	3,  // 88: honeypot.Honeypot.SaveLdapBind:output_type -> honeypot.SaveReply
-	3,  // 89: honeypot.Honeypot.SaveLdapSearch:output_type -> honeypot.SaveReply
-	3,  // 90: honeypot.Honeypot.SaveTelnetLogin:output_type -> honeypot.SaveReply
-	3,  // 91: honeypot.Honeypot.SaveTelnetCommand:output_type -> honeypot.SaveReply
-	3,  // 92: honeypot.Honeypot.SaveRdpConnect:output_type -> honeypot.SaveReply
-	3,  // 93: honeypot.Honeypot.SaveVncConnect:output_type -> honeypot.SaveReply
-	3,  // 94: honeypot.Honeypot.SaveJenkinsRequest:output_type -> honeypot.SaveReply
-	3,  // 95: honeypot.Honeypot.SaveSmtpLogin:output_type -> honeypot.SaveReply
-	3,  // 96: honeypot.Honeypot.SaveSmtpEmail:output_type -> honeypot.SaveReply
-	3,  // 97: honeypot.Honeypot.SaveVllm:output_type -> honeypot.SaveReply
-	3,  // 98: honeypot.Honeypot.SaveOllama:output_type -> honeypot.SaveReply
-	3,  // 99: honeypot.Honeypot.SaveRay:output_type -> honeypot.SaveReply
-	3,  // 100: honeypot.Honeypot.SaveLocalai:output_type -> honeypot.SaveReply
-	3,  // 101: honeypot.Honeypot.SaveLmstudio:output_type -> honeypot.SaveReply
-	3,  // 102: honeypot.Honeypot.SaveLlamacpp:output_type -> honeypot.SaveReply
-	3,  // 103: honeypot.Honeypot.SaveComfyui:output_type -> honeypot.SaveReply
-	3,  // 104: honeypot.Honeypot.SaveFile:output_type -> honeypot.SaveReply
-	3,  // 105: honeypot.Honeypot.SaveMcp:output_type -> honeypot.SaveReply
-	3,  // 106: honeypot.Honeypot.SaveS3Request:output_type -> honeypot.SaveReply
-	13, // 107: honeypot.Honeypot.GetLlmBundle:output_type -> honeypot.LlmBundleReply
-	61, // [61:108] is the sub-list for method output_type
-	14, // [14:61] is the sub-list for method input_type
+	7,  // 22: honeypot.Honeypot.SaveMssqlLogin:input_type -> honeypot.MssqlRequest
+	8,  // 23: honeypot.Honeypot.SaveQuery:input_type -> honeypot.QueryRequest
+	20, // 24: honeypot.Honeypot.SaveHttpHeaders:input_type -> honeypot.HttpHeaderRequest
+	21, // 25: honeypot.Honeypot.SaveShellCommand:input_type -> honeypot.ShellCommandRequest
+	4,  // 26: honeypot.Honeypot.GetCommandResponse:input_type -> honeypot.CommandRequest
+	51, // 27: honeypot.Honeypot.SaveResponseLookup:input_type -> honeypot.ResponseLookupRequest
+	22, // 28: honeypot.Honeypot.SaveOpenclawConnect:input_type -> honeypot.OpenclawRequest
+	23, // 29: honeypot.Honeypot.SaveKafkaConnect:input_type -> honeypot.KafkaRequest
+	24, // 30: honeypot.Honeypot.SaveKafkaApiRequest:input_type -> honeypot.KafkaApiRequest
+	25, // 31: honeypot.Honeypot.SaveRedisConnect:input_type -> honeypot.RedisConnectRequest
+	26, // 32: honeypot.Honeypot.SaveRedisCommand:input_type -> honeypot.RedisCommandRequest
+	27, // 33: honeypot.Honeypot.SaveMqttConnect:input_type -> honeypot.MqttConnectRequest
+	28, // 34: honeypot.Honeypot.SaveMqttCommand:input_type -> honeypot.MqttCommandRequest
+	29, // 35: honeypot.Honeypot.SaveDockerRequest:input_type -> honeypot.DockerRequest
+	31, // 36: honeypot.Honeypot.SaveMongoConnect:input_type -> honeypot.MongoConnectRequest
+	32, // 37: honeypot.Honeypot.SaveMongoCommand:input_type -> honeypot.MongoCommandRequest
+	33, // 38: honeypot.Honeypot.SaveMemcachedConnect:input_type -> honeypot.MemcachedConnectRequest
+	34, // 39: honeypot.Honeypot.SaveMemcachedCommand:input_type -> honeypot.MemcachedCommandRequest
+	35, // 40: honeypot.Honeypot.SaveEtcdRequest:input_type -> honeypot.EtcdRequest
+	36, // 41: honeypot.Honeypot.SaveSmbConnect:input_type -> honeypot.SmbRequest
+	37, // 42: honeypot.Honeypot.SaveLdapBind:input_type -> honeypot.LdapBindRequest
+	38, // 43: honeypot.Honeypot.SaveLdapSearch:input_type -> honeypot.LdapSearchRequest
+	39, // 44: honeypot.Honeypot.SaveTelnetLogin:input_type -> honeypot.TelnetLoginRequest
+	40, // 45: honeypot.Honeypot.SaveTelnetCommand:input_type -> honeypot.TelnetCommandRequest
+	41, // 46: honeypot.Honeypot.SaveRdpConnect:input_type -> honeypot.RdpRequest
+	42, // 47: honeypot.Honeypot.SaveVncConnect:input_type -> honeypot.VncRequest
+	43, // 48: honeypot.Honeypot.SaveJenkinsRequest:input_type -> honeypot.JenkinsRequest
+	44, // 49: honeypot.Honeypot.SaveSmtpLogin:input_type -> honeypot.SmtpLoginRequest
+	45, // 50: honeypot.Honeypot.SaveSmtpEmail:input_type -> honeypot.SmtpEmailRequest
+	12, // 51: honeypot.Honeypot.SaveVllm:input_type -> honeypot.LlmRequest
+	12, // 52: honeypot.Honeypot.SaveOllama:input_type -> honeypot.LlmRequest
+	12, // 53: honeypot.Honeypot.SaveRay:input_type -> honeypot.LlmRequest
+	12, // 54: honeypot.Honeypot.SaveLocalai:input_type -> honeypot.LlmRequest
+	12, // 55: honeypot.Honeypot.SaveLmstudio:input_type -> honeypot.LlmRequest
+	12, // 56: honeypot.Honeypot.SaveLlamacpp:input_type -> honeypot.LlmRequest
+	12, // 57: honeypot.Honeypot.SaveComfyui:input_type -> honeypot.LlmRequest
+	46, // 58: honeypot.Honeypot.SaveFile:input_type -> honeypot.FileUploadRequest
+	17, // 59: honeypot.Honeypot.SaveMcp:input_type -> honeypot.McpRequest
+	30, // 60: honeypot.Honeypot.SaveS3Request:input_type -> honeypot.S3Request
+	13, // 61: honeypot.Honeypot.GetLlmBundle:input_type -> honeypot.LlmBundleRequest
+	50, // 62: honeypot.Greeter.SayHello:output_type -> honeypot.HelloReply
+	48, // 63: honeypot.Honeypot.Connect:output_type -> honeypot.ConnectReply
+	3,  // 64: honeypot.Honeypot.SaveFtpLogin:output_type -> honeypot.SaveReply
+	3,  // 65: honeypot.Honeypot.SaveElasticsearch:output_type -> honeypot.SaveReply
+	3,  // 66: honeypot.Honeypot.SaveHttp:output_type -> honeypot.SaveReply
+	3,  // 67: honeypot.Honeypot.SaveSshLogin:output_type -> honeypot.SaveReply
+	3,  // 68: honeypot.Honeypot.SavePostgresLogin:output_type -> honeypot.SaveReply
+	3,  // 69: honeypot.Honeypot.SaveMysqlLogin:output_type -> honeypot.SaveReply
+	3,  // 70: honeypot.Honeypot.SaveMssqlLogin:output_type -> honeypot.SaveReply
+	3,  // 71: honeypot.Honeypot.SaveQuery:output_type -> honeypot.SaveReply
+	3,  // 72: honeypot.Honeypot.SaveHttpHeaders:output_type -> honeypot.SaveReply
+	3,  // 73: honeypot.Honeypot.SaveShellCommand:output_type -> honeypot.SaveReply
+	9,  // 74: honeypot.Honeypot.GetCommandResponse:output_type -> honeypot.CommandResponse
+	3,  // 75: honeypot.Honeypot.SaveResponseLookup:output_type -> honeypot.SaveReply
+	3,  // 76: honeypot.Honeypot.SaveOpenclawConnect:output_type -> honeypot.SaveReply
+	3,  // 77: honeypot.Honeypot.SaveKafkaConnect:output_type -> honeypot.SaveReply
+	3,  // 78: honeypot.Honeypot.SaveKafkaApiRequest:output_type -> honeypot.SaveReply
+	3,  // 79: honeypot.Honeypot.SaveRedisConnect:output_type -> honeypot.SaveReply
+	3,  // 80: honeypot.Honeypot.SaveRedisCommand:output_type -> honeypot.SaveReply
+	3,  // 81: honeypot.Honeypot.SaveMqttConnect:output_type -> honeypot.SaveReply
+	3,  // 82: honeypot.Honeypot.SaveMqttCommand:output_type -> honeypot.SaveReply
+	3,  // 83: honeypot.Honeypot.SaveDockerRequest:output_type -> honeypot.SaveReply
+	3,  // 84: honeypot.Honeypot.SaveMongoConnect:output_type -> honeypot.SaveReply
+	3,  // 85: honeypot.Honeypot.SaveMongoCommand:output_type -> honeypot.SaveReply
+	3,  // 86: honeypot.Honeypot.SaveMemcachedConnect:output_type -> honeypot.SaveReply
+	3,  // 87: honeypot.Honeypot.SaveMemcachedCommand:output_type -> honeypot.SaveReply
+	3,  // 88: honeypot.Honeypot.SaveEtcdRequest:output_type -> honeypot.SaveReply
+	3,  // 89: honeypot.Honeypot.SaveSmbConnect:output_type -> honeypot.SaveReply
+	3,  // 90: honeypot.Honeypot.SaveLdapBind:output_type -> honeypot.SaveReply
+	3,  // 91: honeypot.Honeypot.SaveLdapSearch:output_type -> honeypot.SaveReply
+	3,  // 92: honeypot.Honeypot.SaveTelnetLogin:output_type -> honeypot.SaveReply
+	3,  // 93: honeypot.Honeypot.SaveTelnetCommand:output_type -> honeypot.SaveReply
+	3,  // 94: honeypot.Honeypot.SaveRdpConnect:output_type -> honeypot.SaveReply
+	3,  // 95: honeypot.Honeypot.SaveVncConnect:output_type -> honeypot.SaveReply
+	3,  // 96: honeypot.Honeypot.SaveJenkinsRequest:output_type -> honeypot.SaveReply
+	3,  // 97: honeypot.Honeypot.SaveSmtpLogin:output_type -> honeypot.SaveReply
+	3,  // 98: honeypot.Honeypot.SaveSmtpEmail:output_type -> honeypot.SaveReply
+	3,  // 99: honeypot.Honeypot.SaveVllm:output_type -> honeypot.SaveReply
+	3,  // 100: honeypot.Honeypot.SaveOllama:output_type -> honeypot.SaveReply
+	3,  // 101: honeypot.Honeypot.SaveRay:output_type -> honeypot.SaveReply
+	3,  // 102: honeypot.Honeypot.SaveLocalai:output_type -> honeypot.SaveReply
+	3,  // 103: honeypot.Honeypot.SaveLmstudio:output_type -> honeypot.SaveReply
+	3,  // 104: honeypot.Honeypot.SaveLlamacpp:output_type -> honeypot.SaveReply
+	3,  // 105: honeypot.Honeypot.SaveComfyui:output_type -> honeypot.SaveReply
+	3,  // 106: honeypot.Honeypot.SaveFile:output_type -> honeypot.SaveReply
+	3,  // 107: honeypot.Honeypot.SaveMcp:output_type -> honeypot.SaveReply
+	3,  // 108: honeypot.Honeypot.SaveS3Request:output_type -> honeypot.SaveReply
+	14, // 109: honeypot.Honeypot.GetLlmBundle:output_type -> honeypot.LlmBundleReply
+	62, // [62:110] is the sub-list for method output_type
+	14, // [14:62] is the sub-list for method input_type
 	14, // [14:14] is the sub-list for extension type_name
 	14, // [14:14] is the sub-list for extension extendee
 	0,  // [0:14] is the sub-list for field type_name
@@ -5209,7 +5364,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryRequest); i {
+			switch v := v.(*MssqlRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5221,7 +5376,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*CommandResponse); i {
+			switch v := v.(*QueryRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5233,7 +5388,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FtpRequest); i {
+			switch v := v.(*CommandResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5245,7 +5400,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ElasticsearchRequest); i {
+			switch v := v.(*FtpRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5257,7 +5412,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*LlmRequest); i {
+			switch v := v.(*ElasticsearchRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5269,7 +5424,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*LlmBundleRequest); i {
+			switch v := v.(*LlmRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5281,7 +5436,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*LlmBundleReply); i {
+			switch v := v.(*LlmBundleRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5293,7 +5448,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[11].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*LlmPromptRule); i {
+			switch v := v.(*LlmBundleReply); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5305,7 +5460,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[12].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*LlmCatalogModel); i {
+			switch v := v.(*LlmPromptRule); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5317,7 +5472,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[13].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*McpRequest); i {
+			switch v := v.(*LlmCatalogModel); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5329,7 +5484,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[14].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*HttpRequest); i {
+			switch v := v.(*McpRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5341,7 +5496,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[15].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SshLoginRequest); i {
+			switch v := v.(*HttpRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5353,7 +5508,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[16].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*HttpHeaderRequest); i {
+			switch v := v.(*SshLoginRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5365,7 +5520,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[17].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ShellCommandRequest); i {
+			switch v := v.(*HttpHeaderRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5377,7 +5532,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[18].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*OpenclawRequest); i {
+			switch v := v.(*ShellCommandRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5389,7 +5544,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[19].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*KafkaRequest); i {
+			switch v := v.(*OpenclawRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5401,7 +5556,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[20].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*KafkaApiRequest); i {
+			switch v := v.(*KafkaRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5413,7 +5568,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[21].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*RedisConnectRequest); i {
+			switch v := v.(*KafkaApiRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5425,7 +5580,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[22].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*RedisCommandRequest); i {
+			switch v := v.(*RedisConnectRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5437,7 +5592,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[23].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MqttConnectRequest); i {
+			switch v := v.(*RedisCommandRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5449,7 +5604,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[24].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MqttCommandRequest); i {
+			switch v := v.(*MqttConnectRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5461,7 +5616,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[25].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DockerRequest); i {
+			switch v := v.(*MqttCommandRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5473,7 +5628,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[26].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*S3Request); i {
+			switch v := v.(*DockerRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5485,7 +5640,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[27].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MongoConnectRequest); i {
+			switch v := v.(*S3Request); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5497,7 +5652,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[28].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MongoCommandRequest); i {
+			switch v := v.(*MongoConnectRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5509,7 +5664,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[29].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MemcachedConnectRequest); i {
+			switch v := v.(*MongoCommandRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5521,7 +5676,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[30].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MemcachedCommandRequest); i {
+			switch v := v.(*MemcachedConnectRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5533,7 +5688,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[31].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*EtcdRequest); i {
+			switch v := v.(*MemcachedCommandRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5545,7 +5700,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[32].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SmbRequest); i {
+			switch v := v.(*EtcdRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5557,7 +5712,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[33].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*LdapBindRequest); i {
+			switch v := v.(*SmbRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5569,7 +5724,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[34].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*LdapSearchRequest); i {
+			switch v := v.(*LdapBindRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5581,7 +5736,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[35].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*TelnetLoginRequest); i {
+			switch v := v.(*LdapSearchRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5593,7 +5748,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[36].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*TelnetCommandRequest); i {
+			switch v := v.(*TelnetLoginRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5605,7 +5760,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[37].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*RdpRequest); i {
+			switch v := v.(*TelnetCommandRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5617,7 +5772,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[38].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*VncRequest); i {
+			switch v := v.(*RdpRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5629,7 +5784,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[39].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*JenkinsRequest); i {
+			switch v := v.(*VncRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5641,7 +5796,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[40].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SmtpLoginRequest); i {
+			switch v := v.(*JenkinsRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5653,7 +5808,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[41].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SmtpEmailRequest); i {
+			switch v := v.(*SmtpLoginRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5665,7 +5820,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[42].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FileUploadRequest); i {
+			switch v := v.(*SmtpEmailRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5677,7 +5832,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[43].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ConnectRequest); i {
+			switch v := v.(*FileUploadRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5689,7 +5844,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[44].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ConnectReply); i {
+			switch v := v.(*ConnectRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5701,7 +5856,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[45].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*HelloRequest); i {
+			switch v := v.(*ConnectReply); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5713,7 +5868,7 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[46].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*HelloReply); i {
+			switch v := v.(*HelloRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5725,6 +5880,18 @@ func file_honeypot_proto_init() {
 			}
 		}
 		file_honeypot_proto_msgTypes[47].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*HelloReply); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_honeypot_proto_msgTypes[48].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*ResponseLookupRequest); i {
 			case 0:
 				return &v.state
@@ -5743,7 +5910,7 @@ func file_honeypot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_honeypot_proto_rawDesc,
 			NumEnums:      3,
-			NumMessages:   57,
+			NumMessages:   58,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
