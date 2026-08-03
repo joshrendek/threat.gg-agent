@@ -102,8 +102,9 @@ type catalogView struct {
 }
 
 type catalog struct {
-	mu    sync.Mutex
-	views map[string]*catalogView
+	mu        sync.Mutex
+	views     map[string]*catalogView
+	lastSweep time.Time
 }
 
 func newCatalog() *catalog { return &catalog{views: map[string]*catalogView{}} }
@@ -152,15 +153,23 @@ func (c *catalog) viewLocked(r *http.Request) *catalogView {
 	// view is normally called without the catalog lock. Helpers already holding
 	// it use this smaller form to avoid recursive locking.
 	now := time.Now()
-	for ip, candidate := range c.views {
-		if now.Sub(candidate.seen) > catalogViewTTL {
-			delete(c.views, ip)
-		}
-	}
 	ip := clientIP(r)
 	if v := c.views[ip]; v != nil {
-		v.seen = now
-		return v
+		if now.Sub(v.seen) <= catalogViewTTL {
+			v.seen = now
+			return v
+		}
+		delete(c.views, ip)
+	}
+	// Expiry maintenance is paid only when creating a view, never on the
+	// inference hot path for an existing client.
+	if c.lastSweep.IsZero() || now.Sub(c.lastSweep) >= time.Minute {
+		for candidateIP, candidate := range c.views {
+			if now.Sub(candidate.seen) > catalogViewTTL {
+				delete(c.views, candidateIP)
+			}
+		}
+		c.lastSweep = now
 	}
 	if len(c.views) >= maxCatalogViews {
 		var oldestIP string

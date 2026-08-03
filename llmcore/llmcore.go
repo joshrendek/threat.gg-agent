@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"github.com/rs/zerolog"
 	uuid "github.com/satori/go.uuid"
@@ -103,7 +102,7 @@ func captureRequest(r *http.Request) (*proto.LlmRequest, bool) {
 		if len(captured) > MaxBodySize {
 			captured = captured[:MaxBodySize]
 		}
-		body = string(captured)
+		body = redactCapturedBody(captured)
 		// Restore the body (even after a partial/errored read) so downstream can re-read it.
 		r.Body = io.NopCloser(bytes.NewReader(data))
 	}
@@ -116,7 +115,7 @@ func captureRequest(r *http.Request) (*proto.LlmRequest, bool) {
 	in := &proto.LlmRequest{
 		RemoteAddr: ip,
 		Guid:       guid.String(),
-		Headers:    persistence.HttpToMap(map[string][]string(r.Header)),
+		Headers:    redactCapturedHeaders(r.Header),
 		Path:       r.URL.Path,
 		Method:     r.Method,
 		Body:       body,
@@ -125,6 +124,62 @@ func captureRequest(r *http.Request) (*proto.LlmRequest, bool) {
 	}
 	logger.Info().Str("method", in.Method).Str("path", in.Path).Str("remote_addr", in.RemoteAddr).Msg("llm request")
 	return in, true
+}
+
+var sensitiveCaptureHeaders = map[string]bool{
+	"authorization": true, "proxy-authorization": true, "x-api-key": true,
+	"api-key": true, "x-auth-token": true, "cookie": true, "set-cookie": true,
+}
+
+var sensitiveCaptureFields = map[string]bool{
+	"api_key": true, "apikey": true, "access_token": true, "token": true,
+	"authorization": true, "password": true, "secret": true,
+}
+
+func redactCapturedHeaders(headers http.Header) map[string]string {
+	out := make(map[string]string, len(headers))
+	for key, values := range headers {
+		if sensitiveCaptureHeaders[strings.ToLower(key)] {
+			out[key] = "[REDACTED]"
+		} else {
+			out[key] = strings.Join(values, ",")
+		}
+	}
+	return out
+}
+
+func redactCapturedBody(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var value any
+	if json.Unmarshal(body, &value) != nil {
+		return string(body)
+	}
+	redactJSONValue(value)
+	redacted, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(redacted)
+}
+
+func redactJSONValue(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+			if sensitiveCaptureFields[normalized] {
+				typed[key] = "[REDACTED]"
+				continue
+			}
+			redactJSONValue(child)
+		}
+	case []any:
+		for _, child := range typed {
+			redactJSONValue(child)
+		}
+	}
 }
 
 func saveCapturedRequest(in *proto.LlmRequest, save func(*proto.LlmRequest) error) {

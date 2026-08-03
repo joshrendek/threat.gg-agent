@@ -93,6 +93,33 @@ func TestCaptureTruncatesOversizeBody(t *testing.T) {
 	}
 }
 
+func TestCaptureRedactsCredentialsWithoutChangingDownstreamBody(t *testing.T) {
+	saved := make(chan *proto.LlmRequest, 1)
+	original := `{"model":"x","api_key":"body-secret","nested":{"access_token":"token-secret"},"input":"hello"}`
+	downstream := ""
+	h := Capture(func(in *proto.LlmRequest) error { saved <- in; return nil })(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		downstream = string(body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(original))
+	req.Header.Set("Authorization", "Bearer header-secret")
+	req.Header.Set("X-Api-Key", "key-secret")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	got := <-saved
+	if downstream != original {
+		t.Fatalf("downstream body changed: %q", downstream)
+	}
+	for _, secret := range []string{"body-secret", "token-secret", "header-secret", "key-secret"} {
+		if strings.Contains(got.Body, secret) || strings.Contains(got.Headers["Authorization"], secret) || strings.Contains(got.Headers["X-Api-Key"], secret) {
+			t.Fatalf("capture retained secret %q: body=%s headers=%v", secret, got.Body, got.Headers)
+		}
+	}
+	if got.Headers["Authorization"] != "[REDACTED]" || got.Headers["X-Api-Key"] != "[REDACTED]" {
+		t.Fatalf("credential headers not redacted: %v", got.Headers)
+	}
+}
+
 func TestCaptureBoundsConcurrentPersistence(t *testing.T) {
 	originalSlots := captureSaveSlots
 	captureSaveSlots = make(chan struct{}, 1)

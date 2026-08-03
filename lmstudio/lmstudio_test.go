@@ -87,7 +87,13 @@ func TestCatalogMutationsAreScopedAndBounded(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	for i := 0; i < maxDownloadsPerView+3; i++ {
-		request(t, h, http.MethodPost, "/api/v1/models/download", `{"model":"overflow/model-`+string(rune('a'+i))+`"}`, "198.51.100.20")
+		w = request(t, h, http.MethodPost, "/api/v1/models/download", `{"model":"overflow/model-`+string(rune('a'+i))+`"}`, "198.51.100.20")
+		if i < maxDownloadsPerView {
+			require.Equal(t, http.StatusOK, w.Code)
+		} else {
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			require.Contains(t, w.Body.String(), `"code": "invalid_model_identifier"`)
+		}
 	}
 	viewRequest := httptest.NewRequest(http.MethodGet, "http://x/", nil)
 	viewRequest.RemoteAddr = "198.51.100.20:43210"
@@ -132,7 +138,40 @@ func TestEmbeddingsHaveExpectedDimension(t *testing.T) {
 	require.Len(t, body.Data[0].Embedding, 768)
 }
 
-func TestCaptureRetainsToolAndMCPMetadata(t *testing.T) {
+func TestEmbeddingsBatchReturnsOneDeterministicVectorPerInput(t *testing.T) {
+	resetState(t)
+	h := newRouter()
+	body := `{"model":"` + embeddingModel + `","input":["hello","world"]}`
+	first := request(t, h, http.MethodPost, "/v1/embeddings", body, "198.51.100.41")
+	second := request(t, h, http.MethodPost, "/v1/embeddings", body, "198.51.100.41")
+	require.Equal(t, http.StatusOK, first.Code)
+	var got struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+			Index     int       `json:"index"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &got))
+	require.Len(t, got.Data, 2)
+	require.Equal(t, []int{0, 1}, []int{got.Data[0].Index, got.Data[1].Index})
+	require.NotEqual(t, got.Data[0].Embedding, got.Data[1].Embedding)
+	require.JSONEq(t, first.Body.String(), second.Body.String())
+}
+
+func TestStructuredPromptExtractionAndStrictJSONBoundary(t *testing.T) {
+	for _, raw := range []string{
+		`[{"role":"user","content":[{"type":"input_text","text":"Reply with exactly OK"}]}]`,
+		`[{"role":"user","content":[{"type":"text","text":"Reply with exactly OK"}]}]`,
+	} {
+		require.Equal(t, "Reply with exactly OK", promptFromRaw(json.RawMessage(raw)))
+	}
+	bad := request(t, newRouter(), http.MethodPost, "/api/v1/chat",
+		`{"model":"`+defaultModel+`","input":"hello"}{"extra":true}`, "198.51.100.42")
+	require.Equal(t, http.StatusBadRequest, bad.Code)
+	require.Contains(t, bad.Body.String(), "invalid_json")
+}
+
+func TestCaptureRetainsMCPMetadata(t *testing.T) {
 	resetState(t)
 	got := make(chan *proto.LlmRequest, 1)
 	oldSave := saveLmstudioRequest

@@ -19,7 +19,8 @@ func TestIsSignalPath(t *testing.T) {
 		"/api/cluster_status", "/models", "/props", "/health", "/healthz", "/readyz", "/metrics",
 		"/completion", "/tokenize", "/detokenize", "/slots", "/system_stats", "/object_info",
 		"/queue", "/prompt", "/history", "/history/abc-123-uuid",
-		"/nodes", "/v1/models/", "/api/v1/models", "/api/v1/chat", // trailing slash tolerated
+		"/nodes", "/v1/models/", // trailing slash tolerated
+		"/api/v1/models", "/api/v1/chat", // LM Studio native family
 		// Upstream endpoints the honeypots do not route: the probe 404s, but knowing the
 		// product-specific path is itself the signal (threat_gg-vb7).
 		"/apply-template", "/lora-adapters", "/embeddings", "/extensions",

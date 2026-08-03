@@ -48,11 +48,11 @@ func decodeJSON(r *http.Request, target any) bool {
 	if r.Body == nil {
 		return false
 	}
-	decoder := json.NewDecoder(io.LimitReader(r.Body, llmcore.MaxBodySize+1))
-	if err := decoder.Decode(target); err != nil {
+	body, err := io.ReadAll(io.LimitReader(r.Body, llmcore.MaxBodySize+1))
+	if err != nil || len(body) > llmcore.MaxBodySize || len(strings.TrimSpace(string(body))) == 0 {
 		return false
 	}
-	return true
+	return json.Unmarshal(body, target) == nil
 }
 
 func handleNativeModels(w http.ResponseWriter, r *http.Request) {
@@ -250,22 +250,33 @@ func handleNativeChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func promptFromRaw(raw json.RawMessage) string {
-	var direct string
-	if json.Unmarshal(raw, &direct) == nil {
-		return direct
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
 	}
-	var items []struct {
-		Type    string `json:"type"`
-		Content string `json:"content"`
-	}
-	_ = json.Unmarshal(raw, &items)
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		if item.Content != "" {
-			parts = append(parts, item.Content)
+	parts := make([]string, 0, 4)
+	collectPromptText(value, &parts)
+	return strings.Join(parts, "\n")
+}
+
+func collectPromptText(value any, parts *[]string) {
+	switch typed := value.(type) {
+	case string:
+		if typed != "" {
+			*parts = append(*parts, typed)
+		}
+	case []any:
+		for _, item := range typed {
+			collectPromptText(item, parts)
+		}
+	case map[string]any:
+		for _, key := range []string{"content", "text", "input_text"} {
+			if child, ok := typed[key]; ok {
+				collectPromptText(child, parts)
+				return
+			}
 		}
 	}
-	return strings.Join(parts, "\n")
 }
 
 func streamNativeChat(w http.ResponseWriter, model string, words []string, result nativeChatResult) {

@@ -223,33 +223,77 @@ func handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		llmcore.WriteModelNotFoundV1(w, profile, request.Model)
 		return
 	}
-	input := promptFromRaw(request.Input)
-	vector := deterministicEmbedding(input, 768)
+	inputs, ok := embeddingInputs(request.Input)
+	if !ok || len(inputs) == 0 {
+		llmcore.WriteOpenAIError(w, profile, http.StatusBadRequest, "Invalid embedding input", "invalid_request_error")
+		return
+	}
+	type embeddingData struct {
+		Object    string    `json:"object"`
+		Embedding []float64 `json:"embedding"`
+		Index     int       `json:"index"`
+	}
+	data := make([]embeddingData, 0, len(inputs))
+	promptTokens := 0
+	for i, input := range inputs {
+		data = append(data, embeddingData{Object: "embedding", Embedding: deterministicEmbedding(input, 768), Index: i})
+		promptTokens += max(1, len(input)/4)
+	}
 	writeCompactJSON(w, http.StatusOK, struct {
-		Object string `json:"object"`
-		Data   []struct {
-			Object    string    `json:"object"`
-			Embedding []float64 `json:"embedding"`
-			Index     int       `json:"index"`
-		} `json:"data"`
-		Model string `json:"model"`
-		Usage struct {
+		Object string          `json:"object"`
+		Data   []embeddingData `json:"data"`
+		Model  string          `json:"model"`
+		Usage  struct {
 			PromptTokens int `json:"prompt_tokens"`
 			TotalTokens  int `json:"total_tokens"`
 		} `json:"usage"`
 	}{
 		Object: "list",
-		Data: []struct {
-			Object    string    `json:"object"`
-			Embedding []float64 `json:"embedding"`
-			Index     int       `json:"index"`
-		}{{Object: "embedding", Embedding: vector, Index: 0}},
-		Model: request.Model,
+		Data:   data,
+		Model:  request.Model,
 		Usage: struct {
 			PromptTokens int `json:"prompt_tokens"`
 			TotalTokens  int `json:"total_tokens"`
-		}{PromptTokens: max(1, len(input)/4), TotalTokens: max(1, len(input)/4)},
+		}{PromptTokens: promptTokens, TotalTokens: promptTokens},
 	})
+}
+
+func embeddingInputs(raw json.RawMessage) ([]string, bool) {
+	var direct string
+	if json.Unmarshal(raw, &direct) == nil {
+		return []string{direct}, direct != ""
+	}
+	var values []any
+	if json.Unmarshal(raw, &values) != nil || len(values) == 0 || len(values) > 2048 {
+		return nil, false
+	}
+	stringsOut := make([]string, 0, len(values))
+	allStrings := true
+	for _, value := range values {
+		item, ok := value.(string)
+		if !ok {
+			allStrings = false
+			break
+		}
+		stringsOut = append(stringsOut, item)
+	}
+	if allStrings {
+		return stringsOut, true
+	}
+	// A flat token array is one input; nested token arrays are a batch.
+	if _, ok := values[0].(float64); ok {
+		encoded, _ := json.Marshal(values)
+		return []string{string(encoded)}, true
+	}
+	encoded := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := value.([]any); !ok {
+			return nil, false
+		}
+		item, _ := json.Marshal(value)
+		encoded = append(encoded, string(item))
+	}
+	return encoded, true
 }
 
 func deterministicEmbedding(input string, dimensions int) []float64 {
