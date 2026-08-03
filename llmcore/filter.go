@@ -38,7 +38,8 @@ var exactSignalPaths = map[string]bool{
 }
 
 // isSignalPath reports whether a request path targets a real LLM API surface — the OpenAI
-// family (/v1/*), the Ollama/Ray /api/<verb> verbs, or a product-native endpoint. Everything
+// family (/v1/*), LM Studio native routes (/api/v1/*), the Ollama/Ray /api/<verb>
+// verbs, or a product-native endpoint. Everything
 // else is generic internet scanning (/, favicon, nmap, proxy CONNECT, HTTP/2 PRI, Next.js RSC
 // exploits, LFI probes, router CVEs) that the honeypot should still answer convincingly but
 // must not persist — it drowns the real LLM-attack signal otherwise.
@@ -48,6 +49,12 @@ func isSignalPath(path string) bool {
 		return false
 	}
 	if strings.HasPrefix(p, "/v1/") {
+		return true
+	}
+	// LM Studio 0.4.x native REST endpoints live under /api/v1/*. Versioned
+	// LLM-native paths are specific enough to keep even when a particular route
+	// is unsupported, just like the OpenAI /v1 family above.
+	if strings.HasPrefix(p, "/api/v1/") {
 		return true
 	}
 	if strings.HasPrefix(p, "/api/") {

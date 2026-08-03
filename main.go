@@ -15,6 +15,7 @@ import (
 	ldaphp "github.com/joshrendek/threat.gg-agent/ldap"
 	"github.com/joshrendek/threat.gg-agent/llamacpp"
 	"github.com/joshrendek/threat.gg-agent/llmcore/promptrules"
+	"github.com/joshrendek/threat.gg-agent/lmstudio"
 	"github.com/joshrendek/threat.gg-agent/localai"
 	"github.com/joshrendek/threat.gg-agent/mcp"
 	memcachedhp "github.com/joshrendek/threat.gg-agent/memcached"
@@ -135,6 +136,7 @@ func main() {
 	honeypots.Register(ollama.New())
 	honeypots.Register(rayhp.New())
 	honeypots.Register(localai.New())
+	honeypots.Register(lmstudio.New())
 	honeypots.Register(llamacpp.New())
 	honeypots.Register(comfyuihp.New())
 	honeypots.Register(mcp.New())

@@ -79,6 +79,11 @@ func (blockingClient) SaveS3Request(ctx context.Context, in *proto.S3Request, op
 	return nil, ctx.Err()
 }
 
+func (blockingClient) SaveLmstudio(ctx context.Context, in *proto.LlmRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func (blockingClient) GetCommandResponse(ctx context.Context, in *proto.CommandRequest, opts ...grpc.CallOption) (*proto.CommandResponse, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -103,6 +108,7 @@ func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 		{"llamacpp", func() error { return SaveLlamacppRequest(&proto.LlmRequest{}) }},
 		{"comfyui", func() error { return SaveComfyuiRequest(&proto.LlmRequest{}) }},
 		{"s3", func() error { return SaveS3Request(&proto.S3Request{}) }},
+		{"lmstudio", func() error { return SaveLmstudioRequest(&proto.LlmRequest{}) }},
 		{"connect", func() error { return SaveMemcachedConnect(&proto.MemcachedConnectRequest{}) }},
 		{"command", func() error { return SaveMemcachedCommand(&proto.MemcachedCommandRequest{}) }},
 	} {
@@ -131,6 +137,13 @@ func TestSaveS3RequestIsNoOpWithoutClient(t *testing.T) {
 	t.Cleanup(func() { honeypotClient = originalClient })
 	honeypotClient = nil
 	require.NoError(t, SaveS3Request(&proto.S3Request{}))
+}
+
+func TestSaveLmstudioRequestIsNoOpWithoutClient(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = nil
+	require.NoError(t, SaveLmstudioRequest(&proto.LlmRequest{}))
 }
 
 func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
