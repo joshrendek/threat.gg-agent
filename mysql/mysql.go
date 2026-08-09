@@ -75,8 +75,10 @@ type session struct {
 	queries  []string
 	// scramble and authData are the two halves of the mysql_native_password exchange.
 	// Both are needed to produce a crackable artifact; see nativePasswordArtifact.
-	scramble   []byte
-	authData   []byte
+	scramble []byte
+	authData []byte
+	// authPlugin is the plugin the client named, and it decides whether the pair above may
+	// be labelled a native-password digest at all. See nativePasswordArtifact.
 	authPlugin string
 }
 

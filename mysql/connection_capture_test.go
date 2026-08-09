@@ -143,6 +143,54 @@ func TestConnectionCapturesCredentialWhenClientHangsUpAfterAuth(t *testing.T) {
 	}
 }
 
+// TestConnectionWithClearPasswordPluginStoresNoArtifact is the end-to-end half of the
+// plugin check. The helper-level tests prove nativePasswordArtifact rejects a non-native
+// plugin, but only a real connection proves creds.authPlugin actually survives parsing and
+// reaches persistSession: drop that one assignment and a 20-byte mysql_clear_password
+// reply -- the password itself -- would be stored as a crackable $mysqlna$ digest.
+func TestConnectionWithClearPasswordPluginStoresNoArtifact(t *testing.T) {
+	rec := withRecorder(t)
+	done := make(chan struct{})
+
+	server, client := net.Pipe()
+	h := &honeypot{logger: zerolog.Nop()}
+	go func() {
+		h.handleConnection(server)
+		close(done)
+	}()
+
+	_ = client.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, _, err := readPacket(bufio.NewReader(client)); err != nil {
+		t.Fatalf("read greeting: %v", err)
+	}
+
+	// Exactly 20 bytes, so only the plugin name distinguishes it from a native digest.
+	clearPassword := []byte("correcthorsebattery1")
+	pkt := buildClientAuthPacket("root", clearPassword)
+	pkt = append(pkt, "mysql_clear_password"...)
+	pkt = append(pkt, 0x00)
+	if err := writePacket(client, 1, pkt); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+	client.Close()
+	<-done
+
+	waitFor(t, func() bool {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return len(rec.logins) == 1
+	}, "the session to be persisted")
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if got := rec.logins[0].Password; got != "" {
+		t.Errorf("password = %q, want empty: a clear-password reply must never be labelled a hash", got)
+	}
+	if rec.logins[0].Username != "root" {
+		t.Errorf("username = %q, want root (the session is still worth recording)", rec.logins[0].Username)
+	}
+}
+
 // A connection that opens and disconnects without authenticating must still persist
 // nothing, so ordinary port scans do not manufacture attacker rows.
 func TestConnectionWithoutAuthPersistsNothing(t *testing.T) {

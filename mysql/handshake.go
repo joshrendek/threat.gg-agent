@@ -205,6 +205,13 @@ func nativePasswordArtifact(scramble, authData []byte, authPlugin string) string
 	if len(scramble) != 20 || len(authData) != 20 {
 		return ""
 	}
+	// An empty plugin name means the client named none, which under the protocol means it
+	// used the plugin the server advertised -- and the greeting only ever advertises
+	// mysql_native_password. Treating it as native is therefore the protocol-correct read,
+	// not a permissive fallback. It does mean a client that omits CLIENT_PLUGIN_AUTH and
+	// sends 20 bytes of something else is taken at its word, which is the same trust any
+	// real server extends; if the advertised plugin ever changes (threat_gg-dpk), this
+	// default must change with it.
 	if authPlugin != "" && authPlugin != authPluginName {
 		return ""
 	}

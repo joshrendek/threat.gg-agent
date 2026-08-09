@@ -40,6 +40,9 @@ func TestNativePasswordArtifact(t *testing.T) {
 	}
 }
 
+// TestNativePasswordArtifactRejectsUnusableInput pins the cases where we hold half an
+// exchange or something that is not one at all, and must say so by storing nothing rather
+// than inventing a credential.
 func TestNativePasswordArtifactRejectsUnusableInput(t *testing.T) {
 	full := make([]byte, 20)
 	cases := []struct {
@@ -280,6 +283,41 @@ func TestPersistSessionAbandonsQueriesWhenTheBackendIsDown(t *testing.T) {
 	}
 }
 
+// TestPersistSessionResetsFailureCountOnSuccess proves the counter is consecutive rather
+// than cumulative. Without the reset, scattered transient failures would eventually add up
+// to the abandon threshold and silently truncate a session that was persisting fine.
+func TestPersistSessionResetsFailureCountOnSuccess(t *testing.T) {
+	rec := withRecorder(t)
+	origQuery := saveQuery
+	var calls int
+	saveQuery = func(in *proto.QueryRequest) error {
+		calls++
+		// Fail on every other call: never three in a row, so the loop must run to the end.
+		if calls%2 == 1 {
+			return errors.New("transient grpc failure")
+		}
+		return rec.query(in)
+	}
+	t.Cleanup(func() { saveQuery = origQuery })
+
+	queries := make([]string, 9)
+	for i := range queries {
+		queries[i] = "select 1"
+	}
+	h := &honeypot{}
+	h.persistSession(&session{
+		guid:     "3f2a1b4c-0000-4000-8000-000000000008",
+		username: "root",
+		remoteIP: "203.0.113.14",
+		queries:  queries,
+	})
+
+	if calls != len(queries) {
+		t.Errorf("SaveQuery called %d times, want %d; interleaved failures must not accumulate "+
+			"toward the abandon threshold", calls, len(queries))
+	}
+}
+
 // TestPersistSessionRecordsQueryOnlySessions covers the documented case where a session
 // produced queries but no username: the guard keeps it, since an unauthenticated query is
 // still worth having.
@@ -344,6 +382,8 @@ func TestPersistSessionContinuesAfterAQueryFails(t *testing.T) {
 	}
 }
 
+// A connection that produced neither a username nor a query is an ordinary port scan and
+// must not manufacture an attacker row.
 func TestPersistSessionSkipsEmptySessions(t *testing.T) {
 	rec := withRecorder(t)
 	h := &honeypot{}
