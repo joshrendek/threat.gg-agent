@@ -197,6 +197,42 @@ func TestPersistSessionSkipsQueriesWhenLoginFails(t *testing.T) {
 	}
 }
 
+// One failing SaveQuery must not abandon the rest of the session: the interesting
+// statement is as likely to be the last as the first.
+func TestPersistSessionContinuesAfterAQueryFails(t *testing.T) {
+	rec := withRecorder(t)
+	origQuery := saveQuery
+	var calls int
+	saveQuery = func(in *proto.QueryRequest) error {
+		calls++
+		if calls == 2 {
+			return errors.New("transient grpc failure")
+		}
+		return rec.query(in)
+	}
+	t.Cleanup(func() { saveQuery = origQuery })
+
+	h := &honeypot{}
+	h.persistSession(&session{
+		guid:     "3f2a1b4c-0000-4000-8000-000000000005",
+		username: "root",
+		remoteIP: "203.0.113.11",
+		queries:  []string{"select 1", "select 2", "DROP TABLE users"},
+	})
+
+	if calls != 3 {
+		t.Errorf("SaveQuery called %d times, want 3 (the loop must not abort on error)", calls)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.queries) != 2 {
+		t.Fatalf("queries recorded = %d, want 2 (the middle one failed)", len(rec.queries))
+	}
+	if rec.queries[1].Query != "DROP TABLE users" {
+		t.Errorf("the query after the failure was lost; got %q", rec.queries[1].Query)
+	}
+}
+
 func TestPersistSessionSkipsEmptySessions(t *testing.T) {
 	rec := withRecorder(t)
 	h := &honeypot{}
@@ -207,8 +243,9 @@ func TestPersistSessionSkipsEmptySessions(t *testing.T) {
 	}
 }
 
-// A no-password login must still record the session; it just carries no credential.
-func TestPersistSessionAnonymousLoginHasEmptyPassword(t *testing.T) {
+// A login that supplies no password must still record the session; it just carries no
+// credential artifact.
+func TestPersistSessionNoPasswordLoginHasEmptyPassword(t *testing.T) {
 	rec := withRecorder(t)
 	h := &honeypot{}
 	h.persistSession(&session{

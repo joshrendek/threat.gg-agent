@@ -39,12 +39,7 @@ func TestConnectionCapturesCredentialAndQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read greeting: %v", err)
 	}
-	// Scramble part 1 sits after: protocol version (1), server version + NUL, conn id (4).
-	scrambleP1Offset := 1 + len(serverVersion) + 1 + 4
-	if len(greeting) < scrambleP1Offset+8 {
-		t.Fatalf("greeting too short: %d bytes", len(greeting))
-	}
-	advertised := greeting[scrambleP1Offset : scrambleP1Offset+8]
+	advertised := scrambleFromGreeting(t, greeting)
 
 	authData := make([]byte, 20)
 	for i := range authData {
@@ -85,17 +80,66 @@ func TestConnectionCapturesCredentialAndQuery(t *testing.T) {
 	if !strings.HasPrefix(login.Password, "$mysqlna$") {
 		t.Fatalf("password = %q, want a $mysqlna$ artifact", login.Password)
 	}
-	// The stored scramble must be the one this connection advertised, not a fresh or zero
-	// value: that is what makes the captured reply crackable.
-	if !strings.HasPrefix(login.Password, "$mysqlna$"+hex.EncodeToString(advertised)) {
-		t.Errorf("stored scramble does not match the greeting; password = %q, greeting scramble starts %s",
-			login.Password, hex.EncodeToString(advertised))
-	}
-	if !strings.HasSuffix(login.Password, "*"+hex.EncodeToString(authData)) {
-		t.Errorf("stored response does not match what the client sent; password = %q", login.Password)
+	// The stored artifact must be the full 20-byte scramble this connection advertised
+	// paired with the exact reply the client sent. Asserting the whole value rather than a
+	// prefix matters: a regression that kept the first 8 bytes but corrupted bytes 9-20
+	// would still yield an uncrackable credential.
+	want := "$mysqlna$" + hex.EncodeToString(advertised) + "*" + hex.EncodeToString(authData)
+	if login.Password != want {
+		t.Errorf("password = %q, want %q", login.Password, want)
 	}
 	if got := rec.queries[0]; got.Query != query || got.CommandType != "mysql" || got.Guid != login.Guid {
 		t.Errorf("query captured as %+v, want %q/mysql sharing the login guid", got, query)
+	}
+}
+
+// TestConnectionCapturesCredentialWhenClientHangsUpAfterAuth covers the case worth the
+// most: a credential-spraying scanner sends its auth response and closes without waiting
+// for the reply. Writing the OK packet then fails, and the bare return that used to follow
+// skipped persistence entirely -- losing the credential precisely where we most want it.
+func TestConnectionCapturesCredentialWhenClientHangsUpAfterAuth(t *testing.T) {
+	rec := withRecorder(t)
+	done := make(chan struct{})
+
+	server, client := net.Pipe()
+	h := &honeypot{logger: zerolog.Nop()}
+	go func() {
+		h.handleConnection(server)
+		close(done)
+	}()
+
+	_ = client.SetDeadline(time.Now().Add(10 * time.Second))
+	greeting, _, err := readPacket(bufio.NewReader(client))
+	if err != nil {
+		t.Fatalf("read greeting: %v", err)
+	}
+	advertised := scrambleFromGreeting(t, greeting)
+
+	authData := make([]byte, 20)
+	for i := range authData {
+		authData[i] = byte(i + 3)
+	}
+	if err := writePacket(client, 1, buildClientAuthPacket("admin", authData)); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+	// Hang up without reading the OK packet.
+	client.Close()
+	<-done
+
+	waitFor(t, func() bool {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return len(rec.logins) == 1
+	}, "the credential to be persisted despite the client hanging up")
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	want := "$mysqlna$" + hex.EncodeToString(advertised) + "*" + hex.EncodeToString(authData)
+	if got := rec.logins[0].Password; got != want {
+		t.Errorf("password = %q, want %q", got, want)
+	}
+	if rec.logins[0].Username != "admin" {
+		t.Errorf("username = %q, want admin", rec.logins[0].Username)
 	}
 }
 
@@ -124,6 +168,26 @@ func TestConnectionWithoutAuthPersistsNothing(t *testing.T) {
 	if len(rec.logins) != 0 || len(rec.queries) != 0 {
 		t.Errorf("bare scan persisted %d logins, %d queries", len(rec.logins), len(rec.queries))
 	}
+}
+
+// scrambleFromGreeting reassembles the full 20-byte scramble a HandshakeV10 greeting
+// advertises. MySQL splits it: 8 bytes early, the remaining 12 after the status and
+// capability fields, which is why a test that reads only the first fragment can miss a
+// corrupted tail.
+func scrambleFromGreeting(t *testing.T, greeting []byte) []byte {
+	t.Helper()
+	// part 1: protocol version (1) + server version + NUL + connection id (4)
+	p1 := 1 + len(serverVersion) + 1 + 4
+	// part 2: part 1 (8) + filler (1) + capability low (2) + charset (1) +
+	//         status (2) + capability high (2) + auth data length (1) + reserved (10)
+	p2 := p1 + 8 + 1 + 2 + 1 + 2 + 2 + 1 + 10
+	if len(greeting) < p2+12 {
+		t.Fatalf("greeting too short to hold a scramble: %d bytes", len(greeting))
+	}
+	full := make([]byte, 0, 20)
+	full = append(full, greeting[p1:p1+8]...)
+	full = append(full, greeting[p2:p2+12]...)
+	return full
 }
 
 // buildClientAuthPacket assembles the HandshakeResponse41 layout parseHandshakeResponse

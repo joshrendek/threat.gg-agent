@@ -122,6 +122,12 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		Str("database", creds.database).
 		Msg("auth received")
 
+	// From here on the credential is captured, so every exit must run persistSession.
+	// A bare return would lose it exactly where it is most valuable: a credential-spraying
+	// scanner sends its auth response and closes without waiting for the reply, which is
+	// precisely when writing the OK packet fails. Same family as the COM_QUIT case below.
+	defer func() { go h.persistSession(sess) }()
+
 	// Send OK (auth success)
 	if err := writeOKPacket(conn, 2, 0, 0); err != nil {
 		return
@@ -189,11 +195,14 @@ commandLoop:
 		Str("session", sess.guid).
 		Int("queries", len(sess.queries)).
 		Msg("session ended")
-
-	go h.persistSession(sess)
+	// persistSession runs from the deferred call above, which covers this exit too.
 }
 
-// persistSession records the login and then every query the session issued.
+// persistSession records the login and then every query the session issued. It skips
+// sessions that produced neither a username nor a query, so an ordinary port scan that
+// opens a connection and leaves does not manufacture an attacker row; a session with only
+// one of the two is still recorded, since an unauthenticated query and a credential with
+// no follow-up are both worth keeping.
 //
 // Order matters and is not incidental: the server materializes the attacker row from the
 // login, and SaveQuery only writes an attacker_commands row keyed by the same guid. Saving
@@ -218,9 +227,10 @@ func (h *honeypot) persistSession(sess *session) {
 
 	// Queries are saved here rather than inline in the command loop so they cannot outrun
 	// the login above. Capture is deliberately independent of the cmdresp override lookup:
-	// that path skips credential-bearing statements (isSensitiveMySQLLookup) to avoid
-	// forwarding secrets to the response server, which used to mean CREATE USER ...
-	// IDENTIFIED BY was the one statement guaranteed to be recorded nowhere.
+	// that path skips credential-bearing statements to avoid forwarding secrets to the
+	// response server -- isSensitiveMySQLLookup drops anything containing "identified by",
+	// "set password" or "password(" -- which used to mean the statements most worth having
+	// were the ones guaranteed to be recorded nowhere.
 	for _, query := range sess.queries {
 		if err := saveQuery(&proto.QueryRequest{
 			Guid:        sess.guid,
