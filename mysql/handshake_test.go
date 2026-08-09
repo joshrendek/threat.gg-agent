@@ -7,7 +7,7 @@ import (
 )
 
 func TestBuildHandshakeV10(t *testing.T) {
-	pkt, err := buildHandshakeV10(42)
+	pkt, _, err := buildHandshakeV10(42)
 	if err != nil {
 		t.Fatalf("buildHandshakeV10 failed: %v", err)
 	}
@@ -36,8 +36,8 @@ func TestBuildHandshakeV10(t *testing.T) {
 }
 
 func TestBuildHandshakeV10_ScrambleLength(t *testing.T) {
-	pkt1, _ := buildHandshakeV10(1)
-	pkt2, _ := buildHandshakeV10(2)
+	pkt1, _, _ := buildHandshakeV10(1)
+	pkt2, _, _ := buildHandshakeV10(2)
 
 	// Two calls should produce different scramble data (random)
 	// Find scramble part 1 location (after connID, 4 bytes)
@@ -134,7 +134,7 @@ func TestParseHandshakeResponse_NoDatabase(t *testing.T) {
 
 func TestSendHandshake(t *testing.T) {
 	var buf bytes.Buffer
-	err := sendHandshake(&buf, 100)
+	_, err := sendHandshake(&buf, 100)
 	if err != nil {
 		t.Fatalf("sendHandshake failed: %v", err)
 	}

@@ -3,6 +3,7 @@ package mysql
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"io"
 )
 
@@ -32,11 +33,15 @@ type credentials struct {
 	authData []byte
 }
 
-// buildHandshakeV10 constructs the server greeting packet.
-func buildHandshakeV10(connID uint32) ([]byte, error) {
+// buildHandshakeV10 constructs the server greeting packet and returns the per-connection
+// scramble it embedded. The scramble is returned rather than kept internal because the
+// client's auth reply is only meaningful when paired with it: mysql_native_password sends
+// SHA1(pw) XOR SHA1(scramble || SHA1(SHA1(pw))), so the reply alone cannot be cracked.
+// See nativePasswordArtifact (threat_gg-cb0).
+func buildHandshakeV10(connID uint32) ([]byte, []byte, error) {
 	scramble := make([]byte, 20)
 	if _, err := rand.Read(scramble); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	capabilities := clientProtocol41 | clientSecureConn | clientPluginAuth | clientConnectWithDB
@@ -89,7 +94,7 @@ func buildHandshakeV10(connID uint32) ([]byte, error) {
 	buf = append(buf, authPluginName...)
 	buf = append(buf, 0x00)
 
-	return buf, nil
+	return buf, scramble, nil
 }
 
 // parseHandshakeResponse extracts credentials from the client's auth packet.
@@ -151,10 +156,33 @@ func parseHandshakeResponse(payload []byte) credentials {
 }
 
 // sendHandshake writes the HandshakeV10 greeting to the connection.
-func sendHandshake(w io.Writer, connID uint32) error {
-	greeting, err := buildHandshakeV10(connID)
+// sendHandshake writes the server greeting and returns the scramble it advertised, which
+// the caller must retain to make sense of the client's auth reply.
+func sendHandshake(w io.Writer, connID uint32) ([]byte, error) {
+	greeting, scramble, err := buildHandshakeV10(connID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writePacket(w, 0, greeting)
+	if err := writePacket(w, 0, greeting); err != nil {
+		return nil, err
+	}
+	return scramble, nil
+}
+
+// nativePasswordArtifact renders a captured mysql_native_password exchange in hashcat's
+// -m 11200 format ("$mysqlna$<scramble>*<response>").
+//
+// The tagged format is deliberate. This value lands in attackers.password, a column that
+// holds plaintext for ssh/telnet/postgres, so an untagged 40-hex blob would eventually be
+// read as a password someone actually typed. The $mysqlna$ prefix says what it is, and it
+// is the format a cracker consumes without conversion.
+//
+// Returns empty unless both halves are exactly 20 bytes: an empty reply is an anonymous
+// login rather than a credential, and any other length means the client negotiated a
+// different auth plugin, where this format would misdescribe what we captured.
+func nativePasswordArtifact(scramble, authData []byte) string {
+	if len(scramble) != 20 || len(authData) != 20 {
+		return ""
+	}
+	return "$mysqlna$" + hex.EncodeToString(scramble) + "*" + hex.EncodeToString(authData)
 }

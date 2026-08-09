@@ -23,6 +23,12 @@ const (
 
 var _ honeypots.Honeypot = &honeypot{}
 
+// Indirected for tests, matching the mssql package.
+var (
+	saveMysqlLogin = persistence.SaveMysqlLogin
+	saveQuery      = persistence.SaveQuery
+)
+
 type honeypot struct {
 	logger zerolog.Logger
 }
@@ -64,6 +70,10 @@ type session struct {
 	database string
 	remoteIP string
 	queries  []string
+	// scramble and authData are the two halves of the mysql_native_password exchange.
+	// Both are needed to produce a crackable artifact; see nativePasswordArtifact.
+	scramble []byte
+	authData []byte
 }
 
 func (h *honeypot) handleConnection(conn net.Conn) {
@@ -86,10 +96,12 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	connID := rand.Uint32()
 
 	// Send server greeting
-	if err := sendHandshake(conn, connID); err != nil {
+	scramble, err := sendHandshake(conn, connID)
+	if err != nil {
 		h.logger.Debug().Err(err).Msg("failed to send handshake")
 		return
 	}
+	sess.scramble = scramble
 
 	// Read client auth response
 	reader := bufio.NewReader(conn)
@@ -102,6 +114,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	creds := parseHandshakeResponse(payload)
 	sess.username = creds.username
 	sess.database = creds.database
+	sess.authData = creds.authData
 
 	h.logger.Info().
 		Str("session", sess.guid).
@@ -175,6 +188,13 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	go h.persistSession(sess)
 }
 
+// persistSession records the login and then every query the session issued.
+//
+// Order matters and is not incidental: the server materializes the attacker row from the
+// login, and SaveQuery only writes an attacker_commands row keyed by the same guid. Saving
+// queries first (or after a failed login) would leave commands pointing at a guid that
+// never appears in attackers, so they would be invisible in the dashboard rather than
+// merely late. That is why a login error returns instead of pressing on.
 func (h *honeypot) persistSession(sess *session) {
 	if len(sess.queries) == 0 && sess.username == "" {
 		return
@@ -184,13 +204,27 @@ func (h *honeypot) persistSession(sess *session) {
 		RemoteAddr: sess.remoteIP,
 		Guid:       sess.guid,
 		Username:   sess.username,
-		Password:   "",
+		Password:   nativePasswordArtifact(sess.scramble, sess.authData),
 	}
-	if err := persistence.SaveMysqlLogin(req); err != nil {
+	if err := saveMysqlLogin(req); err != nil {
 		h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist mysql login")
 		return
 	}
 
+	// Queries are saved here rather than inline in the command loop so they cannot outrun
+	// the login above. Capture is deliberately independent of the cmdresp override lookup:
+	// that path skips credential-bearing statements (isSensitiveMySQLLookup) to avoid
+	// forwarding secrets to the response server, which used to mean CREATE USER ...
+	// IDENTIFIED BY was the one statement guaranteed to be recorded nowhere.
+	for _, query := range sess.queries {
+		if err := saveQuery(&proto.QueryRequest{
+			Guid:        sess.guid,
+			Query:       query,
+			CommandType: "mysql",
+		}); err != nil {
+			h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist mysql query")
+		}
+	}
 }
 
 func truncate(s string, maxLen int) string {
