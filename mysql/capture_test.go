@@ -30,7 +30,7 @@ func TestNativePasswordArtifact(t *testing.T) {
 		authData[i] = byte(0xF0 + i%16)
 	}
 
-	got := nativePasswordArtifact(scramble, authData)
+	got := nativePasswordArtifact(scramble, authData, "")
 	want := "$mysqlna$" + hex.EncodeToString(scramble) + "*" + hex.EncodeToString(authData)
 	if got != want {
 		t.Errorf("artifact = %q, want %q", got, want)
@@ -59,10 +59,54 @@ func TestNativePasswordArtifactRejectsUnusableInput(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := nativePasswordArtifact(c.scramble, c.authData); got != "" {
+			if got := nativePasswordArtifact(c.scramble, c.authData, ""); got != "" {
 				t.Errorf("artifact = %q, want empty", got)
 			}
 		})
+	}
+}
+
+// TestNativePasswordArtifactRejectsOtherPlugins is the reason the artifact takes the
+// negotiated plugin rather than trusting the 20-byte length. mysql_clear_password sends
+// the password itself: a 20-character one would otherwise be hex-encoded under a
+// $mysqlna$ label, mislabelling a plaintext as a digest and burying it from anyone
+// reading the column.
+func TestNativePasswordArtifactRejectsOtherPlugins(t *testing.T) {
+	scramble := make([]byte, 20)
+	clearPassword := []byte("correcthorsebattery1") // exactly 20 bytes
+	for i := range scramble {
+		scramble[i] = byte(i)
+	}
+
+	for _, plugin := range []string{"mysql_clear_password", "caching_sha2_password", "sha256_password"} {
+		t.Run(plugin, func(t *testing.T) {
+			if got := nativePasswordArtifact(scramble, clearPassword, plugin); got != "" {
+				t.Errorf("artifact = %q, want empty for plugin %q", got, plugin)
+			}
+		})
+	}
+
+	// The plugin we actually advertise, and a client that names none, both stand.
+	for _, plugin := range []string{"", authPluginName} {
+		if got := nativePasswordArtifact(scramble, clearPassword, plugin); got == "" {
+			t.Errorf("artifact empty for plugin %q, want the mysqlna form", plugin)
+		}
+	}
+}
+
+// TestParseHandshakeResponseReadsAuthPlugin pins the parsing the check above depends on.
+func TestParseHandshakeResponseReadsAuthPlugin(t *testing.T) {
+	authData := make([]byte, 20)
+	pkt := buildClientAuthPacket("root", authData)
+	pkt = append(pkt, "mysql_clear_password"...)
+	pkt = append(pkt, 0x00)
+
+	creds := parseHandshakeResponse(pkt)
+	if creds.authPlugin != "mysql_clear_password" {
+		t.Errorf("authPlugin = %q, want mysql_clear_password", creds.authPlugin)
+	}
+	if creds.username != "root" {
+		t.Errorf("username = %q, want root", creds.username)
 	}
 }
 
@@ -181,7 +225,11 @@ func TestPersistSessionSavesPasswordAndQueries(t *testing.T) {
 func TestPersistSessionSkipsQueriesWhenLoginFails(t *testing.T) {
 	rec := withRecorder(t)
 	origLogin := saveMysqlLogin
-	saveMysqlLogin = func(*proto.MysqlRequest) error { return errors.New("grpc down") }
+	var loginCalls int
+	saveMysqlLogin = func(*proto.MysqlRequest) error {
+		loginCalls++
+		return errors.New("grpc down")
+	}
 	t.Cleanup(func() { saveMysqlLogin = origLogin })
 
 	h := &honeypot{}
@@ -192,8 +240,71 @@ func TestPersistSessionSkipsQueriesWhenLoginFails(t *testing.T) {
 		queries:  []string{"select 1"},
 	})
 
+	if loginCalls != 1 {
+		t.Errorf("SaveMysqlLogin called %d times, want 1; the test must exercise the failing "+
+			"login rather than pass by returning before it", loginCalls)
+	}
 	if len(rec.queries) != 0 {
 		t.Errorf("queries saved = %d, want 0 when the login failed", len(rec.queries))
+	}
+}
+
+// TestPersistSessionAbandonsQueriesWhenTheBackendIsDown bounds the persistence goroutine.
+// Without it, a session holding maxCommands queries against a stalled backend would work
+// through every one at saveTimeout apiece -- roughly 42 minutes of retained goroutine and
+// captured payload for no successful write.
+func TestPersistSessionAbandonsQueriesWhenTheBackendIsDown(t *testing.T) {
+	withRecorder(t)
+	origQuery := saveQuery
+	var calls int
+	saveQuery = func(*proto.QueryRequest) error {
+		calls++
+		return errors.New("backend unavailable")
+	}
+	t.Cleanup(func() { saveQuery = origQuery })
+
+	queries := make([]string, 50)
+	for i := range queries {
+		queries[i] = "select 1"
+	}
+	h := &honeypot{}
+	h.persistSession(&session{
+		guid:     "3f2a1b4c-0000-4000-8000-000000000006",
+		username: "root",
+		remoteIP: "203.0.113.12",
+		queries:  queries,
+	})
+
+	if calls != maxConsecutivePersistFailures {
+		t.Errorf("SaveQuery called %d times, want %d before abandoning", calls, maxConsecutivePersistFailures)
+	}
+}
+
+// TestPersistSessionRecordsQueryOnlySessions covers the documented case where a session
+// produced queries but no username: the guard keeps it, since an unauthenticated query is
+// still worth having.
+func TestPersistSessionRecordsQueryOnlySessions(t *testing.T) {
+	rec := withRecorder(t)
+	h := &honeypot{}
+	h.persistSession(&session{
+		guid:     "3f2a1b4c-0000-4000-8000-000000000007",
+		remoteIP: "203.0.113.13",
+		queries:  []string{"select @@version"},
+	})
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.logins) != 1 {
+		t.Fatalf("logins = %d, want 1 for a query-only session", len(rec.logins))
+	}
+	if len(rec.queries) != 1 {
+		t.Fatalf("queries = %d, want 1", len(rec.queries))
+	}
+	if rec.logins[0].Username != "" || rec.logins[0].Password != "" {
+		t.Errorf("query-only login should carry no credential, got %+v", rec.logins[0])
+	}
+	if rec.queries[0].Guid != rec.logins[0].Guid {
+		t.Errorf("query guid %q does not match login guid %q", rec.queries[0].Guid, rec.logins[0].Guid)
 	}
 }
 

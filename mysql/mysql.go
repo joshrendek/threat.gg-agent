@@ -16,9 +16,12 @@ import (
 )
 
 const (
-	maxCommands  = 500
-	totalTimeout = 300 * time.Second
-	idleTimeout  = 30 * time.Second
+	maxCommands = 500
+	// maxConsecutivePersistFailures bounds how long a session's persistence goroutine will
+	// keep trying against an unresponsive backend. See the loop in persistSession.
+	maxConsecutivePersistFailures = 3
+	totalTimeout                  = 300 * time.Second
+	idleTimeout                   = 30 * time.Second
 )
 
 var _ honeypots.Honeypot = &honeypot{}
@@ -72,8 +75,9 @@ type session struct {
 	queries  []string
 	// scramble and authData are the two halves of the mysql_native_password exchange.
 	// Both are needed to produce a crackable artifact; see nativePasswordArtifact.
-	scramble []byte
-	authData []byte
+	scramble   []byte
+	authData   []byte
+	authPlugin string
 }
 
 func (h *honeypot) handleConnection(conn net.Conn) {
@@ -115,6 +119,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	sess.username = creds.username
 	sess.database = creds.database
 	sess.authData = creds.authData
+	sess.authPlugin = creds.authPlugin
 
 	h.logger.Info().
 		Str("session", sess.guid).
@@ -218,7 +223,7 @@ func (h *honeypot) persistSession(sess *session) {
 		RemoteAddr: sess.remoteIP,
 		Guid:       sess.guid,
 		Username:   sess.username,
-		Password:   nativePasswordArtifact(sess.scramble, sess.authData),
+		Password:   nativePasswordArtifact(sess.scramble, sess.authData, sess.authPlugin),
 	}
 	if err := saveMysqlLogin(req); err != nil {
 		h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist mysql login")
@@ -231,14 +236,30 @@ func (h *honeypot) persistSession(sess *session) {
 	// response server -- isSensitiveMySQLLookup drops anything containing "identified by",
 	// "set password" or "password(" -- which used to mean the statements most worth having
 	// were the ones guaranteed to be recorded nowhere.
-	for _, query := range sess.queries {
+	// A single failure is transient and must not cost the rest of the session -- the
+	// statement worth having is as likely to be last as first. A run of them means the
+	// backend is down, and grinding through the remaining queries would hold this
+	// goroutine, and the session's captured payloads, for maxCommands * saveTimeout
+	// (~42 minutes at 500 x 5s) while succeeding at nothing. Give up after a few.
+	consecutiveFailures := 0
+	for i, query := range sess.queries {
 		if err := saveQuery(&proto.QueryRequest{
 			Guid:        sess.guid,
 			Query:       query,
 			CommandType: "mysql",
 		}); err != nil {
 			h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist mysql query")
+			consecutiveFailures++
+			if consecutiveFailures >= maxConsecutivePersistFailures {
+				h.logger.Error().
+					Str("session", sess.guid).
+					Int("abandoned", len(sess.queries)-i-1).
+					Msg("abandoning mysql query persistence; backend appears unavailable")
+				return
+			}
+			continue
 		}
+		consecutiveFailures = 0
 	}
 }
 

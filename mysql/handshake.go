@@ -31,6 +31,12 @@ type credentials struct {
 	username string
 	database string
 	authData []byte
+	// authPlugin is the plugin the client says it used, when it advertised
+	// CLIENT_PLUGIN_AUTH. Empty means it named none. It decides whether authData may be
+	// labelled a mysql_native_password hash: a 20-byte reply proves nothing on its own,
+	// and a mysql_clear_password reply of that length is a plaintext password that must
+	// never be stored as though it were a digest.
+	authPlugin string
 }
 
 // buildHandshakeV10 constructs the server greeting packet and returns the per-connection
@@ -107,7 +113,7 @@ func parseHandshakeResponse(payload []byte) credentials {
 	offset := 0
 
 	// Capability flags (4 bytes)
-	_ = binary.LittleEndian.Uint32(payload[offset:])
+	capFlags := binary.LittleEndian.Uint32(payload[offset:])
 	offset += 4
 
 	// Max packet size (4 bytes)
@@ -141,14 +147,29 @@ func parseHandshakeResponse(payload []byte) credentials {
 		offset += authLen
 	}
 
-	// Database (null-terminated, optional)
-	if offset < len(payload) {
+	// Database (null-terminated, present only when the client asked to connect with one).
+	// The flag is honoured rather than assumed because the auth plugin name follows, and
+	// reading the database when there is none would consume it.
+	if capFlags&clientConnectWithDB != 0 && offset < len(payload) {
 		dbEnd := offset
 		for dbEnd < len(payload) && payload[dbEnd] != 0x00 {
 			dbEnd++
 		}
 		if dbEnd > offset {
 			creds.database = string(payload[offset:dbEnd])
+		}
+		offset = dbEnd + 1
+	}
+
+	// Auth plugin name (null-terminated, present only when the client advertised
+	// CLIENT_PLUGIN_AUTH).
+	if capFlags&clientPluginAuth != 0 && offset < len(payload) {
+		pluginEnd := offset
+		for pluginEnd < len(payload) && payload[pluginEnd] != 0x00 {
+			pluginEnd++
+		}
+		if pluginEnd > offset {
+			creds.authPlugin = string(payload[offset:pluginEnd])
 		}
 	}
 
@@ -176,11 +197,15 @@ func sendHandshake(w io.Writer, connID uint32) ([]byte, error) {
 // read as a password someone actually typed. The $mysqlna$ prefix says what it is, and it
 // is the format a cracker consumes without conversion.
 //
-// Returns empty unless both halves are exactly 20 bytes: an empty reply is an anonymous
-// login rather than a credential, and any other length means the client negotiated a
-// different auth plugin, where this format would misdescribe what we captured.
-func nativePasswordArtifact(scramble, authData []byte) string {
+// Returns empty unless both halves are exactly 20 bytes AND the client either named
+// mysql_native_password or named no plugin at all. Length alone is not proof: a
+// mysql_clear_password reply that happens to be 20 bytes is a plaintext password, and
+// hex-encoding it under a $mysqlna$ label would both misdescribe it and bury it.
+func nativePasswordArtifact(scramble, authData []byte, authPlugin string) string {
 	if len(scramble) != 20 || len(authData) != 20 {
+		return ""
+	}
+	if authPlugin != "" && authPlugin != authPluginName {
 		return ""
 	}
 	return "$mysqlna$" + hex.EncodeToString(scramble) + "*" + hex.EncodeToString(authData)

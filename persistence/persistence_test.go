@@ -189,6 +189,14 @@ func TestSaveLmstudioRequestIsNoOpWithoutClient(t *testing.T) {
 	require.NoError(t, SaveLmstudioRequest(&proto.LlmRequest{}))
 }
 
+func TestSaveMysqlCallsAreNoOpWithoutClient(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = nil
+	require.NoError(t, SaveMysqlLogin(&proto.MysqlRequest{}))
+	require.NoError(t, SaveQuery(&proto.QueryRequest{CommandType: "mysql"}))
+}
+
 func TestSaveMssqlCallsAreNoOpWithoutClient(t *testing.T) {
 	originalClient := honeypotClient
 	t.Cleanup(func() { honeypotClient = originalClient })
