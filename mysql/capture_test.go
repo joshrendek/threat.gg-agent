@@ -43,7 +43,7 @@ func TestNativePasswordArtifact(t *testing.T) {
 func TestNativePasswordArtifactRejectsUnusableInput(t *testing.T) {
 	full := make([]byte, 20)
 	cases := []struct {
-		name              string
+		name               string
 		scramble, authData []byte
 	}{
 		// An empty auth response is an anonymous / no-password login, not a credential.
@@ -91,9 +91,9 @@ func TestSendHandshakeReturnsScramble(t *testing.T) {
 }
 
 type recorder struct {
-	mu     sync.Mutex
-	logins []*proto.MysqlRequest
-	querys []*proto.QueryRequest
+	mu      sync.Mutex
+	logins  []*proto.MysqlRequest
+	queries []*proto.QueryRequest
 }
 
 func (r *recorder) login(in *proto.MysqlRequest) error {
@@ -106,7 +106,7 @@ func (r *recorder) login(in *proto.MysqlRequest) error {
 func (r *recorder) query(in *proto.QueryRequest) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.querys = append(r.querys, in)
+	r.queries = append(r.queries, in)
 	return nil
 }
 
@@ -157,10 +157,10 @@ func TestPersistSessionSavesPasswordAndQueries(t *testing.T) {
 		t.Errorf("password = %q, want %q", login.Password, want)
 	}
 
-	if len(rec.querys) != 3 {
-		t.Fatalf("queries saved = %d, want 3", len(rec.querys))
+	if len(rec.queries) != 3 {
+		t.Fatalf("queries saved = %d, want 3", len(rec.queries))
 	}
-	for i, q := range rec.querys {
+	for i, q := range rec.queries {
 		if q.CommandType != "mysql" {
 			t.Errorf("query %d command_type = %q, want mysql (the server rejects anything else)", i, q.CommandType)
 		}
@@ -170,7 +170,7 @@ func TestPersistSessionSavesPasswordAndQueries(t *testing.T) {
 	}
 	// The credential-setting statement is the highest-value capture and used to be the
 	// one guaranteed to be dropped, because the only telemetry path skipped it.
-	if got := rec.querys[1].Query; got != "CREATE USER 'evil'@'%' IDENTIFIED BY 'hunter2'" {
+	if got := rec.queries[1].Query; got != "CREATE USER 'evil'@'%' IDENTIFIED BY 'hunter2'" {
 		t.Errorf("credential statement not captured verbatim, got %q", got)
 	}
 }
@@ -192,8 +192,8 @@ func TestPersistSessionSkipsQueriesWhenLoginFails(t *testing.T) {
 		queries:  []string{"select 1"},
 	})
 
-	if len(rec.querys) != 0 {
-		t.Errorf("queries saved = %d, want 0 when the login failed", len(rec.querys))
+	if len(rec.queries) != 0 {
+		t.Errorf("queries saved = %d, want 0 when the login failed", len(rec.queries))
 	}
 }
 
@@ -202,8 +202,8 @@ func TestPersistSessionSkipsEmptySessions(t *testing.T) {
 	h := &honeypot{}
 	h.persistSession(&session{guid: "3f2a1b4c-0000-4000-8000-000000000003", remoteIP: "203.0.113.9"})
 
-	if len(rec.logins) != 0 || len(rec.querys) != 0 {
-		t.Errorf("bare connection persisted: %d logins, %d queries", len(rec.logins), len(rec.querys))
+	if len(rec.logins) != 0 || len(rec.queries) != 0 {
+		t.Errorf("bare connection persisted: %d logins, %d queries", len(rec.logins), len(rec.queries))
 	}
 }
 

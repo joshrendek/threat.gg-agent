@@ -155,9 +155,8 @@ func parseHandshakeResponse(payload []byte) credentials {
 	return creds
 }
 
-// sendHandshake writes the HandshakeV10 greeting to the connection.
-// sendHandshake writes the server greeting and returns the scramble it advertised, which
-// the caller must retain to make sense of the client's auth reply.
+// sendHandshake writes the HandshakeV10 greeting and returns the scramble it advertised,
+// which the caller must retain to make sense of the client's auth reply.
 func sendHandshake(w io.Writer, connID uint32) ([]byte, error) {
 	greeting, scramble, err := buildHandshakeV10(connID)
 	if err != nil {

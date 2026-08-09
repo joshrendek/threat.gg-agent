@@ -128,6 +128,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	}
 
 	// Command phase
+commandLoop:
 	for i := 0; i < maxCommands; i++ {
 		conn.SetReadDeadline(time.Now().Add(idleTimeout))
 
@@ -168,7 +169,11 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			cmdErr = handleComStatistics(conn, seqID+1)
 
 		case comQuit:
-			return
+			// Break the loop rather than return: returning skipped persistSession below,
+			// so a client that disconnected politely -- which every real MySQL driver
+			// does -- had its entire session discarded, credentials and queries alike.
+			// The best-behaved sessions were the ones we dropped.
+			break commandLoop
 
 		default:
 			// Unknown command: return OK

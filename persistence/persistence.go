@@ -141,8 +141,16 @@ func SaveKafkaApiRequest(in *proto.KafkaApiRequest) error {
 	return err
 }
 
+// SaveMysqlLogin is deadline-bounded because the mysql session persists its queries only
+// after this call returns (see mysql.persistSession): on a stalled backend an unbounded
+// call would strand the whole session's capture, not just the login, and leak the
+// goroutine with it.
 func SaveMysqlLogin(in *proto.MysqlRequest) error {
-	ctx := context.Background()
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveMysqlLogin(ctx, in)
 	return err
