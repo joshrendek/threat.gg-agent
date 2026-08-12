@@ -429,8 +429,9 @@ func TestPersistSessionSkipsEmptySessions(t *testing.T) {
 	}
 }
 
-// A login that supplies no password must still record the session; it just carries no
-// credential artifact.
+// A named user who supplies no password must still record the session; it just carries no
+// credential artifact. Distinct from TestPersistSessionRecordsAnonymousCredential above,
+// which is the mirror image: no username, but a credential.
 func TestPersistSessionNoPasswordLoginHasEmptyPassword(t *testing.T) {
 	rec := withRecorder(t)
 	h := &honeypot{}
@@ -445,6 +446,6 @@ func TestPersistSessionNoPasswordLoginHasEmptyPassword(t *testing.T) {
 		t.Fatalf("logins saved = %d, want 1", len(rec.logins))
 	}
 	if rec.logins[0].Password != "" {
-		t.Errorf("password = %q, want empty for an anonymous login", rec.logins[0].Password)
+		t.Errorf("password = %q, want empty when the client sent no auth response", rec.logins[0].Password)
 	}
 }
