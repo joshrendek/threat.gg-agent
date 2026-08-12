@@ -89,6 +89,11 @@ func (blockingClient) SaveMssqlLogin(ctx context.Context, in *proto.MssqlRequest
 	return nil, ctx.Err()
 }
 
+func (blockingClient) SaveMysqlLogin(ctx context.Context, in *proto.MysqlRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func (blockingClient) SaveKubeletRequest(ctx context.Context, in *proto.KubeletRequest, opts ...grpc.CallOption) (*proto.SaveReply, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -139,6 +144,9 @@ func TestAsynchronousSaveCallsAreTimeBounded(t *testing.T) {
 		{"s3", func() error { return SaveS3Request(&proto.S3Request{}) }},
 		{"lmstudio", func() error { return SaveLmstudioRequest(&proto.LlmRequest{}) }},
 		{"mssql-login", func() error { return SaveMssqlLogin(&proto.MssqlRequest{}) }},
+		// mysql-login is load-bearing: mysql.persistSession saves the session's queries
+		// only after this returns, so an unbounded call strands the whole capture.
+		{"mysql-login", func() error { return SaveMysqlLogin(&proto.MysqlRequest{}) }},
 		{"kubelet", func() error { return SaveKubeletRequest(&proto.KubeletRequest{}) }},
 		{"consul", func() error { return SaveConsulRequest(&proto.ConsulRequest{}) }},
 		{"amqp", func() error { return SaveAmqpSession(&proto.AmqpSessionRequest{}) }},
@@ -179,6 +187,14 @@ func TestSaveLmstudioRequestIsNoOpWithoutClient(t *testing.T) {
 	t.Cleanup(func() { honeypotClient = originalClient })
 	honeypotClient = nil
 	require.NoError(t, SaveLmstudioRequest(&proto.LlmRequest{}))
+}
+
+func TestSaveMysqlCallsAreNoOpWithoutClient(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = nil
+	require.NoError(t, SaveMysqlLogin(&proto.MysqlRequest{}))
+	require.NoError(t, SaveQuery(&proto.QueryRequest{CommandType: "mysql"}))
 }
 
 func TestSaveMssqlCallsAreNoOpWithoutClient(t *testing.T) {
