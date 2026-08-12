@@ -29,6 +29,12 @@ const (
 // miss/error paths are unit-testable without a live server.
 var getCommandResponse = persistence.GetCommandResponse
 
+// Indirected for tests, matching the mysql and mssql packages.
+var (
+	saveRedisConnect = persistence.SaveRedisConnect
+	saveRedisCommand = persistence.SaveRedisCommand
+)
+
 // serverResponse writes an admin-authored redis response VERBATIM to w when the server has
 // a Matched row for (command_type="redis", payload=fullCmd). RESP is line-oriented text, so
 // the stored response is exact RESP frames authored by the admin (e.g. "+PONG\r\n",
@@ -119,6 +125,14 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	}
 
 	h.logger.Info().Str("session", sess.guid).Str("remote", remoteAddr).Msg("new connection")
+
+	// Deferred so that every exit persists, including the QUIT case in the command loop.
+	// QUIT used to return straight out of this function and skip persistence entirely, so
+	// a client that disconnected politely -- redis-cli and effectively every real client
+	// library send QUIT on close -- had its whole session discarded, commands and
+	// credentials alike. The better behaved the client, the more certain the loss.
+	// persistSession itself declines to record a session that issued nothing.
+	defer func() { go h.persistSession(sess) }()
 
 	conn.SetDeadline(time.Now().Add(totalTimeout))
 
@@ -237,7 +251,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		Int("commands", len(sess.commands)).
 		Msg("session ended")
 
-	go h.persistSession(sess)
+	// persistSession runs from the deferred call above, which covers this exit too.
 }
 
 func handleError(conn net.Conn, msg string) error {
@@ -255,7 +269,7 @@ func (h *honeypot) persistSession(sess *session) {
 		Username:   sess.username,
 		Password:   sess.password,
 	}
-	if err := persistence.SaveRedisConnect(req); err != nil {
+	if err := saveRedisConnect(req); err != nil {
 		h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist redis connect")
 		return
 	}
@@ -265,7 +279,7 @@ func (h *honeypot) persistSession(sess *session) {
 			Guid:    sess.guid,
 			Command: cmd,
 		}
-		if err := persistence.SaveRedisCommand(cmdReq); err != nil {
+		if err := saveRedisCommand(cmdReq); err != nil {
 			h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist redis command")
 		}
 	}
