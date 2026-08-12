@@ -77,6 +77,9 @@ func runSession(t *testing.T, commands ...string) *recorder {
 	}()
 
 	_ = client.SetDeadline(time.Now().Add(10 * time.Second))
+	// Registered before the drain goroutine starts so a t.Fatalf below cannot strand it:
+	// closing the pipe is what makes its blocked Read return.
+	t.Cleanup(func() { client.Close() })
 	// Drain concurrently: replies are unread otherwise and net.Pipe is unbuffered, so the
 	// handler would block writing instead of reaching the next command.
 	go func() {
@@ -116,11 +119,15 @@ func runSession(t *testing.T, commands ...string) *recorder {
 func TestSessionEndingInQuitIsPersisted(t *testing.T) {
 	rec := runSession(t, "AUTH hunter2", "SET foo bar", "QUIT")
 
+	// Wait for the COMPLETE expected state, not just the connect. persistSession saves the
+	// connect first and then reads saveRedisCommand once per command, so returning early
+	// would let the test's cleanup restore those vars while the goroutine still reads them.
+	// The recorder's mutex is what gives us the happens-before edge.
 	waitFor(t, func() bool {
 		rec.mu.Lock()
 		defer rec.mu.Unlock()
-		return len(rec.connects) == 1
-	}, "the QUIT session to be persisted")
+		return len(rec.connects) == 1 && len(rec.commands) == 3
+	}, "the QUIT session and all three commands to be persisted")
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -153,8 +160,8 @@ func TestSessionEndingInDisconnectIsPersisted(t *testing.T) {
 	waitFor(t, func() bool {
 		rec.mu.Lock()
 		defer rec.mu.Unlock()
-		return len(rec.connects) == 1
-	}, "the disconnected session to be persisted")
+		return len(rec.connects) == 1 && len(rec.commands) == 1
+	}, "the disconnected session and its command to be persisted")
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
