@@ -382,8 +382,43 @@ func TestPersistSessionContinuesAfterAQueryFails(t *testing.T) {
 	}
 }
 
-// A connection that produced neither a username nor a query is an ordinary port scan and
-// must not manufacture an attacker row.
+// TestPersistSessionRecordsAnonymousCredential covers the case the empty-session guard
+// used to swallow. MySQL allows anonymous accounts, so a client can authenticate with an
+// empty username and still send a real native-password response; keying the guard on the
+// username alone threw that credential away for want of a name to file it under.
+func TestPersistSessionRecordsAnonymousCredential(t *testing.T) {
+	rec := withRecorder(t)
+	scramble := make([]byte, 20)
+	authData := make([]byte, 20)
+	for i := range scramble {
+		scramble[i] = byte(i + 7)
+		authData[i] = byte(i + 11)
+	}
+
+	h := &honeypot{}
+	h.persistSession(&session{
+		guid:     "3f2a1b4c-0000-4000-8000-000000000009",
+		remoteIP: "203.0.113.15",
+		scramble: scramble,
+		authData: authData,
+	})
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.logins) != 1 {
+		t.Fatalf("logins = %d, want 1 for an anonymous login carrying a credential", len(rec.logins))
+	}
+	want := "$mysqlna$" + hex.EncodeToString(scramble) + "*" + hex.EncodeToString(authData)
+	if got := rec.logins[0].Password; got != want {
+		t.Errorf("password = %q, want %q", got, want)
+	}
+	if rec.logins[0].Username != "" {
+		t.Errorf("username = %q, want empty", rec.logins[0].Username)
+	}
+}
+
+// A connection that produced nothing at all -- no username, no credential, no query -- is
+// an ordinary port scan and must not manufacture an attacker row.
 func TestPersistSessionSkipsEmptySessions(t *testing.T) {
 	rec := withRecorder(t)
 	h := &honeypot{}

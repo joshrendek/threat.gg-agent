@@ -16,12 +16,15 @@ import (
 )
 
 const (
+	// maxCommands bounds how many commands one session may issue before the honeypot stops
+	// reading, so a single connection cannot buffer captured queries without limit.
 	maxCommands = 500
 	// maxConsecutivePersistFailures bounds how long a session's persistence goroutine will
 	// keep trying against an unresponsive backend. See the loop in persistSession.
 	maxConsecutivePersistFailures = 3
-	totalTimeout                  = 300 * time.Second
-	idleTimeout                   = 30 * time.Second
+	// totalTimeout caps a whole session; idleTimeout caps the wait for each next command.
+	totalTimeout = 300 * time.Second
+	idleTimeout  = 30 * time.Second
 )
 
 var _ honeypots.Honeypot = &honeypot{}
@@ -205,11 +208,11 @@ commandLoop:
 	// persistSession runs from the deferred call above, which covers this exit too.
 }
 
-// persistSession records the login and then every query the session issued. It skips
-// sessions that produced neither a username nor a query, so an ordinary port scan that
-// opens a connection and leaves does not manufacture an attacker row; a session with only
-// one of the two is still recorded, since an unauthenticated query and a credential with
-// no follow-up are both worth keeping.
+// persistSession records the login and then every query the session issued. It skips only
+// sessions that produced nothing at all -- no username, no credential, no query -- so an
+// ordinary port scan that opens a connection and leaves does not manufacture an attacker
+// row. Any one of the three is enough to record: an unauthenticated query, a credential
+// with no follow-up, and an anonymous login are all worth keeping.
 //
 // Order matters and is not incidental: the server materializes the attacker row from the
 // login, and SaveQuery only writes an attacker_commands row keyed by the same guid. Saving
@@ -217,7 +220,11 @@ commandLoop:
 // never appears in attackers, so they would be invisible in the dashboard rather than
 // merely late. That is why a login error returns instead of pressing on.
 func (h *honeypot) persistSession(sess *session) {
-	if len(sess.queries) == 0 && sess.username == "" {
+	// authData is part of the test because MySQL allows anonymous accounts: a client can
+	// authenticate with an empty username and still send a real native-password response.
+	// Checking only the username and queries discarded exactly that -- a captured
+	// credential, thrown away for want of a name to file it under.
+	if len(sess.queries) == 0 && sess.username == "" && len(sess.authData) == 0 {
 		return
 	}
 
