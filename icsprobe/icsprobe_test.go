@@ -3,6 +3,7 @@ package icsprobe
 import (
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- Task 3: remote address correctness -------------------------------------
+// --- remote address correctness ----------------------------------------------
 //
 // The server calls normalizedRemoteIP() on remote_addr and, when it cannot
 // parse the value, silently substitutes ::1. llmcore and etcd already suffer
@@ -46,12 +47,12 @@ func TestRemoteAddrStringsSurviveServerParsing(t *testing.T) {
 	}
 }
 
-// TestHandleConnectionSendsAParseableRemoteAddr drives a real TCP connection
+// TestServeSendsAParseableRemoteAddr drives a real TCP connection
 // (not net.Pipe, whose addresses don't look like real ones) through
 // handleConnection and confirms the exact string conn.RemoteAddr().String()
 // produces -- and that icsprobe forwards unmodified -- round-trips through
 // the server's parse logic. Runs over both tcp4 and IPv6 loopback.
-func TestHandleConnectionSendsAParseableRemoteAddr(t *testing.T) {
+func TestServeSendsAParseableRemoteAddr(t *testing.T) {
 	restoreDeadline := shrinkReadDeadline(t, 300*time.Millisecond)
 	defer restoreDeadline()
 
@@ -85,7 +86,7 @@ func TestHandleConnectionSendsAParseableRemoteAddr(t *testing.T) {
 	}
 }
 
-// --- Task 5.2: listener test -------------------------------------------------
+// --- listener capture behaviour -----------------------------------------------
 
 func TestServeCapturesBytesAndClosesPromptly(t *testing.T) {
 	restoreDeadline := shrinkReadDeadline(t, 500*time.Millisecond)
@@ -128,7 +129,7 @@ func TestServeCapturesBytesAndClosesPromptly(t *testing.T) {
 	require.Error(t, err)
 }
 
-// --- Task 5.3: bare connect with no bytes sent ------------------------------
+// --- bare connect, no bytes sent ----------------------------------------------
 
 func TestServeCapturesBareConnectWithNoBytesSent(t *testing.T) {
 	restoreDeadline := shrinkReadDeadline(t, 200*time.Millisecond)
@@ -158,7 +159,7 @@ func TestServeCapturesBareConnectWithNoBytesSent(t *testing.T) {
 	require.NotEmpty(t, req.Guid)
 }
 
-// --- Task 5.4: ICS_PROBE_PORTS parsing --------------------------------------
+// --- ICS_PROBE_PORTS parsing ---------------------------------------------------
 
 func TestParsePorts(t *testing.T) {
 	t.Run("default when unset", func(t *testing.T) {
@@ -266,4 +267,51 @@ func TestParsePortsKeepsValidEntriesAndDropsTypos(t *testing.T) {
 			t.Fatalf("parsePorts = %v, want %v", got, want)
 		}
 	}
+}
+
+// --- Start(), the production entry point ---------------------------------------
+
+// Start() was the one path with no coverage at all: it reads the env, parses the
+// port list, builds the semaphore and binds every listener. Everything else was
+// tested by calling serve() with a listener the test made itself, which skips
+// all of that. This drives the real entry point end to end over a port the test
+// picks, so a regression in env handling or listener setup fails here rather
+// than silently producing a node that binds nothing.
+func TestStartBindsConfiguredPortsAndCaptures(t *testing.T) {
+	restoreDeadline := shrinkReadDeadline(t, 300*time.Millisecond)
+	defer restoreDeadline()
+
+	// Discover a free high port by binding :0, then release it for Start().
+	// A racing bind is possible in principle; if it happens, Start logs and
+	// skips that listener and the capture below fails loudly rather than hanging.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := probe.Addr().(*net.TCPAddr).Port
+	require.NoError(t, probe.Close())
+
+	t.Setenv("ICS_PROBE_PORTS", strconv.Itoa(port))
+	captured := installFakeSave(t)
+
+	h := New().(*honeypot)
+	go h.Start()
+
+	// Give Start a moment to bind before dialling.
+	var conn net.Conn
+	for i := 0; i < 50; i++ {
+		conn, err = net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	require.NoError(t, err, "Start() should have bound port %d from ICS_PROBE_PORTS", port)
+	defer conn.Close()
+
+	_, err = conn.Write([]byte{0x03, 0x00, 0x00, 0x16})
+	require.NoError(t, err)
+
+	req := waitForCapture(t, captured)
+	require.Equal(t, uint32(port), req.Port, "captured port must be the one Start() bound")
+	require.Equal(t, []byte{0x03, 0x00, 0x00, 0x16}, req.FirstBytes)
+	require.NotNil(t, serverParse(req.RemoteAddr), "remote_addr must survive the server's parse logic")
 }

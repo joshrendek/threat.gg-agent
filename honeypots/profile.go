@@ -65,10 +65,11 @@ var profiles = map[string][]string{
 
 	// ProfileICS is the industrial/OT honeypot profile. It currently runs
 	// icsprobe, a passive bare-TCP measurement instrument (not a protocol
-	// emulator) across the common ICS/SCADA ports -- Modbus, S7comm,
-	// DNP3/IEC-104, EtherNet/IP, OPC UA -- to establish whether industrial
-	// scanning reaches our address space before a real emulator is built for
-	// any of them.
+	// emulator), across the common ICS/SCADA ports: 102 S7comm, 502 Modbus,
+	// 2404 IEC 60870-5-104, 20000 DNP3, 44818 EtherNet/IP and 4840 OPC UA. It
+	// establishes whether industrial scanning reaches our address space before
+	// a real emulator is built for any of them. BACnet/IP 47808 is UDP and is
+	// deliberately out of scope for v1.
 	ProfileICS: {
 		"icsprobe",
 	},
