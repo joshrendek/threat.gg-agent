@@ -233,6 +233,13 @@ func TestSaveAdbSessionIsNoOpWithoutClient(t *testing.T) {
 	require.NoError(t, SaveAdbSession(&proto.AdbSessionRequest{}))
 }
 
+func TestSaveIcsProbeIsNoOpWithoutClient(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = nil
+	require.NoError(t, SaveIcsProbe(&proto.IcsProbeRequest{}))
+}
+
 func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
 	originalClient := honeypotClient
 	t.Cleanup(func() { honeypotClient = originalClient })

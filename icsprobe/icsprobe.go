@@ -76,8 +76,8 @@ func (h *honeypot) Name() string {
 
 func (h *honeypot) Start() {
 	raw := os.Getenv("ICS_PROBE_PORTS")
-	ports := parsePorts(raw)
-	if len(ports) == 0 {
+	ports, fellBack := portsForStart(raw)
+	if fellBack {
 		// Fall back to the defaults rather than starting nothing.
 		//
 		// This is a measurement instrument, and its whole purpose is to answer
@@ -94,7 +94,6 @@ func (h *honeypot) Start() {
 		// at all could be parsed and the operator's intent is unknowable.
 		h.logger.Error().Str("ICS_PROBE_PORTS", raw).Str("using", defaultPortsCSV).
 			Msg("icsprobe: no valid ports parsed from ICS_PROBE_PORTS, falling back to defaults")
-		ports = parsePorts("")
 	}
 
 	if h.sem == nil {
@@ -210,4 +209,18 @@ func parsePorts(raw string) []int {
 		ports = append(ports, p)
 	}
 	return ports
+}
+
+// portsForStart resolves the port list Start will bind, reporting whether it had
+// to fall back to the defaults.
+//
+// Split out of Start so the fallback decision is directly testable: exercising
+// it through Start would mean binding the real default ports, one of which (102)
+// is privileged and all of which would collide with a running agent.
+func portsForStart(raw string) (ports []int, fellBack bool) {
+	ports = parsePorts(raw)
+	if len(ports) > 0 {
+		return ports, false
+	}
+	return parsePorts(""), true
 }

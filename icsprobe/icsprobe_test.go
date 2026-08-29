@@ -235,25 +235,27 @@ func shrinkReadDeadline(t *testing.T, d time.Duration) func() {
 // cancel the whole ICS programme. A typo in an env var must not be able to
 // manufacture that answer. Partly-valid lists are unaffected: good entries are
 // kept and typos dropped.
-func TestStartFallsBackToDefaultsWhenNoPortParses(t *testing.T) {
-	if got := parsePorts("nonsense,also-bad,-1,99999"); len(got) != 0 {
-		t.Fatalf("parsePorts of an all-invalid list = %v, want empty", got)
-	}
-	defaults := parsePorts("")
-	if len(defaults) == 0 {
-		t.Fatal("parsePorts(\"\") returned no default ports")
-	}
-	// The fallback Start() uses is parsePorts("") — assert it yields the six
-	// documented TCP ICS ports so the fallback cannot silently shrink.
+func TestPortsForStartFallsBackToDefaultsWhenNothingParses(t *testing.T) {
+	// The decision Start actually makes. Exercising it through Start would mean
+	// binding the real default ports, one of which (102) is privileged and all
+	// of which would collide with a running agent, so the decision is split out.
+	ports, fellBack := portsForStart("nonsense,also-bad,-1,99999")
+	require.True(t, fellBack, "an all-invalid list must report that it fell back")
 	want := map[int]bool{102: true, 502: true, 2404: true, 20000: true, 44818: true, 4840: true}
-	if len(defaults) != len(want) {
-		t.Fatalf("default ports = %v, want %d entries", defaults, len(want))
+	require.Len(t, ports, len(want), "fallback must be the six documented TCP ICS ports")
+	for _, p := range ports {
+		require.True(t, want[p], "unexpected fallback port %d", p)
 	}
-	for _, p := range defaults {
-		if !want[p] {
-			t.Errorf("unexpected default port %d", p)
-		}
-	}
+
+	// A usable list must NOT trigger the fallback.
+	ports, fellBack = portsForStart("502,102")
+	require.False(t, fellBack, "a valid list must not fall back")
+	require.Equal(t, []int{502, 102}, ports)
+
+	// Partly-valid keeps the good entries rather than falling back wholesale.
+	ports, fellBack = portsForStart("502, oops, 44818")
+	require.False(t, fellBack, "a partly-valid list must not fall back")
+	require.Equal(t, []int{502, 44818}, ports)
 }
 
 func TestParsePortsKeepsValidEntriesAndDropsTypos(t *testing.T) {
