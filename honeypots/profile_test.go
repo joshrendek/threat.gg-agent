@@ -147,15 +147,22 @@ func TestSelect_AllReturnsEveryCatalogEntrySortedAlphabetically(t *testing.T) {
 	}
 }
 
-func TestSelect_ICSIsEmptyAndNotAnError(t *testing.T) {
-	catalog := newFakeCatalog(expectedDefaultNames...)
+// TestSelect_ICSReturnsItsConfiguredHoneypots pins ProfileICS's current
+// contents (icsprobe, a passive bare-TCP measurement instrument -- not a
+// protocol emulator). ProfileICS used to be an explicitly-empty placeholder;
+// if it ever needs to change again, that should be a deliberate edit here,
+// same as expectedDefaultNames is for ProfileDefault.
+func TestSelect_ICSReturnsItsConfiguredHoneypots(t *testing.T) {
+	catalog := newFakeCatalog(append(append([]string{}, expectedDefaultNames...), "icsprobe")...)
 
 	got, err := Select(ProfileICS, catalog)
 	if err != nil {
 		t.Fatalf("Select(%q, catalog) returned error: %v", ProfileICS, err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("Select(%q, catalog) = %v, want an empty slice", ProfileICS, got)
+
+	want := []string{"icsprobe"}
+	if gotNames := namesOf(got); !reflect.DeepEqual(gotNames, want) {
+		t.Fatalf("Select(%q, catalog) names = %v, want %v", ProfileICS, gotNames, want)
 	}
 }
 
@@ -208,15 +215,15 @@ func TestResolveProfile_NormalizesWhitespaceAndCase(t *testing.T) {
 }
 
 func TestSelect_AcceptsNormalizableProfileNames(t *testing.T) {
-	cat := newFakeCatalog(expectedDefaultNames...)
+	cat := newFakeCatalog(append(append([]string{}, expectedDefaultNames...), "icsprobe")...)
 	for _, in := range []string{"ICS", " ics ", "Ics"} {
 		got, err := Select(in, cat)
 		if err != nil {
 			t.Errorf("Select(%q) unexpected error: %v", in, err)
 			continue
 		}
-		if len(got) != 0 {
-			t.Errorf("Select(%q) = %d honeypots, want 0 (ics is empty)", in, len(got))
+		if len(got) != 1 {
+			t.Errorf("Select(%q) = %d honeypots, want 1 (icsprobe)", in, len(got))
 		}
 	}
 	if _, err := Select("  nosuchprofile  ", cat); err == nil {
