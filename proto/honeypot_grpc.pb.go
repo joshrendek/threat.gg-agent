@@ -177,6 +177,7 @@ const (
 	Honeypot_SaveFile_FullMethodName             = "/honeypot.Honeypot/SaveFile"
 	Honeypot_SaveMcp_FullMethodName              = "/honeypot.Honeypot/SaveMcp"
 	Honeypot_SaveS3Request_FullMethodName        = "/honeypot.Honeypot/SaveS3Request"
+	Honeypot_SaveIcsProbe_FullMethodName         = "/honeypot.Honeypot/SaveIcsProbe"
 	Honeypot_GetLlmBundle_FullMethodName         = "/honeypot.Honeypot/GetLlmBundle"
 )
 
@@ -240,6 +241,12 @@ type HoneypotClient interface {
 	SaveMcp(ctx context.Context, in *McpRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	// SaveS3Request stores bounded metadata for one emulated MinIO/S3 operation.
 	SaveS3Request(ctx context.Context, in *S3Request, opts ...grpc.CallOption) (*SaveReply, error)
+	// SaveIcsProbe stores one bare-TCP probe against an ICS/SCADA port (Modbus,
+	// S7comm, DNP3, EtherNet/IP, OPC UA, ...). This is a measurement instrument,
+	// not a honeypot: it answers nothing and emulates nothing, it only records
+	// that something connected. Deliberately NOT an Attacker/AttackDatum row --
+	// see grpc_server/icsprobe.go.
+	SaveIcsProbe(ctx context.Context, in *IcsProbeRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
 	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
 	// bundle behind an atomic.Pointer and matches locally, so nothing on the
@@ -758,6 +765,16 @@ func (c *honeypotClient) SaveS3Request(ctx context.Context, in *S3Request, opts 
 	return out, nil
 }
 
+func (c *honeypotClient) SaveIcsProbe(ctx context.Context, in *IcsProbeRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveIcsProbe_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *honeypotClient) GetLlmBundle(ctx context.Context, in *LlmBundleRequest, opts ...grpc.CallOption) (*LlmBundleReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LlmBundleReply)
@@ -828,6 +845,12 @@ type HoneypotServer interface {
 	SaveMcp(context.Context, *McpRequest) (*SaveReply, error)
 	// SaveS3Request stores bounded metadata for one emulated MinIO/S3 operation.
 	SaveS3Request(context.Context, *S3Request) (*SaveReply, error)
+	// SaveIcsProbe stores one bare-TCP probe against an ICS/SCADA port (Modbus,
+	// S7comm, DNP3, EtherNet/IP, OPC UA, ...). This is a measurement instrument,
+	// not a honeypot: it answers nothing and emulates nothing, it only records
+	// that something connected. Deliberately NOT an Attacker/AttackDatum row --
+	// see grpc_server/icsprobe.go.
+	SaveIcsProbe(context.Context, *IcsProbeRequest) (*SaveReply, error)
 	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
 	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
 	// bundle behind an atomic.Pointer and matches locally, so nothing on the
@@ -995,6 +1018,9 @@ func (UnimplementedHoneypotServer) SaveMcp(context.Context, *McpRequest) (*SaveR
 }
 func (UnimplementedHoneypotServer) SaveS3Request(context.Context, *S3Request) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveS3Request not implemented")
+}
+func (UnimplementedHoneypotServer) SaveIcsProbe(context.Context, *IcsProbeRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveIcsProbe not implemented")
 }
 func (UnimplementedHoneypotServer) GetLlmBundle(context.Context, *LlmBundleRequest) (*LlmBundleReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetLlmBundle not implemented")
@@ -1920,6 +1946,24 @@ func _Honeypot_SaveS3Request_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveIcsProbe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IcsProbeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveIcsProbe(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveIcsProbe_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveIcsProbe(ctx, req.(*IcsProbeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Honeypot_GetLlmBundle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LlmBundleRequest)
 	if err := dec(in); err != nil {
@@ -2144,6 +2188,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveS3Request",
 			Handler:    _Honeypot_SaveS3Request_Handler,
+		},
+		{
+			MethodName: "SaveIcsProbe",
+			Handler:    _Honeypot_SaveIcsProbe_Handler,
 		},
 		{
 			MethodName: "GetLlmBundle",

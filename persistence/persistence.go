@@ -191,6 +191,18 @@ func SaveConsulRequest(in *proto.ConsulRequest) error {
 	return err
 }
 
+// SaveIcsProbe sends one bounded ICS/SCADA bare-TCP probe record with a deadline.
+func SaveIcsProbe(in *proto.IcsProbeRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveIcsProbe(ctx, in)
+	return err
+}
+
 // SaveAmqpSession sends one bounded AMQP session record with a deadline.
 func SaveAmqpSession(in *proto.AmqpSessionRequest) error {
 	if honeypotClient == nil {

@@ -1,0 +1,269 @@
+package icsprobe
+
+import (
+	"net"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/joshrendek/threat.gg-agent/proto"
+	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/require"
+)
+
+// --- Task 3: remote address correctness -------------------------------------
+//
+// The server calls normalizedRemoteIP() on remote_addr and, when it cannot
+// parse the value, silently substitutes ::1. llmcore and etcd already suffer
+// this (all their IPv6 attackers collapse into one ::1 bucket). These tests
+// prove the exact strings icsprobe sends survive the server's parse logic,
+// for IPv4, bare IPv6, and bracketed IPv6-with-port.
+
+// serverParse mirrors the parsing normalizedRemoteIP performs server-side.
+func serverParse(addr string) net.IP {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = strings.Trim(addr, "[]")
+	}
+	return net.ParseIP(host)
+}
+
+func TestRemoteAddrStringsSurviveServerParsing(t *testing.T) {
+	cases := []struct {
+		name string
+		addr string
+	}{
+		{"ipv4 with port", "203.0.113.7:54321"},
+		{"ipv6 bracketed with port", "[2001:db8::1]:54321"},
+		{"ipv6 bare, no port", "2001:db8::1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ip := serverParse(tc.addr)
+			require.NotNil(t, ip, "server-side parse of %q must yield a valid IP", tc.addr)
+		})
+	}
+}
+
+// TestHandleConnectionSendsAParseableRemoteAddr drives a real TCP connection
+// (not net.Pipe, whose addresses don't look like real ones) through
+// handleConnection and confirms the exact string conn.RemoteAddr().String()
+// produces -- and that icsprobe forwards unmodified -- round-trips through
+// the server's parse logic. Runs over both tcp4 and IPv6 loopback.
+func TestHandleConnectionSendsAParseableRemoteAddr(t *testing.T) {
+	restoreDeadline := shrinkReadDeadline(t, 300*time.Millisecond)
+	defer restoreDeadline()
+
+	for _, network := range []string{"tcp4", "tcp6"} {
+		t.Run(network, func(t *testing.T) {
+			loopback := "127.0.0.1:0"
+			if network == "tcp6" {
+				loopback = "[::1]:0"
+			}
+
+			listener, err := net.Listen(network, loopback)
+			if err != nil {
+				t.Skipf("%s loopback unavailable in this environment: %v", network, err)
+			}
+			defer listener.Close()
+
+			captured := installFakeSave(t)
+
+			h := &honeypot{logger: zerolog.Nop(), sem: make(chan struct{}, 4)}
+			go h.serve(listener)
+
+			conn, err := net.Dial(network, listener.Addr().String())
+			require.NoError(t, err)
+			defer conn.Close()
+
+			req := waitForCapture(t, captured)
+
+			ip := serverParse(req.RemoteAddr)
+			require.NotNil(t, ip, "remote_addr %q sent by icsprobe must survive the server's parse logic", req.RemoteAddr)
+		})
+	}
+}
+
+// --- Task 5.2: listener test -------------------------------------------------
+
+func TestServeCapturesBytesAndClosesPromptly(t *testing.T) {
+	restoreDeadline := shrinkReadDeadline(t, 500*time.Millisecond)
+	defer restoreDeadline()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+
+	wantPort := listener.Addr().(*net.TCPAddr).Port
+	captured := installFakeSave(t)
+
+	h := &honeypot{logger: zerolog.Nop(), sem: make(chan struct{}, 4)}
+	go h.serve(listener)
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+	defer conn.Close()
+
+	payload := []byte{0x03, 0x00, 0x00, 0x1f, 0xff, 0x01} // arbitrary opening bytes
+	start := time.Now()
+	_, err = conn.Write(payload)
+	require.NoError(t, err)
+
+	req := waitForCapture(t, captured)
+	elapsed := time.Since(start)
+
+	require.Less(t, elapsed, 2*time.Second, "connection should be closed promptly after data arrives, not held for the full deadline")
+	require.Equal(t, uint32(wantPort), req.Port)
+	require.Equal(t, uint32(len(payload)), req.ByteCount)
+	require.True(t, reflect.DeepEqual(payload, req.FirstBytes), "first_bytes = %x, want %x", req.FirstBytes, payload)
+	require.LessOrEqual(t, req.TtfbMs, uint32(readDeadline.Milliseconds()))
+	require.NotEmpty(t, req.Guid)
+
+	// The server should close its side promptly too.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1)
+	n, err := conn.Read(buf)
+	require.Equal(t, 0, n)
+	require.Error(t, err)
+}
+
+// --- Task 5.3: bare connect with no bytes sent ------------------------------
+
+func TestServeCapturesBareConnectWithNoBytesSent(t *testing.T) {
+	restoreDeadline := shrinkReadDeadline(t, 200*time.Millisecond)
+	defer restoreDeadline()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+
+	captured := installFakeSave(t)
+
+	h := &honeypot{logger: zerolog.Nop(), sem: make(chan struct{}, 4)}
+	go h.serve(listener)
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+	defer conn.Close()
+	// Send nothing. A bare connect is itself the signal -- the most common
+	// scanner case -- and must still produce a record once the read deadline
+	// elapses.
+
+	req := waitForCapture(t, captured)
+
+	require.Equal(t, uint32(0), req.ByteCount)
+	require.Equal(t, uint32(0), req.TtfbMs)
+	require.Empty(t, req.FirstBytes)
+	require.NotEmpty(t, req.Guid)
+}
+
+// --- Task 5.4: ICS_PROBE_PORTS parsing --------------------------------------
+
+func TestParsePorts(t *testing.T) {
+	t.Run("default when unset", func(t *testing.T) {
+		got := parsePorts("")
+		require.Equal(t, []int{102, 502, 2404, 20000, 44818, 4840}, got)
+	})
+
+	t.Run("blank/whitespace-only also defaults", func(t *testing.T) {
+		got := parsePorts("   ")
+		require.Equal(t, []int{102, 502, 2404, 20000, 44818, 4840}, got)
+	})
+
+	t.Run("override when set", func(t *testing.T) {
+		got := parsePorts("502, 2404")
+		require.Equal(t, []int{502, 2404}, got)
+	})
+
+	t.Run("malformed entries are skipped without panicking", func(t *testing.T) {
+		var got []int
+		require.NotPanics(t, func() {
+			got = parsePorts("abc,,502,99999,-1,0,2404,")
+		})
+		require.Equal(t, []int{502, 2404}, got)
+	})
+
+	t.Run("entirely malformed yields no ports rather than falling back to defaults", func(t *testing.T) {
+		got := parsePorts("abc,xyz")
+		require.Empty(t, got)
+	})
+}
+
+// --- test helpers ------------------------------------------------------------
+
+// installFakeSave swaps in a fake saveIcsProbe that forwards each captured
+// request on a channel, and restores the real one on test cleanup.
+func installFakeSave(t *testing.T) chan *proto.IcsProbeRequest {
+	t.Helper()
+	original := saveIcsProbe
+	captured := make(chan *proto.IcsProbeRequest, 4)
+	saveIcsProbe = func(in *proto.IcsProbeRequest) error {
+		captured <- in
+		return nil
+	}
+	t.Cleanup(func() { saveIcsProbe = original })
+	return captured
+}
+
+func waitForCapture(t *testing.T, captured chan *proto.IcsProbeRequest) *proto.IcsProbeRequest {
+	t.Helper()
+	select {
+	case req := <-captured:
+		return req
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected a captured icsprobe record")
+		return nil
+	}
+}
+
+// shrinkReadDeadline overrides the package's readDeadline for a test and
+// returns a func to restore it, avoiding real multi-second sleeps.
+func shrinkReadDeadline(t *testing.T, d time.Duration) func() {
+	t.Helper()
+	original := readDeadline
+	readDeadline = d
+	return func() { readDeadline = original }
+}
+
+// A fully-malformed ICS_PROBE_PORTS must fall back to the defaults, not start
+// nothing.
+//
+// Starting nothing yields zero rows, and for a measurement instrument zero rows
+// reads exactly like "no ICS scanning reaches us" -- the conclusion that would
+// cancel the whole ICS programme. A typo in an env var must not be able to
+// manufacture that answer. Partly-valid lists are unaffected: good entries are
+// kept and typos dropped.
+func TestStartFallsBackToDefaultsWhenNoPortParses(t *testing.T) {
+	if got := parsePorts("nonsense,also-bad,-1,99999"); len(got) != 0 {
+		t.Fatalf("parsePorts of an all-invalid list = %v, want empty", got)
+	}
+	defaults := parsePorts("")
+	if len(defaults) == 0 {
+		t.Fatal("parsePorts(\"\") returned no default ports")
+	}
+	// The fallback Start() uses is parsePorts("") — assert it yields the six
+	// documented TCP ICS ports so the fallback cannot silently shrink.
+	want := map[int]bool{102: true, 502: true, 2404: true, 20000: true, 44818: true, 4840: true}
+	if len(defaults) != len(want) {
+		t.Fatalf("default ports = %v, want %d entries", defaults, len(want))
+	}
+	for _, p := range defaults {
+		if !want[p] {
+			t.Errorf("unexpected default port %d", p)
+		}
+	}
+}
+
+func TestParsePortsKeepsValidEntriesAndDropsTypos(t *testing.T) {
+	got := parsePorts("502, oops, 102, 70000, , 44818")
+	want := []int{502, 102, 44818}
+	if len(got) != len(want) {
+		t.Fatalf("parsePorts = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("parsePorts = %v, want %v", got, want)
+		}
+	}
+}

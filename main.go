@@ -12,6 +12,7 @@ import (
 	etcdhp "github.com/joshrendek/threat.gg-agent/etcd"
 	"github.com/joshrendek/threat.gg-agent/ftp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
+	"github.com/joshrendek/threat.gg-agent/icsprobe"
 	"github.com/joshrendek/threat.gg-agent/jenkins"
 	"github.com/joshrendek/threat.gg-agent/kafka"
 	kubelethp "github.com/joshrendek/threat.gg-agent/kubelet"
@@ -188,5 +189,6 @@ func catalog() honeypots.Catalog {
 		"comfyui":       func() honeypots.Honeypot { return comfyuihp.New() },
 		"mcp":           func() honeypots.Honeypot { return mcp.New() },
 		"s3":            func() honeypots.Honeypot { return s3hp.New() },
+		"icsprobe":      func() honeypots.Honeypot { return icsprobe.New() },
 	}
 }

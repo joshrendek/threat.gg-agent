@@ -63,12 +63,15 @@ var profiles = map[string][]string{
 		"s3",
 	},
 
-	// ProfileICS is the industrial/OT honeypot profile. It is intentionally
-	// empty for now (no OT protocol honeypots exist yet, e.g. Modbus, S7comm,
-	// DNP3) - a follow-up change will populate it. It is defined explicitly
-	// here, rather than left as a missing key, so selecting it is valid and
-	// simply starts nothing.
-	ProfileICS: {},
+	// ProfileICS is the industrial/OT honeypot profile. It currently runs
+	// icsprobe, a passive bare-TCP measurement instrument (not a protocol
+	// emulator) across the common ICS/SCADA ports -- Modbus, S7comm,
+	// DNP3/IEC-104, EtherNet/IP, OPC UA -- to establish whether industrial
+	// scanning reaches our address space before a real emulator is built for
+	// any of them.
+	ProfileICS: {
+		"icsprobe",
+	},
 }
 
 // Select resolves profile to an ordered list of constructed Honeypots.
