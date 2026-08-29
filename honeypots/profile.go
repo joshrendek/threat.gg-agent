@@ -83,16 +83,9 @@ var profiles = map[string][]string{
 // the result is deterministic.
 func Select(profile string, catalog Catalog) ([]Honeypot, error) {
 	name := ResolveProfile(profile)
-
-	var names []string
-	if name == ProfileAll {
-		names = sortedCatalogNames(catalog)
-	} else {
-		list, ok := profiles[name]
-		if !ok {
-			return nil, fmt.Errorf("honeypots: unknown profile %q", name)
-		}
-		names = list
+	names, err := ProfileNames(profile, catalog)
+	if err != nil {
+		return nil, err
 	}
 
 	selected := make([]Honeypot, 0, len(names))
@@ -104,6 +97,27 @@ func Select(profile string, catalog Catalog) ([]Honeypot, error) {
 		selected = append(selected, ctor())
 	}
 	return selected, nil
+}
+
+// ProfileNames resolves profile to the ordered catalog names it selects.
+//
+// Callers that only need to report which honeypots a profile covers should use
+// this rather than constructing them and reading Name(): the catalog key is the
+// identifier HONEYPOT_PROFILE actually references, it is unique by
+// construction, and it does not depend on each honeypot reporting itself
+// correctly -- postgres currently returns "ssh" from Name().
+func ProfileNames(profile string, catalog Catalog) ([]string, error) {
+	name := ResolveProfile(profile)
+	if name == ProfileAll {
+		return sortedCatalogNames(catalog), nil
+	}
+	list, ok := profiles[name]
+	if !ok {
+		return nil, fmt.Errorf("honeypots: unknown profile %q", name)
+	}
+	out := make([]string, len(list))
+	copy(out, list)
+	return out, nil
 }
 
 func sortedCatalogNames(catalog Catalog) []string {

@@ -122,13 +122,19 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to resolve honeypot profile")
 	}
 
-	names := make([]string, len(selected))
-	for i, h := range selected {
-		names[i] = h.Name()
+	// Log catalog keys rather than each honeypot's Name(). The catalog key is
+	// the identifier a HONEYPOT_PROFILE profile actually references, so an
+	// operator reading this line can act on it directly -- and it does not
+	// depend on every honeypot reporting itself correctly, which they do not:
+	// postgres returns "ssh" from Name() today.
+	//
+	// Log the RESOLVED profile name, not the raw env value: with
+	// HONEYPOT_PROFILE unset the raw value is "", and a startup line reading
+	// profile="" tells an operator nothing about which set came up.
+	names, err := honeypots.ProfileNames(profile, catalog())
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to resolve honeypot profile names")
 	}
-	// Log the RESOLVED name, not the raw env value: with HONEYPOT_PROFILE unset
-	// the raw value is "", and a startup line reading profile="" tells an
-	// operator nothing about which set actually came up.
 	log.Info().
 		Str("profile", honeypots.ResolveProfile(profile)).
 		Int("count", len(names)).

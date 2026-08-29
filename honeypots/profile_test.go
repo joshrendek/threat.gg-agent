@@ -3,6 +3,7 @@ package honeypots
 import (
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -76,8 +77,20 @@ var expectedDefaultNames = []string{
 }
 
 func TestSelect_DefaultReproducesTodaysBehavior(t *testing.T) {
+	// This count is a deliberate regression guard, not an accident. The whole
+	// point of profile gating is that default-profile nodes keep running
+	// exactly what they ran before, so a change to the default set must be a
+	// conscious edit here and not a silent side effect of touching profile.go.
+	//
+	// If you are reading this because the test failed: that is working as
+	// intended. Confirm the default set really should change, then update both
+	// this count and expectedDefaultNames in the same commit.
 	if len(expectedDefaultNames) != 35 {
-		t.Fatalf("test setup error: expectedDefaultNames has %d entries, want 35", len(expectedDefaultNames))
+		t.Fatalf("expectedDefaultNames has %d entries, want 35. "+
+			"If you intentionally added or removed a honeypot from the DEFAULT profile, "+
+			"update expectedDefaultNames and this count together. If you only meant to add "+
+			"a honeypot to a non-default profile such as ics, it should not be in the default "+
+			"profile at all.", len(expectedDefaultNames))
 	}
 
 	catalog := newFakeCatalog(expectedDefaultNames...)
@@ -208,5 +221,25 @@ func TestSelect_AcceptsNormalizableProfileNames(t *testing.T) {
 	}
 	if _, err := Select("  nosuchprofile  ", cat); err == nil {
 		t.Error("Select with a trimmed-but-unknown profile should still error")
+	}
+}
+
+// Select must fail loudly when a profile names a honeypot the catalog does not
+// provide. This is the drift case between honeypots/profile.go (names) and
+// main.go (constructors): silently skipping the missing entry would mean a node
+// quietly running fewer honeypots than its profile promises, which is precisely
+// the failure profile gating exists to prevent.
+func TestSelect_MissingCatalogEntryErrors(t *testing.T) {
+	partial := expectedDefaultNames[:len(expectedDefaultNames)-1]
+	catalog := newFakeCatalog(partial...)
+	missing := expectedDefaultNames[len(expectedDefaultNames)-1]
+
+	got, err := Select(ProfileDefault, catalog)
+	if err == nil {
+		t.Fatalf("Select(%q) with %q absent from the catalog returned %d honeypots and no error; want an error",
+			ProfileDefault, missing, len(got))
+	}
+	if !strings.Contains(err.Error(), missing) {
+		t.Errorf("Select error = %q, want it to name the missing honeypot %q", err.Error(), missing)
 	}
 }
