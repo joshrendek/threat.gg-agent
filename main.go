@@ -114,44 +114,79 @@ func main() {
 	// honeypots must come up whether or not the control plane answers.
 	promptrules.Start()
 
-	// TODO: make this not crappy
 	wait := make(chan bool, 1)
-	honeypots.Register(kubernetes.New())
-	honeypots.Register(kubelethp.New())
-	honeypots.Register(consulhp.New())
-	honeypots.Register(amqphp.New())
-	honeypots.Register(adbhp.New())
-	honeypots.Register(postgres.New())
-	honeypots.Register(elasticsearch.New())
-	honeypots.Register(ftp.New())
-	honeypots.Register(sshd.New())
-	honeypots.Register(openclaw.New())
-	honeypots.Register(kafka.New())
-	honeypots.Register(redishp.New())
-	honeypots.Register(mqtt.New())
-	honeypots.Register(mysqlhp.New())
-	honeypots.Register(mssqlhp.New())
-	honeypots.Register(dockerhp.New())
-	honeypots.Register(etcdhp.New())
-	honeypots.Register(smbhp.New())
-	honeypots.Register(ldaphp.New())
-	honeypots.Register(telnethp.New())
-	honeypots.Register(rdphp.New())
-	honeypots.Register(vnchp.New())
-	honeypots.Register(smtphp.New())
-	honeypots.Register(jenkins.New())
-	honeypots.Register(mongohp.New())
-	honeypots.Register(memcachedhp.New())
-	honeypots.Register(vllm.New())
-	honeypots.Register(ollama.New())
-	honeypots.Register(rayhp.New())
-	honeypots.Register(localai.New())
-	honeypots.Register(lmstudio.New())
-	honeypots.Register(llamacpp.New())
-	honeypots.Register(comfyuihp.New())
-	honeypots.Register(mcp.New())
-	honeypots.Register(s3hp.New())
+
+	profile := honeypots.ProfileFromEnv()
+	selected, err := honeypots.Select(profile, catalog())
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to resolve honeypot profile")
+	}
+
+	// Log catalog keys rather than each honeypot's Name(). The catalog key is
+	// the identifier a HONEYPOT_PROFILE profile actually references, so an
+	// operator reading this line can act on it directly -- and it does not
+	// depend on every honeypot reporting itself correctly, which they do not:
+	// postgres returns "ssh" from Name() today.
+	//
+	// Log the RESOLVED profile name, not the raw env value: with
+	// HONEYPOT_PROFILE unset the raw value is "", and a startup line reading
+	// profile="" tells an operator nothing about which set came up.
+	names, err := honeypots.ProfileNames(profile, catalog())
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to resolve honeypot profile names")
+	}
+	log.Info().
+		Str("profile", honeypots.ResolveProfile(profile)).
+		Int("count", len(names)).
+		Strs("honeypots", names).
+		Msg("resolved honeypot profile")
+
+	for _, h := range selected {
+		honeypots.Register(h)
+	}
 	honeypots.StartHoneypots()
 
 	<-wait
+}
+
+// catalog maps every honeypot's catalog name (as referenced by
+// honeypots/profile.go's profile definitions) to its constructor.
+func catalog() honeypots.Catalog {
+	return honeypots.Catalog{
+		"kubernetes":    func() honeypots.Honeypot { return kubernetes.New() },
+		"kubelet":       func() honeypots.Honeypot { return kubelethp.New() },
+		"consul":        func() honeypots.Honeypot { return consulhp.New() },
+		"amqp":          func() honeypots.Honeypot { return amqphp.New() },
+		"adb":           func() honeypots.Honeypot { return adbhp.New() },
+		"postgres":      func() honeypots.Honeypot { return postgres.New() },
+		"elasticsearch": func() honeypots.Honeypot { return elasticsearch.New() },
+		"ftp":           func() honeypots.Honeypot { return ftp.New() },
+		"sshd":          func() honeypots.Honeypot { return sshd.New() },
+		"openclaw":      func() honeypots.Honeypot { return openclaw.New() },
+		"kafka":         func() honeypots.Honeypot { return kafka.New() },
+		"redis":         func() honeypots.Honeypot { return redishp.New() },
+		"mqtt":          func() honeypots.Honeypot { return mqtt.New() },
+		"mysql":         func() honeypots.Honeypot { return mysqlhp.New() },
+		"mssql":         func() honeypots.Honeypot { return mssqlhp.New() },
+		"docker":        func() honeypots.Honeypot { return dockerhp.New() },
+		"etcd":          func() honeypots.Honeypot { return etcdhp.New() },
+		"smb":           func() honeypots.Honeypot { return smbhp.New() },
+		"ldap":          func() honeypots.Honeypot { return ldaphp.New() },
+		"telnet":        func() honeypots.Honeypot { return telnethp.New() },
+		"rdp":           func() honeypots.Honeypot { return rdphp.New() },
+		"vnc":           func() honeypots.Honeypot { return vnchp.New() },
+		"smtp":          func() honeypots.Honeypot { return smtphp.New() },
+		"jenkins":       func() honeypots.Honeypot { return jenkins.New() },
+		"mongo":         func() honeypots.Honeypot { return mongohp.New() },
+		"memcached":     func() honeypots.Honeypot { return memcachedhp.New() },
+		"vllm":          func() honeypots.Honeypot { return vllm.New() },
+		"ollama":        func() honeypots.Honeypot { return ollama.New() },
+		"ray":           func() honeypots.Honeypot { return rayhp.New() },
+		"localai":       func() honeypots.Honeypot { return localai.New() },
+		"lmstudio":      func() honeypots.Honeypot { return lmstudio.New() },
+		"llamacpp":      func() honeypots.Honeypot { return llamacpp.New() },
+		"comfyui":       func() honeypots.Honeypot { return comfyuihp.New() },
+		"mcp":           func() honeypots.Honeypot { return mcp.New() },
+		"s3":            func() honeypots.Honeypot { return s3hp.New() },
+	}
 }
