@@ -103,6 +103,9 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		}
 	}()
 
+	sess := newSession()
+	defer persistSession(h.logger, host, sess)
+
 	h.logger.Info().Str("remote", host).Msg("new s7comm connection")
 	conn.SetDeadline(time.Now().Add(totalTimeout))
 	reader := bufio.NewReader(conn)
@@ -139,6 +142,8 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 				return
 			}
 			connected = true
+			sess.advance(stageCOTP)
+			sess.setTSAPs(cr.srcTSAP, cr.dstTSAP)
 
 		case cotpDT:
 			if !connected {
@@ -148,7 +153,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			if err != nil {
 				return
 			}
-			resp, ok := handlePDU(s7payload, host)
+			resp, ok := handlePDU(s7payload, host, sess)
 			if !ok {
 				return
 			}

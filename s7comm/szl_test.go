@@ -92,7 +92,7 @@ func parseSZLResponse(t *testing.T, pdu []byte) szlResponse {
 
 func TestReadSZLModuleIdentification(t *testing.T) {
 	pdu := buildReadSZLRequest(1, szlModuleIdentification, 0x0001)
-	respBytes, ok := handlePDU(pdu, "192.0.2.10")
+	respBytes, ok := handlePDU(pdu, "192.0.2.10", newSession())
 	if !ok || respBytes == nil {
 		t.Fatalf("handlePDU = (%v, %v)", respBytes, ok)
 	}
@@ -146,7 +146,7 @@ func TestReadSZLComponentIdentIndividualIndexes(t *testing.T) {
 	}
 	for _, c := range cases {
 		pdu := buildReadSZLRequest(1, szlComponentIdent, c.idx)
-		respBytes, ok := handlePDU(pdu, "192.0.2.11")
+		respBytes, ok := handlePDU(pdu, "192.0.2.11", newSession())
 		if !ok || respBytes == nil {
 			t.Fatalf("index 0x%04x: handlePDU = (%v, %v)", c.idx, respBytes, ok)
 		}
@@ -182,7 +182,7 @@ func TestReadSZLComponentIdentIndividualIndexes(t *testing.T) {
 // ordinary unsupported-index response.
 func TestReadSZLComponentIdentIndex0009NotAnswered(t *testing.T) {
 	pdu := buildReadSZLRequest(1, szlComponentIdent, 0x0009)
-	respBytes, ok := handlePDU(pdu, "192.0.2.12")
+	respBytes, ok := handlePDU(pdu, "192.0.2.12", newSession())
 	if !ok || respBytes == nil {
 		t.Fatalf("handlePDU = (%v, %v)", respBytes, ok)
 	}
@@ -201,7 +201,7 @@ func TestReadSZLUnsupportedIDReturnsSameErrorAs0009(t *testing.T) {
 	// like an unsupported list to a scanner probing broadly, not crash and
 	// not silently succeed with fabricated data.
 	pdu := buildReadSZLRequest(1, 0x9999, 0x0000)
-	respBytes, ok := handlePDU(pdu, "192.0.2.13")
+	respBytes, ok := handlePDU(pdu, "192.0.2.13", newSession())
 	if !ok || respBytes == nil {
 		t.Fatalf("handlePDU = (%v, %v)", respBytes, ok)
 	}
@@ -216,7 +216,7 @@ func TestReadSZLUnsupportedIDReturnsSameErrorAs0009(t *testing.T) {
 
 func TestReadSZLComponentIdentIndexZeroReturnsAllExceptWithheld(t *testing.T) {
 	pdu := buildReadSZLRequest(1, szlComponentIdent, 0x0000)
-	respBytes, ok := handlePDU(pdu, "192.0.2.14")
+	respBytes, ok := handlePDU(pdu, "192.0.2.14", newSession())
 	if !ok || respBytes == nil {
 		t.Fatalf("handlePDU = (%v, %v)", respBytes, ok)
 	}

@@ -178,6 +178,7 @@ const (
 	Honeypot_SaveMcp_FullMethodName              = "/honeypot.Honeypot/SaveMcp"
 	Honeypot_SaveS3Request_FullMethodName        = "/honeypot.Honeypot/SaveS3Request"
 	Honeypot_SaveIcsProbe_FullMethodName         = "/honeypot.Honeypot/SaveIcsProbe"
+	Honeypot_SaveS7CommSession_FullMethodName    = "/honeypot.Honeypot/SaveS7commSession"
 	Honeypot_GetLlmBundle_FullMethodName         = "/honeypot.Honeypot/GetLlmBundle"
 )
 
@@ -247,6 +248,12 @@ type HoneypotClient interface {
 	// that something connected. Deliberately NOT an Attacker/AttackDatum row --
 	// see grpc_server/icsprobe.go.
 	SaveIcsProbe(ctx context.Context, in *IcsProbeRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	// SaveS7commSession stores one bounded S7comm (Siemens S7-300 PLC, TCP/102)
+	// session. Unlike SaveIcsProbe, this IS a real attack type: someone
+	// speaking S7comm to a fake PLC is an attacker, and stopping a PLC is
+	// unambiguous intent. Goes through the normal Attacker/AttackDatum path --
+	// see grpc_server/s7comm.go.
+	SaveS7CommSession(ctx context.Context, in *S7CommSessionRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
 	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
 	// bundle behind an atomic.Pointer and matches locally, so nothing on the
@@ -775,6 +782,16 @@ func (c *honeypotClient) SaveIcsProbe(ctx context.Context, in *IcsProbeRequest, 
 	return out, nil
 }
 
+func (c *honeypotClient) SaveS7CommSession(ctx context.Context, in *S7CommSessionRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SaveS7CommSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *honeypotClient) GetLlmBundle(ctx context.Context, in *LlmBundleRequest, opts ...grpc.CallOption) (*LlmBundleReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LlmBundleReply)
@@ -851,6 +868,12 @@ type HoneypotServer interface {
 	// that something connected. Deliberately NOT an Attacker/AttackDatum row --
 	// see grpc_server/icsprobe.go.
 	SaveIcsProbe(context.Context, *IcsProbeRequest) (*SaveReply, error)
+	// SaveS7commSession stores one bounded S7comm (Siemens S7-300 PLC, TCP/102)
+	// session. Unlike SaveIcsProbe, this IS a real attack type: someone
+	// speaking S7comm to a fake PLC is an attacker, and stopping a PLC is
+	// unambiguous intent. Goes through the normal Attacker/AttackDatum path --
+	// see grpc_server/s7comm.go.
+	SaveS7CommSession(context.Context, *S7CommSessionRequest) (*SaveReply, error)
 	// GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
 	// Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
 	// bundle behind an atomic.Pointer and matches locally, so nothing on the
@@ -1021,6 +1044,9 @@ func (UnimplementedHoneypotServer) SaveS3Request(context.Context, *S3Request) (*
 }
 func (UnimplementedHoneypotServer) SaveIcsProbe(context.Context, *IcsProbeRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveIcsProbe not implemented")
+}
+func (UnimplementedHoneypotServer) SaveS7CommSession(context.Context, *S7CommSessionRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveS7CommSession not implemented")
 }
 func (UnimplementedHoneypotServer) GetLlmBundle(context.Context, *LlmBundleRequest) (*LlmBundleReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetLlmBundle not implemented")
@@ -1964,6 +1990,24 @@ func _Honeypot_SaveIcsProbe_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SaveS7CommSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(S7CommSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SaveS7CommSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SaveS7CommSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SaveS7CommSession(ctx, req.(*S7CommSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Honeypot_GetLlmBundle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LlmBundleRequest)
 	if err := dec(in); err != nil {
@@ -2192,6 +2236,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveIcsProbe",
 			Handler:    _Honeypot_SaveIcsProbe_Handler,
+		},
+		{
+			MethodName: "SaveS7commSession",
+			Handler:    _Honeypot_SaveS7CommSession_Handler,
 		},
 		{
 			MethodName: "GetLlmBundle",

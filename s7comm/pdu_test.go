@@ -110,7 +110,7 @@ func TestHandleSetupCommUsesPersonaValues(t *testing.T) {
 	reqParam := []byte{fnSetupComm, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0xF0}
 	pdu := buildJobPDU(0x0001, reqParam, nil)
 
-	resp, ok := handlePDU(pdu, "198.51.100.1")
+	resp, ok := handlePDU(pdu, "198.51.100.1", newSession())
 	if !ok || resp == nil {
 		t.Fatalf("handlePDU(SetupComm) = (%v, %v), want a non-nil response", resp, ok)
 	}
@@ -159,6 +159,7 @@ func TestHandleWriteThenReadVarPerIPIsolationThroughFullDispatch(t *testing.T) {
 	const db = 5
 	const byteOffset = 200
 	item := buildS7AnyItem(2 /* BYTE */, 4, db, area, byteOffset*8)
+	writeSess := newSession()
 
 	writeParam := append([]byte{fnWriteVar, 0x01}, item...)
 	sentinel := []byte{0xCA, 0xFE, 0xBA, 0xBE}
@@ -169,7 +170,7 @@ func TestHandleWriteThenReadVarPerIPIsolationThroughFullDispatch(t *testing.T) {
 	copy(writeData[4:], sentinel)
 
 	writePDU := buildJobPDU(0x0010, writeParam, writeData)
-	writeResp, ok := handlePDU(writePDU, "203.0.113.10")
+	writeResp, ok := handlePDU(writePDU, "203.0.113.10", writeSess)
 	if !ok || writeResp == nil {
 		t.Fatalf("handlePDU(WriteVar) = (%v, %v)", writeResp, ok)
 	}
@@ -186,7 +187,7 @@ func TestHandleWriteThenReadVarPerIPIsolationThroughFullDispatch(t *testing.T) {
 	readPDU := buildJobPDU(0x0011, readParam, nil)
 
 	// The SAME attacker reads back its own write.
-	sameIPResp, ok := handlePDU(readPDU, "203.0.113.10")
+	sameIPResp, ok := handlePDU(readPDU, "203.0.113.10", writeSess)
 	if !ok || sameIPResp == nil {
 		t.Fatalf("handlePDU(ReadVar, same IP) = (%v, %v)", sameIPResp, ok)
 	}
@@ -204,7 +205,7 @@ func TestHandleWriteThenReadVarPerIPIsolationThroughFullDispatch(t *testing.T) {
 	}
 
 	// A DIFFERENT attacker reading the exact same address must NOT see it.
-	otherIPResp, ok := handlePDU(readPDU, "203.0.113.99")
+	otherIPResp, ok := handlePDU(readPDU, "203.0.113.99", newSession())
 	if !ok || otherIPResp == nil {
 		t.Fatalf("handlePDU(ReadVar, other IP) = (%v, %v)", otherIPResp, ok)
 	}
@@ -224,7 +225,7 @@ func TestHandlePLCStopPerIPIsolationThroughFullDispatch(t *testing.T) {
 	stopParam := append([]byte{fnPLCStop}, []byte{0, 0, 0, 0, 0, 7, 'P', 'L', 'C', 'S', 'T', 'O', 'P'}...)
 	stopPDU := buildJobPDU(0x0020, stopParam, nil)
 
-	resp, ok := handlePDU(stopPDU, "198.51.100.55")
+	resp, ok := handlePDU(stopPDU, "198.51.100.55", newSession())
 	if !ok || resp == nil {
 		t.Fatalf("handlePDU(PLCStop) = (%v, %v)", resp, ok)
 	}
@@ -250,7 +251,7 @@ func TestHandlePLCStopPerIPIsolationThroughFullDispatch(t *testing.T) {
 
 func TestHandleUnknownJobFunctionReturnsHeaderLevelError(t *testing.T) {
 	pdu := buildJobPDU(0x0030, []byte{0x77}, nil) // 0x77 is not a function this honeypot implements
-	resp, ok := handlePDU(pdu, "192.0.2.1")
+	resp, ok := handlePDU(pdu, "192.0.2.1", newSession())
 	if !ok || resp == nil {
 		t.Fatalf("handlePDU(unknown function) = (%v, %v)", resp, ok)
 	}

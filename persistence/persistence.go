@@ -227,6 +227,18 @@ func SaveAdbSession(in *proto.AdbSessionRequest) error {
 	return err
 }
 
+// SaveS7CommSession sends one bounded S7comm session record with a deadline.
+func SaveS7CommSession(in *proto.S7CommSessionRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveS7CommSession(ctx, in)
+	return err
+}
+
 func SaveRedisConnect(in *proto.RedisConnectRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
