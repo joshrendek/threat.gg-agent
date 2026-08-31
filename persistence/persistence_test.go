@@ -240,6 +240,13 @@ func TestSaveIcsProbeIsNoOpWithoutClient(t *testing.T) {
 	require.NoError(t, SaveIcsProbe(&proto.IcsProbeRequest{}))
 }
 
+func TestSaveS7CommSessionIsNoOpWithoutClient(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = nil
+	require.NoError(t, SaveS7CommSession(&proto.S7CommSessionRequest{}))
+}
+
 func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
 	originalClient := honeypotClient
 	t.Cleanup(func() { honeypotClient = originalClient })

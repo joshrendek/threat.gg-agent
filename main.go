@@ -36,6 +36,7 @@ import (
 	rdphp "github.com/joshrendek/threat.gg-agent/rdp"
 	redishp "github.com/joshrendek/threat.gg-agent/redis"
 	s3hp "github.com/joshrendek/threat.gg-agent/s3"
+	"github.com/joshrendek/threat.gg-agent/s7comm"
 	smbhp "github.com/joshrendek/threat.gg-agent/smb"
 	smtphp "github.com/joshrendek/threat.gg-agent/smtp"
 	"github.com/joshrendek/threat.gg-agent/sshd"
@@ -190,5 +191,6 @@ func catalog() honeypots.Catalog {
 		"mcp":           func() honeypots.Honeypot { return mcp.New() },
 		"s3":            func() honeypots.Honeypot { return s3hp.New() },
 		"icsprobe":      func() honeypots.Honeypot { return icsprobe.New() },
+		"s7comm":        func() honeypots.Honeypot { return s7comm.New() },
 	}
 }

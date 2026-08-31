@@ -4713,10 +4713,12 @@ func (x *ResponseLookupRequest) GetLookupKey() string {
 }
 
 // IcsProbeRequest carries one bare-TCP connection observed on an unused ICS
-// port (102 S7comm, 502 Modbus, 2404 DNP3/IEC-104, 20000 DNP3, 44818
-// EtherNet/IP, 4840 OPC UA). first_bytes is raw binary protocol data, not
-// text -- bytes/bytea sidesteps the NUL/invalid-UTF8 sanitization that text
-// columns need (see models/sanitize_utf8.go, threat_gg-e41).
+// port: 102 S7comm, 502 Modbus, 2404 IEC 60870-5-104, 20000 DNP3, 44818
+// EtherNet/IP, 4840 OPC UA. (BACnet/IP 47808 is UDP and is out of scope.)
+// first_bytes is raw binary protocol data, not text -- bytes/bytea sidesteps
+// the NUL/invalid-UTF8 sanitization that text columns need (see this repo's
+// models/sanitize_utf8.go, threat_gg-e41; note this comment is also generated
+// into the agent repo, where that path does not resolve).
 type IcsProbeRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -4806,6 +4808,202 @@ func (x *IcsProbeRequest) GetTtfbMs() uint32 {
 }
 
 func (x *IcsProbeRequest) GetDurationMs() uint32 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+// S7commOperation is one function-code/SZL request the emulated PLC handled
+// (or couldn't) during a session.
+//
+// handled=false plus raw is deliberately an unhandled-request queue: any
+// function code or SZL index the emulator could not answer, captured
+// verbatim. That is a ranked worklist of "attackers asked something we had
+// to guess at" -- the thing to triage first when extending the emulator.
+type S7CommOperation struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Kind    string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Detail  string `protobuf:"bytes,2,opt,name=detail,proto3" json:"detail,omitempty"`
+	Raw     []byte `protobuf:"bytes,3,opt,name=raw,proto3" json:"raw,omitempty"`
+	Handled bool   `protobuf:"varint,4,opt,name=handled,proto3" json:"handled,omitempty"`
+}
+
+func (x *S7CommOperation) Reset() {
+	*x = S7CommOperation{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_honeypot_proto_msgTypes[54]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *S7CommOperation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*S7CommOperation) ProtoMessage() {}
+
+func (x *S7CommOperation) ProtoReflect() protoreflect.Message {
+	mi := &file_honeypot_proto_msgTypes[54]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use S7CommOperation.ProtoReflect.Descriptor instead.
+func (*S7CommOperation) Descriptor() ([]byte, []int) {
+	return file_honeypot_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *S7CommOperation) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *S7CommOperation) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *S7CommOperation) GetRaw() []byte {
+	if x != nil {
+		return x.Raw
+	}
+	return nil
+}
+
+func (x *S7CommOperation) GetHandled() bool {
+	if x != nil {
+		return x.Handled
+	}
+	return false
+}
+
+// S7commSessionRequest carries one bounded S7comm session against the
+// emulated Siemens S7-300 PLC on TCP/102.
+//
+// This shape is not arbitrary:
+//
+//   - reached_stage is a session progression funnel (connected / cotp /
+//     setup / identity / data / control). Where clients stop is the fidelity
+//     signal: one that completes the COTP handshake then immediately
+//     disconnects did not believe us. We have no reference hardware to diff
+//     against, so measuring where attackers give up is the substitute oracle.
+//   - operations, with its handled=false entries, is the unhandled-request
+//     queue described on S7commOperation above.
+//   - src_tsap / dst_tsap / negotiated_pdu_size fingerprint the client stack
+//     (snap7, libnodave, Step 7, bespoke). Captured traffic already shows
+//     scanners enumerating destination TSAPs for rack/slot.
+type S7CommSessionRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	RemoteAddr        string             `protobuf:"bytes,1,opt,name=remote_addr,json=remoteAddr,proto3" json:"remote_addr,omitempty"`
+	Guid              string             `protobuf:"bytes,2,opt,name=guid,proto3" json:"guid,omitempty"`
+	SrcTsap           string             `protobuf:"bytes,3,opt,name=src_tsap,json=srcTsap,proto3" json:"src_tsap,omitempty"`
+	DstTsap           string             `protobuf:"bytes,4,opt,name=dst_tsap,json=dstTsap,proto3" json:"dst_tsap,omitempty"`
+	NegotiatedPduSize uint32             `protobuf:"varint,5,opt,name=negotiated_pdu_size,json=negotiatedPduSize,proto3" json:"negotiated_pdu_size,omitempty"`
+	ReachedStage      string             `protobuf:"bytes,6,opt,name=reached_stage,json=reachedStage,proto3" json:"reached_stage,omitempty"`
+	Operations        []*S7CommOperation `protobuf:"bytes,7,rep,name=operations,proto3" json:"operations,omitempty"`
+	DurationMs        uint32             `protobuf:"varint,8,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+}
+
+func (x *S7CommSessionRequest) Reset() {
+	*x = S7CommSessionRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_honeypot_proto_msgTypes[55]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *S7CommSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*S7CommSessionRequest) ProtoMessage() {}
+
+func (x *S7CommSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_honeypot_proto_msgTypes[55]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use S7CommSessionRequest.ProtoReflect.Descriptor instead.
+func (*S7CommSessionRequest) Descriptor() ([]byte, []int) {
+	return file_honeypot_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *S7CommSessionRequest) GetRemoteAddr() string {
+	if x != nil {
+		return x.RemoteAddr
+	}
+	return ""
+}
+
+func (x *S7CommSessionRequest) GetGuid() string {
+	if x != nil {
+		return x.Guid
+	}
+	return ""
+}
+
+func (x *S7CommSessionRequest) GetSrcTsap() string {
+	if x != nil {
+		return x.SrcTsap
+	}
+	return ""
+}
+
+func (x *S7CommSessionRequest) GetDstTsap() string {
+	if x != nil {
+		return x.DstTsap
+	}
+	return ""
+}
+
+func (x *S7CommSessionRequest) GetNegotiatedPduSize() uint32 {
+	if x != nil {
+		return x.NegotiatedPduSize
+	}
+	return 0
+}
+
+func (x *S7CommSessionRequest) GetReachedStage() string {
+	if x != nil {
+		return x.ReachedStage
+	}
+	return ""
+}
+
+func (x *S7CommSessionRequest) GetOperations() []*S7CommOperation {
+	if x != nil {
+		return x.Operations
+	}
+	return nil
+}
+
+func (x *S7CommSessionRequest) GetDurationMs() uint32 {
 	if x != nil {
 		return x.DurationMs
 	}
@@ -5497,6 +5695,32 @@ var file_honeypot_proto_rawDesc = []byte{
 	0x74, 0x66, 0x62, 0x5f, 0x6d, 0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x06, 0x74, 0x74,
 	0x66, 0x62, 0x4d, 0x73, 0x12, 0x1f, 0x0a, 0x0b, 0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e,
 	0x5f, 0x6d, 0x73, 0x18, 0x07, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0a, 0x64, 0x75, 0x72, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x4d, 0x73, 0x22, 0x69, 0x0a, 0x0f, 0x53, 0x37, 0x63, 0x6f, 0x6d, 0x6d, 0x4f,
+	0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x12, 0x0a, 0x04, 0x6b, 0x69, 0x6e, 0x64,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6b, 0x69, 0x6e, 0x64, 0x12, 0x16, 0x0a, 0x06,
+	0x64, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x64, 0x65,
+	0x74, 0x61, 0x69, 0x6c, 0x12, 0x10, 0x0a, 0x03, 0x72, 0x61, 0x77, 0x18, 0x03, 0x20, 0x01, 0x28,
+	0x0c, 0x52, 0x03, 0x72, 0x61, 0x77, 0x12, 0x18, 0x0a, 0x07, 0x68, 0x61, 0x6e, 0x64, 0x6c, 0x65,
+	0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x08, 0x52, 0x07, 0x68, 0x61, 0x6e, 0x64, 0x6c, 0x65, 0x64,
+	0x22, 0xb2, 0x02, 0x0a, 0x14, 0x53, 0x37, 0x63, 0x6f, 0x6d, 0x6d, 0x53, 0x65, 0x73, 0x73, 0x69,
+	0x6f, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1f, 0x0a, 0x0b, 0x72, 0x65, 0x6d,
+	0x6f, 0x74, 0x65, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a,
+	0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x41, 0x64, 0x64, 0x72, 0x12, 0x12, 0x0a, 0x04, 0x67, 0x75,
+	0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x67, 0x75, 0x69, 0x64, 0x12, 0x19,
+	0x0a, 0x08, 0x73, 0x72, 0x63, 0x5f, 0x74, 0x73, 0x61, 0x70, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x07, 0x73, 0x72, 0x63, 0x54, 0x73, 0x61, 0x70, 0x12, 0x19, 0x0a, 0x08, 0x64, 0x73, 0x74,
+	0x5f, 0x74, 0x73, 0x61, 0x70, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x64, 0x73, 0x74,
+	0x54, 0x73, 0x61, 0x70, 0x12, 0x2e, 0x0a, 0x13, 0x6e, 0x65, 0x67, 0x6f, 0x74, 0x69, 0x61, 0x74,
+	0x65, 0x64, 0x5f, 0x70, 0x64, 0x75, 0x5f, 0x73, 0x69, 0x7a, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28,
+	0x0d, 0x52, 0x11, 0x6e, 0x65, 0x67, 0x6f, 0x74, 0x69, 0x61, 0x74, 0x65, 0x64, 0x50, 0x64, 0x75,
+	0x53, 0x69, 0x7a, 0x65, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65, 0x61, 0x63, 0x68, 0x65, 0x64, 0x5f,
+	0x73, 0x74, 0x61, 0x67, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x61,
+	0x63, 0x68, 0x65, 0x64, 0x53, 0x74, 0x61, 0x67, 0x65, 0x12, 0x39, 0x0a, 0x0a, 0x6f, 0x70, 0x65,
+	0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x19, 0x2e,
+	0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x37, 0x63, 0x6f, 0x6d, 0x6d, 0x4f,
+	0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x0a, 0x6f, 0x70, 0x65, 0x72, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x73, 0x12, 0x1f, 0x0a, 0x0b, 0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x5f, 0x6d, 0x73, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0a, 0x64, 0x75, 0x72, 0x61, 0x74,
 	0x69, 0x6f, 0x6e, 0x4d, 0x73, 0x2a, 0x83, 0x01, 0x0a, 0x11, 0x4c, 0x6c, 0x6d, 0x52, 0x65, 0x73,
 	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x12, 0x23, 0x0a, 0x1f, 0x4c,
 	0x4c, 0x4d, 0x5f, 0x52, 0x45, 0x53, 0x50, 0x4f, 0x4e, 0x53, 0x45, 0x5f, 0x53, 0x4f, 0x55, 0x52,
@@ -5555,7 +5779,7 @@ var file_honeypot_proto_rawDesc = []byte{
 	0x08, 0x53, 0x61, 0x79, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x12, 0x16, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
 	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
 	0x74, 0x1a, 0x14, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x48, 0x65, 0x6c,
-	0x6c, 0x6f, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x32, 0xd5, 0x1b, 0x0a, 0x08, 0x48, 0x6f,
+	0x6c, 0x6f, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x32, 0xa1, 0x1c, 0x0a, 0x08, 0x48, 0x6f,
 	0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x12, 0x3d, 0x0a, 0x07, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63,
 	0x74, 0x12, 0x18, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x43, 0x6f, 0x6e,
 	0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x16, 0x2e, 0x68, 0x6f,
@@ -5772,15 +5996,19 @@ var file_honeypot_proto_rawDesc = []byte{
 	0x63, 0x73, 0x50, 0x72, 0x6f, 0x62, 0x65, 0x12, 0x19, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70,
 	0x6f, 0x74, 0x2e, 0x49, 0x63, 0x73, 0x50, 0x72, 0x6f, 0x62, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65,
 	0x73, 0x74, 0x1a, 0x13, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61,
-	0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x46, 0x0a, 0x0c, 0x47, 0x65, 0x74,
-	0x4c, 0x6c, 0x6d, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x1a, 0x2e, 0x68, 0x6f, 0x6e, 0x65,
-	0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x18, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
-	0x2e, 0x4c, 0x6c, 0x6d, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22,
-	0x00, 0x42, 0x27, 0x5a, 0x25, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f,
-	0x6a, 0x6f, 0x73, 0x68, 0x72, 0x65, 0x6e, 0x64, 0x65, 0x6b, 0x2f, 0x74, 0x68, 0x72, 0x65, 0x61,
-	0x74, 0x2e, 0x67, 0x67, 0x3b, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x33,
+	0x76, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x4a, 0x0a, 0x11, 0x53, 0x61, 0x76,
+	0x65, 0x53, 0x37, 0x63, 0x6f, 0x6d, 0x6d, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x1e,
+	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x37, 0x63, 0x6f, 0x6d, 0x6d,
+	0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13,
+	0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x53, 0x61, 0x76, 0x65, 0x52, 0x65,
+	0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x46, 0x0a, 0x0c, 0x47, 0x65, 0x74, 0x4c, 0x6c, 0x6d, 0x42,
+	0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x1a, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74,
+	0x2e, 0x4c, 0x6c, 0x6d, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x1a, 0x18, 0x2e, 0x68, 0x6f, 0x6e, 0x65, 0x79, 0x70, 0x6f, 0x74, 0x2e, 0x4c, 0x6c, 0x6d,
+	0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x42, 0x27, 0x5a,
+	0x25, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6a, 0x6f, 0x73, 0x68,
+	0x72, 0x65, 0x6e, 0x64, 0x65, 0x6b, 0x2f, 0x74, 0x68, 0x72, 0x65, 0x61, 0x74, 0x2e, 0x67, 0x67,
+	0x3b, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -5796,7 +6024,7 @@ func file_honeypot_proto_rawDescGZIP() []byte {
 }
 
 var file_honeypot_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_honeypot_proto_msgTypes = make([]protoimpl.MessageInfo, 64)
+var file_honeypot_proto_msgTypes = make([]protoimpl.MessageInfo, 66)
 var file_honeypot_proto_goTypes = []interface{}{
 	(LlmResponseSource)(0),          // 0: honeypot.LlmResponseSource
 	(LlmStreamOutcome)(0),           // 1: honeypot.LlmStreamOutcome
@@ -5855,144 +6083,149 @@ var file_honeypot_proto_goTypes = []interface{}{
 	(*HelloReply)(nil),              // 54: honeypot.HelloReply
 	(*ResponseLookupRequest)(nil),   // 55: honeypot.ResponseLookupRequest
 	(*IcsProbeRequest)(nil),         // 56: honeypot.IcsProbeRequest
-	nil,                             // 57: honeypot.AmqpSessionRequest.ClientPropertiesEntry
-	nil,                             // 58: honeypot.ElasticsearchRequest.HeadersEntry
-	nil,                             // 59: honeypot.ElasticsearchRequest.FormDataEntry
-	nil,                             // 60: honeypot.LlmRequest.HeadersEntry
-	nil,                             // 61: honeypot.McpRequest.HeadersEntry
-	nil,                             // 62: honeypot.HttpRequest.HeadersEntry
-	nil,                             // 63: honeypot.HttpRequest.FormDataEntry
-	nil,                             // 64: honeypot.HttpHeaderRequest.HeadersEntry
-	nil,                             // 65: honeypot.HttpHeaderRequest.FormDataEntry
-	nil,                             // 66: honeypot.DockerRequest.HeadersEntry
+	(*S7CommOperation)(nil),         // 57: honeypot.S7commOperation
+	(*S7CommSessionRequest)(nil),    // 58: honeypot.S7commSessionRequest
+	nil,                             // 59: honeypot.AmqpSessionRequest.ClientPropertiesEntry
+	nil,                             // 60: honeypot.ElasticsearchRequest.HeadersEntry
+	nil,                             // 61: honeypot.ElasticsearchRequest.FormDataEntry
+	nil,                             // 62: honeypot.LlmRequest.HeadersEntry
+	nil,                             // 63: honeypot.McpRequest.HeadersEntry
+	nil,                             // 64: honeypot.HttpRequest.HeadersEntry
+	nil,                             // 65: honeypot.HttpRequest.FormDataEntry
+	nil,                             // 66: honeypot.HttpHeaderRequest.HeadersEntry
+	nil,                             // 67: honeypot.HttpHeaderRequest.FormDataEntry
+	nil,                             // 68: honeypot.DockerRequest.HeadersEntry
 }
 var file_honeypot_proto_depIdxs = []int32{
-	57, // 0: honeypot.AmqpSessionRequest.client_properties:type_name -> honeypot.AmqpSessionRequest.ClientPropertiesEntry
-	58, // 1: honeypot.ElasticsearchRequest.headers:type_name -> honeypot.ElasticsearchRequest.HeadersEntry
-	59, // 2: honeypot.ElasticsearchRequest.form_data:type_name -> honeypot.ElasticsearchRequest.FormDataEntry
-	60, // 3: honeypot.LlmRequest.headers:type_name -> honeypot.LlmRequest.HeadersEntry
+	59, // 0: honeypot.AmqpSessionRequest.client_properties:type_name -> honeypot.AmqpSessionRequest.ClientPropertiesEntry
+	60, // 1: honeypot.ElasticsearchRequest.headers:type_name -> honeypot.ElasticsearchRequest.HeadersEntry
+	61, // 2: honeypot.ElasticsearchRequest.form_data:type_name -> honeypot.ElasticsearchRequest.FormDataEntry
+	62, // 3: honeypot.LlmRequest.headers:type_name -> honeypot.LlmRequest.HeadersEntry
 	0,  // 4: honeypot.LlmRequest.response_source:type_name -> honeypot.LlmResponseSource
 	1,  // 5: honeypot.LlmRequest.stream_outcome:type_name -> honeypot.LlmStreamOutcome
 	2,  // 6: honeypot.LlmRequest.reply_kind:type_name -> honeypot.LlmReplyKind
 	19, // 7: honeypot.LlmBundleReply.rules:type_name -> honeypot.LlmPromptRule
 	20, // 8: honeypot.LlmBundleReply.catalog:type_name -> honeypot.LlmCatalogModel
-	61, // 9: honeypot.McpRequest.headers:type_name -> honeypot.McpRequest.HeadersEntry
-	62, // 10: honeypot.HttpRequest.headers:type_name -> honeypot.HttpRequest.HeadersEntry
-	63, // 11: honeypot.HttpRequest.form_data:type_name -> honeypot.HttpRequest.FormDataEntry
-	64, // 12: honeypot.HttpHeaderRequest.headers:type_name -> honeypot.HttpHeaderRequest.HeadersEntry
-	65, // 13: honeypot.HttpHeaderRequest.form_data:type_name -> honeypot.HttpHeaderRequest.FormDataEntry
-	66, // 14: honeypot.DockerRequest.headers:type_name -> honeypot.DockerRequest.HeadersEntry
-	53, // 15: honeypot.Greeter.SayHello:input_type -> honeypot.HelloRequest
-	51, // 16: honeypot.Honeypot.Connect:input_type -> honeypot.ConnectRequest
-	14, // 17: honeypot.Honeypot.SaveFtpLogin:input_type -> honeypot.FtpRequest
-	15, // 18: honeypot.Honeypot.SaveElasticsearch:input_type -> honeypot.ElasticsearchRequest
-	22, // 19: honeypot.Honeypot.SaveHttp:input_type -> honeypot.HttpRequest
-	23, // 20: honeypot.Honeypot.SaveSshLogin:input_type -> honeypot.SshLoginRequest
-	5,  // 21: honeypot.Honeypot.SavePostgresLogin:input_type -> honeypot.PostgresRequest
-	6,  // 22: honeypot.Honeypot.SaveMysqlLogin:input_type -> honeypot.MysqlRequest
-	7,  // 23: honeypot.Honeypot.SaveMssqlLogin:input_type -> honeypot.MssqlRequest
-	8,  // 24: honeypot.Honeypot.SaveKubeletRequest:input_type -> honeypot.KubeletRequest
-	9,  // 25: honeypot.Honeypot.SaveConsulRequest:input_type -> honeypot.ConsulRequest
-	10, // 26: honeypot.Honeypot.SaveAmqpSession:input_type -> honeypot.AmqpSessionRequest
-	11, // 27: honeypot.Honeypot.SaveAdbSession:input_type -> honeypot.AdbSessionRequest
-	12, // 28: honeypot.Honeypot.SaveQuery:input_type -> honeypot.QueryRequest
-	24, // 29: honeypot.Honeypot.SaveHttpHeaders:input_type -> honeypot.HttpHeaderRequest
-	25, // 30: honeypot.Honeypot.SaveShellCommand:input_type -> honeypot.ShellCommandRequest
-	4,  // 31: honeypot.Honeypot.GetCommandResponse:input_type -> honeypot.CommandRequest
-	55, // 32: honeypot.Honeypot.SaveResponseLookup:input_type -> honeypot.ResponseLookupRequest
-	26, // 33: honeypot.Honeypot.SaveOpenclawConnect:input_type -> honeypot.OpenclawRequest
-	27, // 34: honeypot.Honeypot.SaveKafkaConnect:input_type -> honeypot.KafkaRequest
-	28, // 35: honeypot.Honeypot.SaveKafkaApiRequest:input_type -> honeypot.KafkaApiRequest
-	29, // 36: honeypot.Honeypot.SaveRedisConnect:input_type -> honeypot.RedisConnectRequest
-	30, // 37: honeypot.Honeypot.SaveRedisCommand:input_type -> honeypot.RedisCommandRequest
-	31, // 38: honeypot.Honeypot.SaveMqttConnect:input_type -> honeypot.MqttConnectRequest
-	32, // 39: honeypot.Honeypot.SaveMqttCommand:input_type -> honeypot.MqttCommandRequest
-	33, // 40: honeypot.Honeypot.SaveDockerRequest:input_type -> honeypot.DockerRequest
-	35, // 41: honeypot.Honeypot.SaveMongoConnect:input_type -> honeypot.MongoConnectRequest
-	36, // 42: honeypot.Honeypot.SaveMongoCommand:input_type -> honeypot.MongoCommandRequest
-	37, // 43: honeypot.Honeypot.SaveMemcachedConnect:input_type -> honeypot.MemcachedConnectRequest
-	38, // 44: honeypot.Honeypot.SaveMemcachedCommand:input_type -> honeypot.MemcachedCommandRequest
-	39, // 45: honeypot.Honeypot.SaveEtcdRequest:input_type -> honeypot.EtcdRequest
-	40, // 46: honeypot.Honeypot.SaveSmbConnect:input_type -> honeypot.SmbRequest
-	41, // 47: honeypot.Honeypot.SaveLdapBind:input_type -> honeypot.LdapBindRequest
-	42, // 48: honeypot.Honeypot.SaveLdapSearch:input_type -> honeypot.LdapSearchRequest
-	43, // 49: honeypot.Honeypot.SaveTelnetLogin:input_type -> honeypot.TelnetLoginRequest
-	44, // 50: honeypot.Honeypot.SaveTelnetCommand:input_type -> honeypot.TelnetCommandRequest
-	45, // 51: honeypot.Honeypot.SaveRdpConnect:input_type -> honeypot.RdpRequest
-	46, // 52: honeypot.Honeypot.SaveVncConnect:input_type -> honeypot.VncRequest
-	47, // 53: honeypot.Honeypot.SaveJenkinsRequest:input_type -> honeypot.JenkinsRequest
-	48, // 54: honeypot.Honeypot.SaveSmtpLogin:input_type -> honeypot.SmtpLoginRequest
-	49, // 55: honeypot.Honeypot.SaveSmtpEmail:input_type -> honeypot.SmtpEmailRequest
-	16, // 56: honeypot.Honeypot.SaveVllm:input_type -> honeypot.LlmRequest
-	16, // 57: honeypot.Honeypot.SaveOllama:input_type -> honeypot.LlmRequest
-	16, // 58: honeypot.Honeypot.SaveRay:input_type -> honeypot.LlmRequest
-	16, // 59: honeypot.Honeypot.SaveLocalai:input_type -> honeypot.LlmRequest
-	16, // 60: honeypot.Honeypot.SaveLmstudio:input_type -> honeypot.LlmRequest
-	16, // 61: honeypot.Honeypot.SaveLlamacpp:input_type -> honeypot.LlmRequest
-	16, // 62: honeypot.Honeypot.SaveComfyui:input_type -> honeypot.LlmRequest
-	50, // 63: honeypot.Honeypot.SaveFile:input_type -> honeypot.FileUploadRequest
-	21, // 64: honeypot.Honeypot.SaveMcp:input_type -> honeypot.McpRequest
-	34, // 65: honeypot.Honeypot.SaveS3Request:input_type -> honeypot.S3Request
-	56, // 66: honeypot.Honeypot.SaveIcsProbe:input_type -> honeypot.IcsProbeRequest
-	17, // 67: honeypot.Honeypot.GetLlmBundle:input_type -> honeypot.LlmBundleRequest
-	54, // 68: honeypot.Greeter.SayHello:output_type -> honeypot.HelloReply
-	52, // 69: honeypot.Honeypot.Connect:output_type -> honeypot.ConnectReply
-	3,  // 70: honeypot.Honeypot.SaveFtpLogin:output_type -> honeypot.SaveReply
-	3,  // 71: honeypot.Honeypot.SaveElasticsearch:output_type -> honeypot.SaveReply
-	3,  // 72: honeypot.Honeypot.SaveHttp:output_type -> honeypot.SaveReply
-	3,  // 73: honeypot.Honeypot.SaveSshLogin:output_type -> honeypot.SaveReply
-	3,  // 74: honeypot.Honeypot.SavePostgresLogin:output_type -> honeypot.SaveReply
-	3,  // 75: honeypot.Honeypot.SaveMysqlLogin:output_type -> honeypot.SaveReply
-	3,  // 76: honeypot.Honeypot.SaveMssqlLogin:output_type -> honeypot.SaveReply
-	3,  // 77: honeypot.Honeypot.SaveKubeletRequest:output_type -> honeypot.SaveReply
-	3,  // 78: honeypot.Honeypot.SaveConsulRequest:output_type -> honeypot.SaveReply
-	3,  // 79: honeypot.Honeypot.SaveAmqpSession:output_type -> honeypot.SaveReply
-	3,  // 80: honeypot.Honeypot.SaveAdbSession:output_type -> honeypot.SaveReply
-	3,  // 81: honeypot.Honeypot.SaveQuery:output_type -> honeypot.SaveReply
-	3,  // 82: honeypot.Honeypot.SaveHttpHeaders:output_type -> honeypot.SaveReply
-	3,  // 83: honeypot.Honeypot.SaveShellCommand:output_type -> honeypot.SaveReply
-	13, // 84: honeypot.Honeypot.GetCommandResponse:output_type -> honeypot.CommandResponse
-	3,  // 85: honeypot.Honeypot.SaveResponseLookup:output_type -> honeypot.SaveReply
-	3,  // 86: honeypot.Honeypot.SaveOpenclawConnect:output_type -> honeypot.SaveReply
-	3,  // 87: honeypot.Honeypot.SaveKafkaConnect:output_type -> honeypot.SaveReply
-	3,  // 88: honeypot.Honeypot.SaveKafkaApiRequest:output_type -> honeypot.SaveReply
-	3,  // 89: honeypot.Honeypot.SaveRedisConnect:output_type -> honeypot.SaveReply
-	3,  // 90: honeypot.Honeypot.SaveRedisCommand:output_type -> honeypot.SaveReply
-	3,  // 91: honeypot.Honeypot.SaveMqttConnect:output_type -> honeypot.SaveReply
-	3,  // 92: honeypot.Honeypot.SaveMqttCommand:output_type -> honeypot.SaveReply
-	3,  // 93: honeypot.Honeypot.SaveDockerRequest:output_type -> honeypot.SaveReply
-	3,  // 94: honeypot.Honeypot.SaveMongoConnect:output_type -> honeypot.SaveReply
-	3,  // 95: honeypot.Honeypot.SaveMongoCommand:output_type -> honeypot.SaveReply
-	3,  // 96: honeypot.Honeypot.SaveMemcachedConnect:output_type -> honeypot.SaveReply
-	3,  // 97: honeypot.Honeypot.SaveMemcachedCommand:output_type -> honeypot.SaveReply
-	3,  // 98: honeypot.Honeypot.SaveEtcdRequest:output_type -> honeypot.SaveReply
-	3,  // 99: honeypot.Honeypot.SaveSmbConnect:output_type -> honeypot.SaveReply
-	3,  // 100: honeypot.Honeypot.SaveLdapBind:output_type -> honeypot.SaveReply
-	3,  // 101: honeypot.Honeypot.SaveLdapSearch:output_type -> honeypot.SaveReply
-	3,  // 102: honeypot.Honeypot.SaveTelnetLogin:output_type -> honeypot.SaveReply
-	3,  // 103: honeypot.Honeypot.SaveTelnetCommand:output_type -> honeypot.SaveReply
-	3,  // 104: honeypot.Honeypot.SaveRdpConnect:output_type -> honeypot.SaveReply
-	3,  // 105: honeypot.Honeypot.SaveVncConnect:output_type -> honeypot.SaveReply
-	3,  // 106: honeypot.Honeypot.SaveJenkinsRequest:output_type -> honeypot.SaveReply
-	3,  // 107: honeypot.Honeypot.SaveSmtpLogin:output_type -> honeypot.SaveReply
-	3,  // 108: honeypot.Honeypot.SaveSmtpEmail:output_type -> honeypot.SaveReply
-	3,  // 109: honeypot.Honeypot.SaveVllm:output_type -> honeypot.SaveReply
-	3,  // 110: honeypot.Honeypot.SaveOllama:output_type -> honeypot.SaveReply
-	3,  // 111: honeypot.Honeypot.SaveRay:output_type -> honeypot.SaveReply
-	3,  // 112: honeypot.Honeypot.SaveLocalai:output_type -> honeypot.SaveReply
-	3,  // 113: honeypot.Honeypot.SaveLmstudio:output_type -> honeypot.SaveReply
-	3,  // 114: honeypot.Honeypot.SaveLlamacpp:output_type -> honeypot.SaveReply
-	3,  // 115: honeypot.Honeypot.SaveComfyui:output_type -> honeypot.SaveReply
-	3,  // 116: honeypot.Honeypot.SaveFile:output_type -> honeypot.SaveReply
-	3,  // 117: honeypot.Honeypot.SaveMcp:output_type -> honeypot.SaveReply
-	3,  // 118: honeypot.Honeypot.SaveS3Request:output_type -> honeypot.SaveReply
-	3,  // 119: honeypot.Honeypot.SaveIcsProbe:output_type -> honeypot.SaveReply
-	18, // 120: honeypot.Honeypot.GetLlmBundle:output_type -> honeypot.LlmBundleReply
-	68, // [68:121] is the sub-list for method output_type
-	15, // [15:68] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	63, // 9: honeypot.McpRequest.headers:type_name -> honeypot.McpRequest.HeadersEntry
+	64, // 10: honeypot.HttpRequest.headers:type_name -> honeypot.HttpRequest.HeadersEntry
+	65, // 11: honeypot.HttpRequest.form_data:type_name -> honeypot.HttpRequest.FormDataEntry
+	66, // 12: honeypot.HttpHeaderRequest.headers:type_name -> honeypot.HttpHeaderRequest.HeadersEntry
+	67, // 13: honeypot.HttpHeaderRequest.form_data:type_name -> honeypot.HttpHeaderRequest.FormDataEntry
+	68, // 14: honeypot.DockerRequest.headers:type_name -> honeypot.DockerRequest.HeadersEntry
+	57, // 15: honeypot.S7commSessionRequest.operations:type_name -> honeypot.S7commOperation
+	53, // 16: honeypot.Greeter.SayHello:input_type -> honeypot.HelloRequest
+	51, // 17: honeypot.Honeypot.Connect:input_type -> honeypot.ConnectRequest
+	14, // 18: honeypot.Honeypot.SaveFtpLogin:input_type -> honeypot.FtpRequest
+	15, // 19: honeypot.Honeypot.SaveElasticsearch:input_type -> honeypot.ElasticsearchRequest
+	22, // 20: honeypot.Honeypot.SaveHttp:input_type -> honeypot.HttpRequest
+	23, // 21: honeypot.Honeypot.SaveSshLogin:input_type -> honeypot.SshLoginRequest
+	5,  // 22: honeypot.Honeypot.SavePostgresLogin:input_type -> honeypot.PostgresRequest
+	6,  // 23: honeypot.Honeypot.SaveMysqlLogin:input_type -> honeypot.MysqlRequest
+	7,  // 24: honeypot.Honeypot.SaveMssqlLogin:input_type -> honeypot.MssqlRequest
+	8,  // 25: honeypot.Honeypot.SaveKubeletRequest:input_type -> honeypot.KubeletRequest
+	9,  // 26: honeypot.Honeypot.SaveConsulRequest:input_type -> honeypot.ConsulRequest
+	10, // 27: honeypot.Honeypot.SaveAmqpSession:input_type -> honeypot.AmqpSessionRequest
+	11, // 28: honeypot.Honeypot.SaveAdbSession:input_type -> honeypot.AdbSessionRequest
+	12, // 29: honeypot.Honeypot.SaveQuery:input_type -> honeypot.QueryRequest
+	24, // 30: honeypot.Honeypot.SaveHttpHeaders:input_type -> honeypot.HttpHeaderRequest
+	25, // 31: honeypot.Honeypot.SaveShellCommand:input_type -> honeypot.ShellCommandRequest
+	4,  // 32: honeypot.Honeypot.GetCommandResponse:input_type -> honeypot.CommandRequest
+	55, // 33: honeypot.Honeypot.SaveResponseLookup:input_type -> honeypot.ResponseLookupRequest
+	26, // 34: honeypot.Honeypot.SaveOpenclawConnect:input_type -> honeypot.OpenclawRequest
+	27, // 35: honeypot.Honeypot.SaveKafkaConnect:input_type -> honeypot.KafkaRequest
+	28, // 36: honeypot.Honeypot.SaveKafkaApiRequest:input_type -> honeypot.KafkaApiRequest
+	29, // 37: honeypot.Honeypot.SaveRedisConnect:input_type -> honeypot.RedisConnectRequest
+	30, // 38: honeypot.Honeypot.SaveRedisCommand:input_type -> honeypot.RedisCommandRequest
+	31, // 39: honeypot.Honeypot.SaveMqttConnect:input_type -> honeypot.MqttConnectRequest
+	32, // 40: honeypot.Honeypot.SaveMqttCommand:input_type -> honeypot.MqttCommandRequest
+	33, // 41: honeypot.Honeypot.SaveDockerRequest:input_type -> honeypot.DockerRequest
+	35, // 42: honeypot.Honeypot.SaveMongoConnect:input_type -> honeypot.MongoConnectRequest
+	36, // 43: honeypot.Honeypot.SaveMongoCommand:input_type -> honeypot.MongoCommandRequest
+	37, // 44: honeypot.Honeypot.SaveMemcachedConnect:input_type -> honeypot.MemcachedConnectRequest
+	38, // 45: honeypot.Honeypot.SaveMemcachedCommand:input_type -> honeypot.MemcachedCommandRequest
+	39, // 46: honeypot.Honeypot.SaveEtcdRequest:input_type -> honeypot.EtcdRequest
+	40, // 47: honeypot.Honeypot.SaveSmbConnect:input_type -> honeypot.SmbRequest
+	41, // 48: honeypot.Honeypot.SaveLdapBind:input_type -> honeypot.LdapBindRequest
+	42, // 49: honeypot.Honeypot.SaveLdapSearch:input_type -> honeypot.LdapSearchRequest
+	43, // 50: honeypot.Honeypot.SaveTelnetLogin:input_type -> honeypot.TelnetLoginRequest
+	44, // 51: honeypot.Honeypot.SaveTelnetCommand:input_type -> honeypot.TelnetCommandRequest
+	45, // 52: honeypot.Honeypot.SaveRdpConnect:input_type -> honeypot.RdpRequest
+	46, // 53: honeypot.Honeypot.SaveVncConnect:input_type -> honeypot.VncRequest
+	47, // 54: honeypot.Honeypot.SaveJenkinsRequest:input_type -> honeypot.JenkinsRequest
+	48, // 55: honeypot.Honeypot.SaveSmtpLogin:input_type -> honeypot.SmtpLoginRequest
+	49, // 56: honeypot.Honeypot.SaveSmtpEmail:input_type -> honeypot.SmtpEmailRequest
+	16, // 57: honeypot.Honeypot.SaveVllm:input_type -> honeypot.LlmRequest
+	16, // 58: honeypot.Honeypot.SaveOllama:input_type -> honeypot.LlmRequest
+	16, // 59: honeypot.Honeypot.SaveRay:input_type -> honeypot.LlmRequest
+	16, // 60: honeypot.Honeypot.SaveLocalai:input_type -> honeypot.LlmRequest
+	16, // 61: honeypot.Honeypot.SaveLmstudio:input_type -> honeypot.LlmRequest
+	16, // 62: honeypot.Honeypot.SaveLlamacpp:input_type -> honeypot.LlmRequest
+	16, // 63: honeypot.Honeypot.SaveComfyui:input_type -> honeypot.LlmRequest
+	50, // 64: honeypot.Honeypot.SaveFile:input_type -> honeypot.FileUploadRequest
+	21, // 65: honeypot.Honeypot.SaveMcp:input_type -> honeypot.McpRequest
+	34, // 66: honeypot.Honeypot.SaveS3Request:input_type -> honeypot.S3Request
+	56, // 67: honeypot.Honeypot.SaveIcsProbe:input_type -> honeypot.IcsProbeRequest
+	58, // 68: honeypot.Honeypot.SaveS7commSession:input_type -> honeypot.S7commSessionRequest
+	17, // 69: honeypot.Honeypot.GetLlmBundle:input_type -> honeypot.LlmBundleRequest
+	54, // 70: honeypot.Greeter.SayHello:output_type -> honeypot.HelloReply
+	52, // 71: honeypot.Honeypot.Connect:output_type -> honeypot.ConnectReply
+	3,  // 72: honeypot.Honeypot.SaveFtpLogin:output_type -> honeypot.SaveReply
+	3,  // 73: honeypot.Honeypot.SaveElasticsearch:output_type -> honeypot.SaveReply
+	3,  // 74: honeypot.Honeypot.SaveHttp:output_type -> honeypot.SaveReply
+	3,  // 75: honeypot.Honeypot.SaveSshLogin:output_type -> honeypot.SaveReply
+	3,  // 76: honeypot.Honeypot.SavePostgresLogin:output_type -> honeypot.SaveReply
+	3,  // 77: honeypot.Honeypot.SaveMysqlLogin:output_type -> honeypot.SaveReply
+	3,  // 78: honeypot.Honeypot.SaveMssqlLogin:output_type -> honeypot.SaveReply
+	3,  // 79: honeypot.Honeypot.SaveKubeletRequest:output_type -> honeypot.SaveReply
+	3,  // 80: honeypot.Honeypot.SaveConsulRequest:output_type -> honeypot.SaveReply
+	3,  // 81: honeypot.Honeypot.SaveAmqpSession:output_type -> honeypot.SaveReply
+	3,  // 82: honeypot.Honeypot.SaveAdbSession:output_type -> honeypot.SaveReply
+	3,  // 83: honeypot.Honeypot.SaveQuery:output_type -> honeypot.SaveReply
+	3,  // 84: honeypot.Honeypot.SaveHttpHeaders:output_type -> honeypot.SaveReply
+	3,  // 85: honeypot.Honeypot.SaveShellCommand:output_type -> honeypot.SaveReply
+	13, // 86: honeypot.Honeypot.GetCommandResponse:output_type -> honeypot.CommandResponse
+	3,  // 87: honeypot.Honeypot.SaveResponseLookup:output_type -> honeypot.SaveReply
+	3,  // 88: honeypot.Honeypot.SaveOpenclawConnect:output_type -> honeypot.SaveReply
+	3,  // 89: honeypot.Honeypot.SaveKafkaConnect:output_type -> honeypot.SaveReply
+	3,  // 90: honeypot.Honeypot.SaveKafkaApiRequest:output_type -> honeypot.SaveReply
+	3,  // 91: honeypot.Honeypot.SaveRedisConnect:output_type -> honeypot.SaveReply
+	3,  // 92: honeypot.Honeypot.SaveRedisCommand:output_type -> honeypot.SaveReply
+	3,  // 93: honeypot.Honeypot.SaveMqttConnect:output_type -> honeypot.SaveReply
+	3,  // 94: honeypot.Honeypot.SaveMqttCommand:output_type -> honeypot.SaveReply
+	3,  // 95: honeypot.Honeypot.SaveDockerRequest:output_type -> honeypot.SaveReply
+	3,  // 96: honeypot.Honeypot.SaveMongoConnect:output_type -> honeypot.SaveReply
+	3,  // 97: honeypot.Honeypot.SaveMongoCommand:output_type -> honeypot.SaveReply
+	3,  // 98: honeypot.Honeypot.SaveMemcachedConnect:output_type -> honeypot.SaveReply
+	3,  // 99: honeypot.Honeypot.SaveMemcachedCommand:output_type -> honeypot.SaveReply
+	3,  // 100: honeypot.Honeypot.SaveEtcdRequest:output_type -> honeypot.SaveReply
+	3,  // 101: honeypot.Honeypot.SaveSmbConnect:output_type -> honeypot.SaveReply
+	3,  // 102: honeypot.Honeypot.SaveLdapBind:output_type -> honeypot.SaveReply
+	3,  // 103: honeypot.Honeypot.SaveLdapSearch:output_type -> honeypot.SaveReply
+	3,  // 104: honeypot.Honeypot.SaveTelnetLogin:output_type -> honeypot.SaveReply
+	3,  // 105: honeypot.Honeypot.SaveTelnetCommand:output_type -> honeypot.SaveReply
+	3,  // 106: honeypot.Honeypot.SaveRdpConnect:output_type -> honeypot.SaveReply
+	3,  // 107: honeypot.Honeypot.SaveVncConnect:output_type -> honeypot.SaveReply
+	3,  // 108: honeypot.Honeypot.SaveJenkinsRequest:output_type -> honeypot.SaveReply
+	3,  // 109: honeypot.Honeypot.SaveSmtpLogin:output_type -> honeypot.SaveReply
+	3,  // 110: honeypot.Honeypot.SaveSmtpEmail:output_type -> honeypot.SaveReply
+	3,  // 111: honeypot.Honeypot.SaveVllm:output_type -> honeypot.SaveReply
+	3,  // 112: honeypot.Honeypot.SaveOllama:output_type -> honeypot.SaveReply
+	3,  // 113: honeypot.Honeypot.SaveRay:output_type -> honeypot.SaveReply
+	3,  // 114: honeypot.Honeypot.SaveLocalai:output_type -> honeypot.SaveReply
+	3,  // 115: honeypot.Honeypot.SaveLmstudio:output_type -> honeypot.SaveReply
+	3,  // 116: honeypot.Honeypot.SaveLlamacpp:output_type -> honeypot.SaveReply
+	3,  // 117: honeypot.Honeypot.SaveComfyui:output_type -> honeypot.SaveReply
+	3,  // 118: honeypot.Honeypot.SaveFile:output_type -> honeypot.SaveReply
+	3,  // 119: honeypot.Honeypot.SaveMcp:output_type -> honeypot.SaveReply
+	3,  // 120: honeypot.Honeypot.SaveS3Request:output_type -> honeypot.SaveReply
+	3,  // 121: honeypot.Honeypot.SaveIcsProbe:output_type -> honeypot.SaveReply
+	3,  // 122: honeypot.Honeypot.SaveS7commSession:output_type -> honeypot.SaveReply
+	18, // 123: honeypot.Honeypot.GetLlmBundle:output_type -> honeypot.LlmBundleReply
+	70, // [70:124] is the sub-list for method output_type
+	16, // [16:70] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_honeypot_proto_init() }
@@ -6649,6 +6882,30 @@ func file_honeypot_proto_init() {
 				return nil
 			}
 		}
+		file_honeypot_proto_msgTypes[54].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*S7CommOperation); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_honeypot_proto_msgTypes[55].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*S7CommSessionRequest); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -6656,7 +6913,7 @@ func file_honeypot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_honeypot_proto_rawDesc,
 			NumEnums:      3,
-			NumMessages:   64,
+			NumMessages:   66,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

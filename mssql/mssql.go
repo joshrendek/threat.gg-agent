@@ -124,8 +124,15 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		_ = writeMessage(conn, packetReply, errorResponse(18456, "Login failed for user."))
 		return
 	}
+	// Capture the package var BEFORE spawning (kubelet/kubelet.go:138 does the
+	// same). Reading saveMssqlLogin from inside the persist goroutine is a data
+	// race (threat_gg-x59t): tests swap these vars in setup and restore them in
+	// t.Cleanup, so a goroutine still in flight from an earlier test reads the var
+	// while the next test writes it. Capturing binds the goroutine to the function
+	// that was installed when the work was queued.
+	saveLogin := saveMssqlLogin
 	h.persist(func() error {
-		return saveMssqlLogin(&proto.MssqlRequest{
+		return saveLogin(&proto.MssqlRequest{
 			Guid: guid, RemoteAddr: remoteIP, Username: login.username, Password: login.password,
 			Hostname: login.hostname, AppName: login.appName, ServerName: login.serverName,
 			Library: login.library, Database: login.database, TdsVersion: login.tdsVersion,
@@ -155,8 +162,10 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			_ = writeMessage(conn, packetReply, appendDone(nil, 0, 0))
 			continue
 		}
+		// Captured before spawning, for the same reason as the login path above.
+		saveQ := saveQuery
 		h.persist(func() error {
-			return saveQuery(&proto.QueryRequest{Guid: guid, Query: query, CommandType: "mssql"})
+			return saveQ(&proto.QueryRequest{Guid: guid, Query: query, CommandType: "mssql"})
 		})
 		normalized := normalizeQuery(query)
 		authored, ok := "", false
@@ -215,10 +224,19 @@ func (h *honeypot) setDeadline(conn net.Conn, sessionEnd time.Time) {
 }
 
 func (h *honeypot) persist(save func() error) {
+	// Capture the channel before spawning, the way kubelet/kubelet.go:135 does.
+	//
+	// Reading the persistSlots PACKAGE VAR from inside the goroutine's defer is a
+	// data race (threat_gg-x59t): tests swap persistSlots to size the queue, and a
+	// goroutine spawned before the swap would then release a slot on the NEW
+	// channel while the test writes the var. Capturing binds each goroutine to the
+	// channel it actually acquired from, so acquire and release always pair up on
+	// the same channel regardless of any later reassignment.
+	slots := persistSlots
 	select {
-	case persistSlots <- struct{}{}:
+	case slots <- struct{}{}:
 		go func() {
-			defer func() { <-persistSlots }()
+			defer func() { <-slots }()
 			if err := save(); err != nil {
 				h.logger.Error().Err(err).Msg("failed to persist mssql telemetry")
 			}
