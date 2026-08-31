@@ -15,6 +15,7 @@ import (
 	"bufio"
 	"net"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -87,10 +88,7 @@ func (h *honeypot) serve(ln net.Listener) {
 func (h *honeypot) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-	if host == "" {
-		host = conn.RemoteAddr().String()
-	}
+	host := remoteHost(conn.RemoteAddr())
 
 	// Backstop: a slice-bounds bug anywhere in this package's parsing must
 	// never take the whole agent process down. tpkt.go/cotp.go/pdu.go all
@@ -183,4 +181,32 @@ var cotpRefCounter uint32 = uint32(time.Now().UnixNano())
 
 func nextCOTPRef() uint16 {
 	return uint16(atomic.AddUint32(&cotpRefCounter, 1))
+}
+
+// remoteHost derives the per-attacker state key from a connection address.
+//
+// This is a SECURITY-RELEVANT function, not a formatting convenience
+// (threat_gg-4zzd.6). Every piece of attacker-scoped state -- written data
+// blocks, CPU run/stop mode -- is keyed on its return value, so two distinct
+// attackers that map to the SAME key share state: one can then observe or
+// clobber the other's writes, which both disarms the honeypot and proves it
+// synthetic.
+//
+// IPv6 is where that goes wrong quietly. conn.RemoteAddr().String() renders an
+// IPv6 peer as "[2001:db8::1]:54321"; SplitHostPort yields the bare
+// "2001:db8::1", which is correct and distinct per attacker. Get this wrong --
+// return the bracketed form inconsistently, or fall back to a constant on a
+// parse failure -- and every IPv6 attacker collapses into one shared bucket
+// while all the scoping code above still looks correct. That collapse is
+// exactly what llmcore and etcd shipped.
+func remoteHost(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	s := addr.String()
+	if host, _, err := net.SplitHostPort(s); err == nil && host != "" {
+		return host
+	}
+	// No port present: strip brackets from a bare IPv6 literal if any.
+	return strings.Trim(s, "[]")
 }
