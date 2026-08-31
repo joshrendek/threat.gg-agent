@@ -164,12 +164,12 @@ func TestServeCapturesBareConnectWithNoBytesSent(t *testing.T) {
 func TestParsePorts(t *testing.T) {
 	t.Run("default when unset", func(t *testing.T) {
 		got := parsePorts("")
-		require.Equal(t, []int{102, 502, 2404, 20000, 44818, 4840}, got)
+		require.Equal(t, []int{502, 2404, 20000, 44818, 4840}, got) // 102 belongs to the s7comm honeypot
 	})
 
 	t.Run("blank/whitespace-only also defaults", func(t *testing.T) {
 		got := parsePorts("   ")
-		require.Equal(t, []int{102, 502, 2404, 20000, 44818, 4840}, got)
+		require.Equal(t, []int{502, 2404, 20000, 44818, 4840}, got) // 102 belongs to the s7comm honeypot
 	})
 
 	t.Run("override when set", func(t *testing.T) {
@@ -241,16 +241,19 @@ func TestPortsForStartFallsBackToDefaultsWhenNothingParses(t *testing.T) {
 	// of which would collide with a running agent, so the decision is split out.
 	ports, fellBack := portsForStart("nonsense,also-bad,-1,99999")
 	require.True(t, fellBack, "an all-invalid list must report that it fell back")
-	want := map[int]bool{102: true, 502: true, 2404: true, 20000: true, 44818: true, 4840: true}
+	// 102 is deliberately absent: it belongs to the s7comm emulator, and the
+	// probe must not fight it for the bind. See ownedPorts.
+	want := map[int]bool{502: true, 2404: true, 20000: true, 44818: true, 4840: true}
 	require.Len(t, ports, len(want), "fallback must be the six documented TCP ICS ports")
 	for _, p := range ports {
 		require.True(t, want[p], "unexpected fallback port %d", p)
 	}
 
 	// A usable list must NOT trigger the fallback.
+	// 102 is filtered out as an owned port, leaving a still-valid list.
 	ports, fellBack = portsForStart("502,102")
 	require.False(t, fellBack, "a valid list must not fall back")
-	require.Equal(t, []int{502, 102}, ports)
+	require.Equal(t, []int{502}, ports, "102 must be dropped: the s7comm honeypot owns it")
 
 	// Partly-valid keeps the good entries rather than falling back wholesale.
 	ports, fellBack = portsForStart("502, oops, 44818")
@@ -259,8 +262,9 @@ func TestPortsForStartFallsBackToDefaultsWhenNothingParses(t *testing.T) {
 }
 
 func TestParsePortsKeepsValidEntriesAndDropsTypos(t *testing.T) {
+	// 102 is dropped as owned, not as a typo -- both are silently skipped.
 	got := parsePorts("502, oops, 102, 70000, , 44818")
-	want := []int{502, 102, 44818}
+	want := []int{502, 44818}
 	if len(got) != len(want) {
 		t.Fatalf("parsePorts = %v, want %v", got, want)
 	}

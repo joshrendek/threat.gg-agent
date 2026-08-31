@@ -28,7 +28,19 @@ const (
 	//
 	// BACnet (47808) is UDP, not TCP, and is deliberately out of scope for
 	// v1 -- this package only implements TCP listeners.
-	defaultPortsCSV = "102,502,2404,20000,44818,4840"
+	// 102 (S7comm) is DELIBERATELY ABSENT: it now belongs to the s7comm
+	// honeypot, which emulates a real S7-300 on that port. Both live in
+	// ProfileICS, so leaving 102 here made them collide -- and because the
+	// probe registers first it would win the bind, silently preventing the
+	// emulator from ever starting while the node still looked healthy and
+	// port 102 still looked "listening".
+	//
+	// This is the lifecycle every one of these ports is expected to follow:
+	// the instrument measures demand, and once that demand justifies building
+	// a real emulator, the port GRADUATES from the probe to the honeypot.
+	// 502 goes the same way when the Modbus honeypot lands (threat_gg-4zzd.11).
+	// TestProbePortsDoNotCollideWithRealHoneypots enforces it.
+	defaultPortsCSV = "502,2404,20000,44818,4840"
 
 	// maxReadBytes caps how much of the client's opening data we capture.
 	// This is a telemetry instrument, not a protocol parser, so we only need
@@ -206,6 +218,13 @@ func parsePorts(raw string) []int {
 		if err != nil || p < 1 || p > 65535 {
 			continue
 		}
+		// Never bind a port a real emulator owns, even if explicitly configured.
+		// The probe registers before the emulators, so it would win the bind and
+		// silently prevent the emulator from starting -- on a node that still
+		// looks entirely healthy.
+		if _, owned := ownedPorts[p]; owned {
+			continue
+		}
 		ports = append(ports, p)
 	}
 	return ports
@@ -223,4 +242,26 @@ func portsForStart(raw string) (ports []int, fellBack bool) {
 		return ports, false
 	}
 	return parsePorts(""), true
+}
+
+// ownedPorts are industrial ports served by a REAL ICS emulator in ProfileICS,
+// which the passive probe must never bind.
+//
+// Kept as a plain list rather than importing the honeypot packages: icsprobe is
+// the lowest-level ICS component and must not depend on the emulators above it.
+// The cross-check that this list stays in step with what is actually registered
+// lives in the main package's TestProbePortsDoNotCollideWithRealHoneypots.
+var ownedPorts = map[int]string{
+	102: "s7comm",
+	// 502 belongs here when the Modbus honeypot lands (threat_gg-4zzd.11).
+}
+
+// DefaultPorts is the probe's built-in port list, for tests and diagnostics.
+func DefaultPorts() []int { return parsePorts("") }
+
+// PortsFromEnv resolves the ports the probe would actually bind right now,
+// including the ICS_PROBE_PORTS override and the owned-port filter.
+func PortsFromEnv() []int {
+	ports, _ := portsForStart(os.Getenv("ICS_PROBE_PORTS"))
+	return ports
 }
