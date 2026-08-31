@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -67,16 +68,24 @@ func CheckAndUpdate(currentVersion string) (bool, error) {
 		return false, fmt.Errorf("invalid current version format: %w", err)
 	}
 
-	// Check calver date first
-	if latestVersion[0] > currentVer[0] {
+	// Check calver date first, then build number.
+	if latestVersion[0] > currentVer[0] || latestVersion[1] > currentVer[1] {
 		fmt.Printf("New version available: %s (current: %s)\n", release.TagName, currentVersion)
-		return true, downloadAndReplace(release)
-	}
-
-	// Check build number next
-	if latestVersion[1] > currentVer[1] {
-		fmt.Printf("New version available: %s (current: %s)\n", release.TagName, currentVersion)
-		return true, downloadAndReplace(release)
+		if err := downloadAndReplace(release); err != nil {
+			// Report NOT-updated on failure. This previously returned
+			// `true, downloadAndReplace(release)`, which claimed success even
+			// when the replace failed -- and main.go exits the process when
+			// updated is true. A failing update therefore killed the agent
+			// every 15 minutes, systemd restarted it 10 seconds later, and the
+			// node sat in a crash loop with its honeypot ports flapping while
+			// systemctl still reported the unit active.
+			//
+			// A failed update must leave the agent running on the old binary.
+			// That is a degraded state worth an alert, never a reason to stop
+			// serving.
+			return false, err
+		}
+		return true, nil
 	}
 
 	fmt.Println("Already running the latest version.")
@@ -123,7 +132,19 @@ func downloadAndReplace(release Release) error {
 	}
 	defer resp.Body.Close()
 
-	tempFile, err := os.CreateTemp("", "threat.gg-agent-*")
+	// Stage the download in the SAME DIRECTORY as the binary we are replacing.
+	//
+	// os.Rename cannot move a file across filesystems. Using os.CreateTemp("")
+	// puts the download in $TMPDIR (/tmp by default), and on any host where
+	// /tmp is a separate mount -- tmpfs on the DigitalOcean ICS nodes, for
+	// instance -- the rename below fails with EXDEV and the update can never
+	// succeed. Staging beside the target makes same-filesystem a property of
+	// the code rather than a property of the host's mount layout.
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get current executable path: %w", err)
+	}
+	tempFile, err := os.CreateTemp(filepath.Dir(execPath), ".threat.gg-agent-update-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -139,11 +160,6 @@ func downloadAndReplace(release Release) error {
 
 	if err := os.Chmod(tempFile.Name(), 0755); err != nil {
 		return fmt.Errorf("failed to set executable permissions: %w", err)
-	}
-
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get current executable path: %w", err)
 	}
 
 	if err := os.Rename(tempFile.Name(), execPath); err != nil {
