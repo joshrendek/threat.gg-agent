@@ -25,9 +25,10 @@ import (
 // noticing months later that an emulator never saw traffic.
 func TestProbePortsDoNotCollideWithRealHoneypots(t *testing.T) {
 	// port -> the honeypot that owns it. Add an entry when a new ICS emulator
-	// claims a port; 502 belongs here when the Modbus honeypot lands.
+	// claims a port.
 	owned := map[int]string{
 		102: "s7comm",
+		502: "modbus",
 	}
 
 	probePorts := icsprobe.DefaultPorts()
@@ -56,6 +57,10 @@ func TestOwnedICSPortsAreServedBySomethingInTheICSProfile(t *testing.T) {
 		t.Errorf("ProfileICS = %v; s7comm must be present or port 102 is served by nothing "+
 			"after being removed from the probe", names)
 	}
+	if !strings.Contains(joined, "modbus") {
+		t.Errorf("ProfileICS = %v; modbus must be present or port 502 is served by nothing "+
+			"after being removed from the probe", names)
+	}
 	if !strings.Contains(joined, "icsprobe") {
 		t.Errorf("ProfileICS = %v; icsprobe must be present to cover the ports no emulator owns yet", names)
 	}
@@ -71,6 +76,11 @@ func TestProbeEnvOverrideCannotReclaimAnOwnedPort(t *testing.T) {
 	for _, p := range got {
 		if p == 102 {
 			t.Errorf("ICS_PROBE_PORTS=%q yielded port 102, which s7comm owns; the probe must "+
+				"drop owned ports rather than fight the emulator for the bind",
+				strconv.Quote("102,502"))
+		}
+		if p == 502 {
+			t.Errorf("ICS_PROBE_PORTS=%q yielded port 502, which modbus owns; the probe must "+
 				"drop owned ports rather than fight the emulator for the bind",
 				strconv.Quote("102,502"))
 		}
