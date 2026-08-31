@@ -14,7 +14,7 @@ import (
 // This test is written to genuinely exercise cross-IP visibility rather than
 // just calling two methods and hoping: it fails immediately against a naive
 // implementation where "the store" is one shared map keyed only by address
-// (no IP dimension at all) -- swap store.get(ip) below for a single shared
+// (no IP dimension at all) -- swap store.Get(ip) below for a single shared
 // *attackerState and this test fails, because B's read would return A's
 // sentinel instead of drifting simulated data.
 func TestWriteIsolationBetweenAttackerIPs(t *testing.T) {
@@ -22,10 +22,10 @@ func TestWriteIsolationBetweenAttackerIPs(t *testing.T) {
 	addr := addressKey{area: areaDBForTest, db: 1, byteOffset: 100}
 	sentinel := []byte{0xDE, 0xAD, 0xBE, 0xEF}
 
-	attackerA := store.get("10.0.0.1")
+	attackerA := store.Get("10.0.0.1")
 	attackerA.write(addr, sentinel)
 
-	attackerB := store.get("10.0.0.2")
+	attackerB := store.Get("10.0.0.2")
 	gotB := attackerB.read(addr, len(sentinel))
 
 	if bytes.Equal(gotB, sentinel) {
@@ -39,7 +39,7 @@ func TestWriteIsolationBetweenAttackerIPs(t *testing.T) {
 	}
 }
 
-// TestSameIPReusesStateAcrossConnections confirms store.get is keyed on the
+// TestSameIPReusesStateAcrossConnections confirms store.Get is keyed on the
 // IP string, not on connection identity: two "connections" from the same
 // attacker IP see the same state (a write from one is visible to the other),
 // which is the intended, deliberate opposite of the A/B isolation above.
@@ -48,8 +48,8 @@ func TestSameIPReusesStateAcrossConnections(t *testing.T) {
 	addr := addressKey{area: areaDBForTest, db: 2, byteOffset: 0}
 	sentinel := []byte{0x01, 0x02}
 
-	store.get("192.168.1.50").write(addr, sentinel)
-	got := store.get("192.168.1.50").read(addr, len(sentinel))
+	store.Get("192.168.1.50").write(addr, sentinel)
+	got := store.Get("192.168.1.50").read(addr, len(sentinel))
 
 	if !bytes.Equal(got, sentinel) {
 		t.Errorf("second get() for the same IP read % x, want the earlier write % x back", got, sentinel)
@@ -62,8 +62,8 @@ func TestSameIPReusesStateAcrossConnections(t *testing.T) {
 func TestCPUModeIsolationBetweenAttackerIPs(t *testing.T) {
 	store := newStateStore()
 
-	attackerA := store.get("172.16.0.1")
-	attackerB := store.get("172.16.0.2")
+	attackerA := store.Get("172.16.0.1")
+	attackerB := store.Get("172.16.0.2")
 
 	if attackerB.getMode() != modeRun {
 		t.Fatalf("attacker B's initial mode = %v, want modeRun", attackerB.getMode())
@@ -81,23 +81,26 @@ func TestCPUModeIsolationBetweenAttackerIPs(t *testing.T) {
 
 // TestStateStoreEvictsLeastRecentlyUsedWhenFull confirms the bound in
 // maxTrackedAttackers actually caps memory rather than just being decorative.
+// The bounded-LRU mechanism itself is generic and has its own thorough
+// coverage in icscore's store_test.go; this test only confirms that
+// maxTrackedAttackers is the bound actually wired into this package's store.
 func TestStateStoreEvictsLeastRecentlyUsedWhenFull(t *testing.T) {
 	store := newStateStore()
 	for i := 0; i < maxTrackedAttackers; i++ {
-		store.get(ipForIndex(i))
+		store.Get(ipForIndex(i))
 	}
-	if store.lru.Len() != maxTrackedAttackers {
-		t.Fatalf("store has %d entries after filling to capacity, want %d", store.lru.Len(), maxTrackedAttackers)
+	if store.Len() != maxTrackedAttackers {
+		t.Fatalf("store has %d entries after filling to capacity, want %d", store.Len(), maxTrackedAttackers)
 	}
 
 	// One more distinct IP must evict the least-recently-used entry (IP 0,
 	// never touched again since its initial insert) rather than growing
 	// past the cap.
-	store.get(ipForIndex(maxTrackedAttackers))
-	if store.lru.Len() != maxTrackedAttackers {
-		t.Fatalf("store has %d entries after exceeding capacity, want it capped at %d", store.lru.Len(), maxTrackedAttackers)
+	store.Get(ipForIndex(maxTrackedAttackers))
+	if store.Len() != maxTrackedAttackers {
+		t.Fatalf("store has %d entries after exceeding capacity, want it capped at %d", store.Len(), maxTrackedAttackers)
 	}
-	if _, stillPresent := store.items[ipForIndex(0)]; stillPresent {
+	if store.Contains(ipForIndex(0)) {
 		t.Error("least-recently-used entry was not evicted when the store exceeded capacity")
 	}
 }
@@ -154,7 +157,7 @@ func TestDriftValueDiffersAcrossAddresses(t *testing.T) {
 
 func TestReadWithoutWriteNeverAllZero(t *testing.T) {
 	store := newStateStore()
-	attacker := store.get("203.0.113.1")
+	attacker := store.Get("203.0.113.1")
 	got := attacker.read(addressKey{area: areaDBForTest, db: 1, byteOffset: 0}, 16)
 
 	allZero := true

@@ -164,17 +164,22 @@ func TestServeCapturesBareConnectWithNoBytesSent(t *testing.T) {
 func TestParsePorts(t *testing.T) {
 	t.Run("default when unset", func(t *testing.T) {
 		got := parsePorts("")
-		require.Equal(t, []int{502, 2404, 20000, 44818, 4840}, got) // 102 belongs to the s7comm honeypot
+		require.Equal(t, []int{2404, 20000, 44818, 4840}, got) // 102/502 belong to the s7comm/modbus honeypots
 	})
 
 	t.Run("blank/whitespace-only also defaults", func(t *testing.T) {
 		got := parsePorts("   ")
-		require.Equal(t, []int{502, 2404, 20000, 44818, 4840}, got) // 102 belongs to the s7comm honeypot
+		require.Equal(t, []int{2404, 20000, 44818, 4840}, got) // 102/502 belong to the s7comm/modbus honeypots
 	})
 
 	t.Run("override when set", func(t *testing.T) {
+		got := parsePorts("2404, 20000")
+		require.Equal(t, []int{2404, 20000}, got)
+	})
+
+	t.Run("an explicitly configured owned port is still dropped", func(t *testing.T) {
 		got := parsePorts("502, 2404")
-		require.Equal(t, []int{502, 2404}, got)
+		require.Equal(t, []int{2404}, got, "502 belongs to the modbus honeypot even when explicitly configured")
 	})
 
 	t.Run("malformed entries are skipped without panicking", func(t *testing.T) {
@@ -182,7 +187,7 @@ func TestParsePorts(t *testing.T) {
 		require.NotPanics(t, func() {
 			got = parsePorts("abc,,502,99999,-1,0,2404,")
 		})
-		require.Equal(t, []int{502, 2404}, got)
+		require.Equal(t, []int{2404}, got)
 	})
 
 	t.Run("entirely malformed yields no ports rather than falling back to defaults", func(t *testing.T) {
@@ -241,30 +246,31 @@ func TestPortsForStartFallsBackToDefaultsWhenNothingParses(t *testing.T) {
 	// of which would collide with a running agent, so the decision is split out.
 	ports, fellBack := portsForStart("nonsense,also-bad,-1,99999")
 	require.True(t, fellBack, "an all-invalid list must report that it fell back")
-	// 102 is deliberately absent: it belongs to the s7comm emulator, and the
-	// probe must not fight it for the bind. See ownedPorts.
-	want := map[int]bool{502: true, 2404: true, 20000: true, 44818: true, 4840: true}
-	require.Len(t, ports, len(want), "fallback must be the six documented TCP ICS ports")
+	// 102/502 are deliberately absent: they belong to the s7comm/modbus
+	// emulators, and the probe must not fight them for the bind. See
+	// ownedPorts.
+	want := map[int]bool{2404: true, 20000: true, 44818: true, 4840: true}
+	require.Len(t, ports, len(want), "fallback must be the four remaining documented TCP ICS ports")
 	for _, p := range ports {
 		require.True(t, want[p], "unexpected fallback port %d", p)
 	}
 
 	// A usable list must NOT trigger the fallback.
 	// 102 is filtered out as an owned port, leaving a still-valid list.
-	ports, fellBack = portsForStart("502,102")
+	ports, fellBack = portsForStart("2404,102")
 	require.False(t, fellBack, "a valid list must not fall back")
-	require.Equal(t, []int{502}, ports, "102 must be dropped: the s7comm honeypot owns it")
+	require.Equal(t, []int{2404}, ports, "102 must be dropped: the s7comm honeypot owns it")
 
 	// Partly-valid keeps the good entries rather than falling back wholesale.
-	ports, fellBack = portsForStart("502, oops, 44818")
+	ports, fellBack = portsForStart("2404, oops, 44818")
 	require.False(t, fellBack, "a partly-valid list must not fall back")
-	require.Equal(t, []int{502, 44818}, ports)
+	require.Equal(t, []int{2404, 44818}, ports)
 }
 
 func TestParsePortsKeepsValidEntriesAndDropsTypos(t *testing.T) {
 	// 102 is dropped as owned, not as a typo -- both are silently skipped.
-	got := parsePorts("502, oops, 102, 70000, , 44818")
-	want := []int{502, 44818}
+	got := parsePorts("2404, oops, 102, 70000, , 44818")
+	want := []int{2404, 44818}
 	if len(got) != len(want) {
 		t.Fatalf("parsePorts = %v, want %v", got, want)
 	}

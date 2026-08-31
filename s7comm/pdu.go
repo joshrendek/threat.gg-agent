@@ -167,10 +167,10 @@ func handleJob(hdr s7Header, body []byte, ip string, sess *session) []byte {
 		// header) so a future extension has real bytes to work from,
 		// bounded by record() at maxRawBytes.
 		sess.record(operation{
-			kind:    fmt.Sprintf("unknown_fn=0x%02X", function),
-			detail:  fmt.Sprintf("S7 Job function 0x%02X is not implemented by this honeypot", function),
-			raw:     body[:hdr.parLen+hdr.datLen],
-			handled: false,
+			Kind:    fmt.Sprintf("unknown_fn=0x%02X", function),
+			Detail:  fmt.Sprintf("S7 Job function 0x%02X is not implemented by this honeypot", function),
+			Raw:     body[:hdr.parLen+hdr.datLen],
+			Handled: false,
 		})
 		// Wireshark's own dissector has no case for this function code
 		// either at this point; a real CPU rejects a function it doesn't
@@ -200,7 +200,7 @@ func handleSetupComm(hdr s7Header, sess *session) []byte {
 
 	sess.setNegotiatedPDUSize(uint32(NegotiatedPDULength))
 	sess.advance(stageSetup)
-	sess.record(operation{kind: "setup_comm", detail: fmt.Sprintf("negotiated_pdu_size=%d", NegotiatedPDULength), handled: true})
+	sess.record(operation{Kind: "setup_comm", Detail: fmt.Sprintf("negotiated_pdu_size=%d", NegotiatedPDULength), Handled: true})
 
 	return buildS7Header(rosctrAckData, hdr.pduRef, errclsNone, 0, param, nil)
 }
@@ -345,7 +345,7 @@ func handleReadVar(hdr s7Header, param []byte, ip string, sess *session) []byte 
 		return nil
 	}
 	items := parseItemList(param, int(param[1]), 2)
-	state := globalState.get(ip)
+	state := globalState.Get(ip)
 
 	var data []byte
 	lens := make([]int, len(items))
@@ -377,7 +377,7 @@ func handleReadVar(hdr s7Header, param []byte, ip string, sess *session) []byte 
 	}
 
 	sess.advance(stageData)
-	sess.record(operation{kind: "read_var", detail: joinItemDetails(items, lens), handled: true})
+	sess.record(operation{Kind: "read_var", Detail: joinItemDetails(items, lens), Handled: true})
 
 	respParam := []byte{fnReadVar, byte(len(items))}
 	return buildS7Header(rosctrAckData, hdr.pduRef, errclsNone, 0, respParam, data)
@@ -395,7 +395,7 @@ func handleWriteVar(hdr s7Header, param, data []byte, ip string, sess *session) 
 	}
 	itemCount := int(param[1])
 	items := parseItemList(param, itemCount, 2)
-	state := globalState.get(ip)
+	state := globalState.Get(ip)
 
 	returnCodes := make([]byte, len(items))
 	for i := range returnCodes {
@@ -437,7 +437,7 @@ func handleWriteVar(hdr s7Header, param, data []byte, ip string, sess *session) 
 	}
 
 	sess.advance(stageData)
-	sess.record(operation{kind: "write_var", detail: joinItemDetails(writtenItems, writtenLens), handled: true})
+	sess.record(operation{Kind: "write_var", Detail: joinItemDetails(writtenItems, writtenLens), Handled: true})
 
 	respParam := []byte{fnWriteVar, byte(len(items))}
 	return buildS7Header(rosctrAckData, hdr.pduRef, errclsNone, 0, respParam, returnCodes)
@@ -455,24 +455,24 @@ func handleWriteVar(hdr s7Header, param, data []byte, ip string, sess *session) 
 func handlePIService(hdr s7Header, param []byte, ip string, sess *session) []byte {
 	const unsupported = errcodApplicationUnknownService
 	if len(param) < 10 {
-		sess.record(operation{kind: "malformed_pi_service", detail: fmt.Sprintf("param %d bytes, want >=10", len(param)), raw: param, handled: false})
+		sess.record(operation{Kind: "malformed_pi_service", Detail: fmt.Sprintf("param %d bytes, want >=10", len(param)), Raw: param, Handled: false})
 		return buildS7Header(rosctrAckData, hdr.pduRef, errclsApplication, byte(unsupported&0xFF), nil, nil)
 	}
 	paramBlockLen := int(binary.BigEndian.Uint16(param[8:10]))
 	pos := 10 + paramBlockLen
 	if pos >= len(param) {
-		sess.record(operation{kind: "malformed_pi_service", detail: "parameter block length runs past the parameter", raw: param, handled: false})
+		sess.record(operation{Kind: "malformed_pi_service", Detail: "parameter block length runs past the parameter", Raw: param, Handled: false})
 		return buildS7Header(rosctrAckData, hdr.pduRef, errclsApplication, byte(unsupported&0xFF), nil, nil)
 	}
 	nameLen := int(param[pos])
 	pos++
 	if pos+nameLen > len(param) {
-		sess.record(operation{kind: "malformed_pi_service", detail: fmt.Sprintf("service name length %d runs past the parameter", nameLen), raw: param, handled: false})
+		sess.record(operation{Kind: "malformed_pi_service", Detail: fmt.Sprintf("service name length %d runs past the parameter", nameLen), Raw: param, Handled: false})
 		return buildS7Header(rosctrAckData, hdr.pduRef, errclsApplication, byte(unsupported&0xFF), nil, nil)
 	}
 	serviceName := string(param[pos : pos+nameLen])
 
-	state := globalState.get(ip)
+	state := globalState.Get(ip)
 	switch serviceName {
 	case "P_PROGRAM":
 		// A real P_PROGRAM call can mean either start or stop depending on
@@ -482,7 +482,7 @@ func handlePIService(hdr s7Header, param []byte, ip string, sess *session) []byt
 		// client actually uses to stop a CPU.
 		state.setMode(modeRun)
 		sess.advance(stageControl)
-		sess.record(operation{kind: "plc_start", detail: "P_PROGRAM (warm restart / start)", handled: true})
+		sess.record(operation{Kind: "plc_start", Detail: "P_PROGRAM (warm restart / start)", Handled: true})
 	case "_MODU", "_GARB":
 		// Copy-RAM-to-ROM / compress-memory: accepted, but neither changes
 		// run/stop state, and this honeypot has no persistent "ROM" to
@@ -494,7 +494,7 @@ func handlePIService(hdr s7Header, param []byte, ip string, sess *session) []byt
 		// branch), with the actual service name preserved in detail so the
 		// two remain distinguishable.
 		sess.advance(stageControl)
-		sess.record(operation{kind: "copy_ram_to_rom", detail: fmt.Sprintf("service=%s", serviceName), handled: true})
+		sess.record(operation{Kind: "copy_ram_to_rom", Detail: fmt.Sprintf("service=%s", serviceName), Handled: true})
 	default:
 		// An unrecognised PI service is exactly what the unhandled-request
 		// queue exists for: an attacker asked this CPU to run a program
@@ -505,7 +505,7 @@ func handlePIService(hdr s7Header, param []byte, ip string, sess *session) []byt
 		// SUCCESS, which is both an invisible capture gap and a fidelity bug --
 		// a real CPU rejects a service it does not provide, so acking every
 		// arbitrary name is a tell an attacker can probe for directly.
-		sess.record(operation{kind: fmt.Sprintf("unsupported_pi_service=%s", serviceName), detail: "PI service not implemented", raw: param, handled: false})
+		sess.record(operation{Kind: fmt.Sprintf("unsupported_pi_service=%s", serviceName), Detail: "PI service not implemented", Raw: param, Handled: false})
 		return buildS7Header(rosctrAckData, hdr.pduRef, errclsApplication, byte(unsupported&0xFF), nil, nil)
 	}
 
@@ -530,11 +530,11 @@ func handlePIService(hdr s7Header, param []byte, ip string, sess *session) []byt
 // only sibling "simple control function" ack this protocol documents at
 // all -- flagged per the brief's instruction to call out unsettled choices.
 func handlePLCStop(hdr s7Header, ip string, sess *session) []byte {
-	state := globalState.get(ip)
+	state := globalState.Get(ip)
 	state.setMode(modeStop)
 
 	sess.advance(stageControl)
-	sess.record(operation{kind: "plc_stop", detail: "PLC STOP requested", handled: true})
+	sess.record(operation{Kind: "plc_stop", Detail: "PLC STOP requested", Handled: true})
 
 	respParam := []byte{fnPLCStop, 0x00}
 	return buildS7Header(rosctrAckData, hdr.pduRef, errclsNone, 0, respParam, nil)
@@ -580,7 +580,7 @@ const (
 // "not implemented" answer a real CPU gives, rather than silence or a crash.
 func handleUserdata(hdr s7Header, body []byte, ip string, sess *session) []byte {
 	if hdr.parLen < 8 {
-		sess.record(operation{kind: "malformed_userdata", detail: fmt.Sprintf("parLen=%d, want >=8", hdr.parLen), raw: body, handled: false})
+		sess.record(operation{Kind: "malformed_userdata", Detail: fmt.Sprintf("parLen=%d, want >=8", hdr.parLen), Raw: body, Handled: false})
 		return nil
 	}
 	param := body[:hdr.parLen]
@@ -591,7 +591,7 @@ func handleUserdata(hdr s7Header, body []byte, ip string, sess *session) []byte 
 		// answer; a mode-transition-indication-shaped parameter (function
 		// 0x01) is something a real CPU only ever SENDS, never receives, so
 		// there's nothing genuine to reply with.
-		sess.record(operation{kind: fmt.Sprintf("unsupported_userdata_fn=0x%02X", param[0]), detail: "parameter is not the CPU-services marker", raw: param, handled: false})
+		sess.record(operation{Kind: fmt.Sprintf("unsupported_userdata_fn=0x%02X", param[0]), Detail: "parameter is not the CPU-services marker", Raw: param, Handled: false})
 		return buildSZLNotAvailableResponse(hdr, 0)
 	}
 	funcgroup := param[5] & 0x3F
@@ -599,7 +599,7 @@ func handleUserdata(hdr s7Header, body []byte, ip string, sess *session) []byte 
 	seqNum := param[7]
 
 	if funcgroup != udFuncGroupCPU || subfunc != udSubfReadSZL {
-		sess.record(operation{kind: fmt.Sprintf("unsupported_userdata=fg0x%02X/sf0x%02X", funcgroup, subfunc), detail: "userdata function group/subfunction not implemented", raw: param, handled: false})
+		sess.record(operation{Kind: fmt.Sprintf("unsupported_userdata=fg0x%02X/sf0x%02X", funcgroup, subfunc), Detail: "userdata function group/subfunction not implemented", Raw: param, Handled: false})
 		return buildSZLNotAvailableResponse(hdr, seqNum)
 	}
 	// The first 4 bytes of ANY Userdata data section are the common
@@ -608,7 +608,7 @@ func handleUserdata(hdr s7Header, body []byte, ip string, sess *session) []byte 
 	// part of a userdata telegram are the same for all types"). The
 	// SZL-ID/Index follow that header, not the start of the data section.
 	if len(data) < 8 {
-		sess.record(operation{kind: "malformed_szl_request", detail: fmt.Sprintf("data section %d bytes, want >=8", len(data)), raw: data, handled: false})
+		sess.record(operation{Kind: "malformed_szl_request", Detail: fmt.Sprintf("data section %d bytes, want >=8", len(data)), Raw: data, Handled: false})
 		return buildSZLNotAvailableResponse(hdr, seqNum)
 	}
 
@@ -627,7 +627,7 @@ func handleUserdata(hdr s7Header, body []byte, ip string, sess *session) []byte 
 	}
 
 	sess.advance(stageIdentity)
-	sess.record(operation{kind: "szl_read", detail: fmt.Sprintf("szl_id=0x%04X index=0x%04X", szlID, szlIdx), handled: true})
+	sess.record(operation{Kind: "szl_read", Detail: fmt.Sprintf("szl_id=0x%04X index=0x%04X", szlID, szlIdx), Handled: true})
 	return buildSZLSuccessResponse(hdr, seqNum, szlID, szlIdx, recLen, records)
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/localai"
 	"github.com/joshrendek/threat.gg-agent/mcp"
 	memcachedhp "github.com/joshrendek/threat.gg-agent/memcached"
+	"github.com/joshrendek/threat.gg-agent/modbus"
 	mongohp "github.com/joshrendek/threat.gg-agent/mongo"
 	"github.com/joshrendek/threat.gg-agent/mqtt"
 	mssqlhp "github.com/joshrendek/threat.gg-agent/mssql"
@@ -192,5 +193,6 @@ func catalog() honeypots.Catalog {
 		"s3":            func() honeypots.Honeypot { return s3hp.New() },
 		"icsprobe":      func() honeypots.Honeypot { return icsprobe.New() },
 		"s7comm":        func() honeypots.Honeypot { return s7comm.New() },
+		"modbus":        func() honeypots.Honeypot { return modbus.New() },
 	}
 }

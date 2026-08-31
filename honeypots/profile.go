@@ -65,18 +65,20 @@ var profiles = map[string][]string{
 
 	// ProfileICS is the industrial/OT honeypot profile. icsprobe is a passive
 	// bare-TCP measurement instrument (not a protocol emulator), across the
-	// common ICS/SCADA ports: 102 S7comm, 502 Modbus, 2404 IEC 60870-5-104,
-	// 20000 DNP3, 44818 EtherNet/IP and 4840 OPC UA -- it established whether
-	// industrial scanning reaches our address space before a real emulator was
-	// built for any of them. BACnet/IP 47808 is UDP and is deliberately out of
-	// scope for v1. s7comm is the first real protocol emulator built on the
-	// back of that finding: a Siemens S7-300-class PLC on TCP/102. It runs on
-	// dedicated ICS nodes only, not ProfileDefault -- see
-	// TestSelect_DefaultReproducesTodaysBehavior, which pins the default
-	// profile's honeypot count and must stay passing.
+	// remaining common ICS/SCADA ports it hasn't yet graduated to a real
+	// emulator for: 2404 IEC 60870-5-104, 20000 DNP3, 44818 EtherNet/IP and
+	// 4840 OPC UA -- it established whether industrial scanning reaches our
+	// address space before a real emulator was built for any of them.
+	// BACnet/IP 47808 is UDP and is deliberately out of scope for v1.
+	// s7comm and modbus are the real protocol emulators built on the back of
+	// that finding: a Siemens S7-300-class PLC on TCP/102, and a Schneider
+	// Modicon M221-class PLC on TCP/502. Both run on dedicated ICS nodes
+	// only, not ProfileDefault -- see TestSelect_DefaultReproducesTodaysBehavior,
+	// which pins the default profile's honeypot count and must stay passing.
 	ProfileICS: {
 		"icsprobe",
 		"s7comm",
+		"modbus",
 	},
 }
 

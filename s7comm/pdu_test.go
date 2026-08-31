@@ -241,10 +241,10 @@ func TestHandlePLCStopPerIPIsolationThroughFullDispatch(t *testing.T) {
 		t.Errorf("STOP ack param = % x, want it to start with the echoed function byte 0x29", param)
 	}
 
-	if globalState.get("198.51.100.55").getMode() != modeStop {
+	if globalState.Get("198.51.100.55").getMode() != modeStop {
 		t.Error("attacker that sent PLC Stop is not recorded as stopped")
 	}
-	if globalState.get("198.51.100.200").getMode() != modeRun {
+	if globalState.Get("198.51.100.200").getMode() != modeRun {
 		t.Error("a different attacker IP was affected by another attacker's PLC Stop")
 	}
 }

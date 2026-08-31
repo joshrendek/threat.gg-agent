@@ -22,25 +22,30 @@ import (
 )
 
 const (
-	// defaultPortsCSV is the six TCP industrial-protocol ports probed when
-	// ICS_PROBE_PORTS is unset: S7comm, Modbus, IEC 60870-5-104, DNP3,
-	// EtherNet/IP, OPC UA.
+	// defaultPortsCSV is the four remaining TCP industrial-protocol ports
+	// probed when ICS_PROBE_PORTS is unset: IEC 60870-5-104, DNP3,
+	// EtherNet/IP, OPC UA. It originally covered six (also S7comm and
+	// Modbus), but both have since graduated to real emulators -- see below.
 	//
 	// BACnet (47808) is UDP, not TCP, and is deliberately out of scope for
 	// v1 -- this package only implements TCP listeners.
+	//
 	// 102 (S7comm) is DELIBERATELY ABSENT: it now belongs to the s7comm
-	// honeypot, which emulates a real S7-300 on that port. Both live in
-	// ProfileICS, so leaving 102 here made them collide -- and because the
-	// probe registers first it would win the bind, silently preventing the
-	// emulator from ever starting while the node still looked healthy and
-	// port 102 still looked "listening".
+	// honeypot, which emulates a real S7-300 on that port.
+	// 502 (Modbus) is DELIBERATELY ABSENT for the same reason: it now
+	// belongs to the modbus honeypot, which emulates a real Modicon M221 on
+	// that port (threat_gg-4zzd.11). Both graduated ports lived in
+	// ProfileICS alongside this probe, so leaving them here made them
+	// collide -- and because the probe registers first it would win the
+	// bind, silently preventing the emulator from ever starting while the
+	// node still looked healthy and the port still looked "listening".
+	// That exact bug shipped once already, for s7comm/102.
 	//
 	// This is the lifecycle every one of these ports is expected to follow:
 	// the instrument measures demand, and once that demand justifies building
 	// a real emulator, the port GRADUATES from the probe to the honeypot.
-	// 502 goes the same way when the Modbus honeypot lands (threat_gg-4zzd.11).
 	// TestProbePortsDoNotCollideWithRealHoneypots enforces it.
-	defaultPortsCSV = "502,2404,20000,44818,4840"
+	defaultPortsCSV = "2404,20000,44818,4840"
 
 	// maxReadBytes caps how much of the client's opening data we capture.
 	// This is a telemetry instrument, not a protocol parser, so we only need
@@ -253,7 +258,7 @@ func portsForStart(raw string) (ports []int, fellBack bool) {
 // lives in the main package's TestProbePortsDoNotCollideWithRealHoneypots.
 var ownedPorts = map[int]string{
 	102: "s7comm",
-	// 502 belongs here when the Modbus honeypot lands (threat_gg-4zzd.11).
+	502: "modbus",
 }
 
 // DefaultPorts is the probe's built-in port list, for tests and diagnostics.

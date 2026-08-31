@@ -1,12 +1,13 @@
 package s7comm
 
 import (
-	"container/list"
 	"crypto/sha256"
 	"encoding/binary"
 	"math"
 	"sync"
 	"time"
+
+	"github.com/joshrendek/threat.gg-agent/icscore"
 )
 
 // maxTrackedAttackers bounds the per-IP state map (threat_gg-4zzd.6): once
@@ -158,51 +159,20 @@ func driftValue(addr addressKey, n int) []byte {
 	return out
 }
 
-// stateStore is the process-wide, bounded, per-attacker-IP state map. There
-// is exactly one instance (globalState); it exists so a write or a STOP from
-// one attacker IP is never visible to another (threat_gg-4zzd.6) -- the
-// bug this honeypot must not repeat is a previous honeypot's globally-shared
-// mutable emulated state, which let any anonymous caller change what every
-// later visitor saw.
-type stateStore struct {
-	mu    sync.Mutex
-	lru   *list.List // front = most recently used
-	items map[string]*list.Element
-}
-
-type stateEntry struct {
-	ip    string
-	state *attackerState
-}
-
-func newStateStore() *stateStore {
-	return &stateStore{lru: list.New(), items: make(map[string]*list.Element)}
-}
-
-// get returns the attackerState for ip, creating one if this is a new
-// attacker. If the store is at capacity, the least-recently-used attacker's
-// state is evicted first -- see maxTrackedAttackers.
-func (s *stateStore) get(ip string) *attackerState {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if el, ok := s.items[ip]; ok {
-		s.lru.MoveToFront(el)
-		return el.Value.(*stateEntry).state
-	}
-
-	if s.lru.Len() >= maxTrackedAttackers {
-		oldest := s.lru.Back()
-		if oldest != nil {
-			s.lru.Remove(oldest)
-			delete(s.items, oldest.Value.(*stateEntry).ip)
-		}
-	}
-
-	st := &attackerState{}
-	el := s.lru.PushFront(&stateEntry{ip: ip, state: st})
-	s.items[ip] = el
-	return st
+// newStateStore builds the process-wide, bounded, per-attacker-IP state
+// store this package's PDU handlers read and write through. It exists so a
+// write or a STOP from one attacker IP is never visible to another
+// (threat_gg-4zzd.6) -- the bug this honeypot must not repeat is a previous
+// honeypot's globally-shared mutable emulated state, which let any anonymous
+// caller change what every later visitor saw.
+//
+// The bounded-LRU mechanics themselves live in icscore.Store (shared with
+// every other icscore-based protocol); this package only supplies its own
+// per-attacker value type (attackerState) and the bound (maxTrackedAttackers).
+func newStateStore() *icscore.Store[*attackerState] {
+	return icscore.NewStore(maxTrackedAttackers, func() *attackerState {
+		return &attackerState{}
+	})
 }
 
 // globalState is the single per-IP state map this whole package's PDU

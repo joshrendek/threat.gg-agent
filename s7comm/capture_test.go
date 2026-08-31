@@ -128,19 +128,19 @@ func TestUnknownFunctionCodeCapturesUnhandledOperationWithRawBytes(t *testing.T)
 	if !ok {
 		t.Fatal("handlePDU closed the connection for a merely-unimplemented function, want it to stay open")
 	}
-	if len(sess.operations) != 1 {
-		t.Fatalf("operations = %d, want 1", len(sess.operations))
+	if len(sess.core.Operations()) != 1 {
+		t.Fatalf("operations = %d, want 1", len(sess.core.Operations()))
 	}
-	op := sess.operations[0]
-	if op.handled {
+	op := sess.core.Operations()[0]
+	if op.Handled {
 		t.Error("an unknown function's operation must be handled=false")
 	}
-	if op.kind != "unknown_fn=0x77" {
-		t.Errorf("kind = %q, want %q", op.kind, "unknown_fn=0x77")
+	if op.Kind != "unknown_fn=0x77" {
+		t.Errorf("kind = %q, want %q", op.Kind, "unknown_fn=0x77")
 	}
 	wantRaw := append(append([]byte{}, param...), data...)
-	if !bytes.Equal(op.raw, wantRaw) {
-		t.Errorf("raw = % x, want the verbatim request % x", op.raw, wantRaw)
+	if !bytes.Equal(op.Raw, wantRaw) {
+		t.Errorf("raw = % x, want the verbatim request % x", op.Raw, wantRaw)
 	}
 }
 
@@ -156,8 +156,8 @@ func TestStageOnlyMovesForwardControlSurvivesLaterDataOp(t *testing.T) {
 	if _, ok := handlePDU(buildJobPDU(1, stopParam, nil), ip, sess); !ok {
 		t.Fatal("handlePDU(PLCStop) closed the connection")
 	}
-	if sess.reachedStage != stageControl {
-		t.Fatalf("after PLC STOP, reachedStage = %q, want %q", sess.reachedStage, stageControl)
+	if sess.core.ReachedStage() != stageControl {
+		t.Fatalf("after PLC STOP, reachedStage = %q, want %q", sess.core.ReachedStage(), stageControl)
 	}
 
 	item := buildS7AnyItem(2 /* BYTE */, 4, 5, 0x84, 200*8)
@@ -166,8 +166,8 @@ func TestStageOnlyMovesForwardControlSurvivesLaterDataOp(t *testing.T) {
 		t.Fatal("handlePDU(ReadVar) closed the connection")
 	}
 
-	if sess.reachedStage != stageControl {
-		t.Errorf("reachedStage regressed to %q after a later data read, want it to stay %q", sess.reachedStage, stageControl)
+	if sess.core.ReachedStage() != stageControl {
+		t.Errorf("reachedStage regressed to %q after a later data read, want it to stay %q", sess.core.ReachedStage(), stageControl)
 	}
 }
 
@@ -179,13 +179,13 @@ func TestOperationsCapAt256AndOverflowIsVisible(t *testing.T) {
 	sess := newSession()
 	const overflow = 10
 	for i := 0; i < maxOperations+overflow; i++ {
-		sess.record(operation{kind: "read_var", detail: "filler", handled: true})
+		sess.record(operation{Kind: "read_var", Detail: "filler", Handled: true})
 	}
-	if len(sess.operations) != maxOperations {
-		t.Fatalf("operations = %d, want the cap %d", len(sess.operations), maxOperations)
+	if len(sess.core.Operations()) != maxOperations {
+		t.Fatalf("operations = %d, want the cap %d", len(sess.core.Operations()), maxOperations)
 	}
-	if sess.droppedOperations != overflow {
-		t.Fatalf("droppedOperations = %d, want %d", sess.droppedOperations, overflow)
+	if sess.core.DroppedOperations() != overflow {
+		t.Fatalf("droppedOperations = %d, want %d", sess.core.DroppedOperations(), overflow)
 	}
 
 	req := sess.toProto("192.0.2.60", "guid-1")
@@ -207,11 +207,11 @@ func TestPLCStopCapturedWithKindPlcStop(t *testing.T) {
 		t.Fatal("handlePDU(PLCStop) closed the connection")
 	}
 
-	if len(sess.operations) != 1 {
-		t.Fatalf("operations = %d, want 1", len(sess.operations))
+	if len(sess.core.Operations()) != 1 {
+		t.Fatalf("operations = %d, want 1", len(sess.core.Operations()))
 	}
-	op := sess.operations[0]
-	if op.kind != "plc_stop" || !op.handled {
+	op := sess.core.Operations()[0]
+	if op.Kind != "plc_stop" || !op.Handled {
 		t.Errorf("operation = %+v, want a handled plc_stop", op)
 	}
 }
@@ -227,17 +227,17 @@ func TestUnsupportedSZLIndexCapturesUnhandledOperation(t *testing.T) {
 		t.Fatal("handlePDU(unsupported SZL) closed the connection")
 	}
 
-	if len(sess.operations) != 1 {
-		t.Fatalf("operations = %d, want 1", len(sess.operations))
+	if len(sess.core.Operations()) != 1 {
+		t.Fatalf("operations = %d, want 1", len(sess.core.Operations()))
 	}
-	op := sess.operations[0]
-	if op.handled {
+	op := sess.core.Operations()[0]
+	if op.Handled {
 		t.Error("an unsupported SZL index's operation must be handled=false")
 	}
-	if !strings.Contains(op.kind, "0x001C") || !strings.Contains(op.kind, "0x0009") {
-		t.Errorf("kind = %q, want it to identify SZL 0x001C/0x0009", op.kind)
+	if !strings.Contains(op.Kind, "0x001C") || !strings.Contains(op.Kind, "0x0009") {
+		t.Errorf("kind = %q, want it to identify SZL 0x001C/0x0009", op.Kind)
 	}
-	if len(op.raw) == 0 {
+	if len(op.Raw) == 0 {
 		t.Error("expected raw bytes for the unsupported SZL request")
 	}
 }
@@ -274,19 +274,19 @@ func TestEveryUnansweredRequestPathRecordsAnUnhandledOperation(t *testing.T) {
 			_, _ = handlePDU(tc.payload, "203.0.113.77", sess)
 
 			var found bool
-			for _, op := range sess.operations {
-				if !op.handled && strings.Contains(op.kind, tc.wantKindSub) {
+			for _, op := range sess.core.Operations() {
+				if !op.Handled && strings.Contains(op.Kind, tc.wantKindSub) {
 					found = true
-					if len(op.raw) == 0 {
+					if len(op.Raw) == 0 {
 						t.Errorf("unhandled operation %q recorded no raw bytes; the verbatim "+
-							"request is the point of the queue", op.kind)
+							"request is the point of the queue", op.Kind)
 					}
 				}
 			}
 			if !found {
 				var kinds []string
-				for _, op := range sess.operations {
-					kinds = append(kinds, op.kind)
+				for _, op := range sess.core.Operations() {
+					kinds = append(kinds, op.Kind)
 				}
 				t.Errorf("no unhandled operation containing %q was recorded; got kinds %v. "+
 					"An unanswerable request that is not recorded is invisible.", tc.wantKindSub, kinds)

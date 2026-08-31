@@ -149,19 +149,20 @@ func TestSelect_AllReturnsEveryCatalogEntrySortedAlphabetically(t *testing.T) {
 
 // TestSelect_ICSReturnsItsConfiguredHoneypots pins ProfileICS's current
 // contents (icsprobe, a passive bare-TCP measurement instrument -- not a
-// protocol emulator; and s7comm, the S7-300 protocol emulator built on the
-// back of icsprobe's finding). ProfileICS used to be an explicitly-empty
+// protocol emulator; s7comm, the S7-300 protocol emulator built on the back
+// of icsprobe's finding; and modbus, the Modicon M221 protocol emulator
+// built the same way). ProfileICS used to be an explicitly-empty
 // placeholder; if it ever needs to change again, that should be a
 // deliberate edit here, same as expectedDefaultNames is for ProfileDefault.
 func TestSelect_ICSReturnsItsConfiguredHoneypots(t *testing.T) {
-	catalog := newFakeCatalog(append(append([]string{}, expectedDefaultNames...), "icsprobe", "s7comm")...)
+	catalog := newFakeCatalog(append(append([]string{}, expectedDefaultNames...), "icsprobe", "s7comm", "modbus")...)
 
 	got, err := Select(ProfileICS, catalog)
 	if err != nil {
 		t.Fatalf("Select(%q, catalog) returned error: %v", ProfileICS, err)
 	}
 
-	want := []string{"icsprobe", "s7comm"}
+	want := []string{"icsprobe", "s7comm", "modbus"}
 	if gotNames := namesOf(got); !reflect.DeepEqual(gotNames, want) {
 		t.Fatalf("Select(%q, catalog) names = %v, want %v", ProfileICS, gotNames, want)
 	}
@@ -216,15 +217,15 @@ func TestResolveProfile_NormalizesWhitespaceAndCase(t *testing.T) {
 }
 
 func TestSelect_AcceptsNormalizableProfileNames(t *testing.T) {
-	cat := newFakeCatalog(append(append([]string{}, expectedDefaultNames...), "icsprobe", "s7comm")...)
+	cat := newFakeCatalog(append(append([]string{}, expectedDefaultNames...), "icsprobe", "s7comm", "modbus")...)
 	for _, in := range []string{"ICS", " ics ", "Ics"} {
 		got, err := Select(in, cat)
 		if err != nil {
 			t.Errorf("Select(%q) unexpected error: %v", in, err)
 			continue
 		}
-		if len(got) != 2 {
-			t.Errorf("Select(%q) = %d honeypots, want 2 (icsprobe, s7comm)", in, len(got))
+		if len(got) != 3 {
+			t.Errorf("Select(%q) = %d honeypots, want 3 (icsprobe, s7comm, modbus)", in, len(got))
 		}
 	}
 	if _, err := Select("  nosuchprofile  ", cat); err == nil {
