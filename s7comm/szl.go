@@ -30,9 +30,10 @@ type szlRecord []byte
 // recordLen; the caller assembles the wire response
 // (id, idx, list_len, list_count, records...).
 //
-// Only what the brief calls for is implemented: SZL 0x0011 index 0x0001, and
-// SZL 0x001C indexes 0x0001-0x0005/0x0007/0x0008, plus index 0x0000 meaning
-// "all of the above" (see componentIdentAllRecords doc). SZL 0x001C index
+// Only what the brief calls for is implemented: SZL 0x0011 indexes 0x0000
+// (all implemented, see moduleIdentAllRecords) and 0x0001, and SZL 0x001C
+// index 0x0000 (all implemented, see componentIdentAllRecords doc) plus
+// 0x0001-0x0005/0x0007/0x0008. SZL 0x001C index
 // 0x0009 is deliberately excluded -- see persona.go -- and everything else
 // (0x001C index 0x0006/0x000a/0x000b, which a real SZL supports but this
 // honeypot doesn't implement, any other SZL-ID entirely, or any index this
@@ -41,7 +42,10 @@ type szlRecord []byte
 func szlLookup(id, idx uint16) (recordLen int, records []szlRecord, ok bool) {
 	switch id {
 	case szlModuleIdentification:
-		if idx == 0x0001 {
+		switch idx {
+		case 0x0000:
+			return szlModuleIdentRecordLen, moduleIdentAllRecords(), true
+		case 0x0001:
 			return szlModuleIdentRecordLen, []szlRecord{buildModuleIdentRecord(idx)}, true
 		}
 	case szlComponentIdent:
@@ -66,6 +70,19 @@ func buildModuleIdentRecord(idx uint16) szlRecord {
 	binary.BigEndian.PutUint16(rec[24:26], ModuleReleaseFromUnverified)
 	binary.BigEndian.PutUint16(rec[26:28], ModuleReleaseToUnverified)
 	return rec
+}
+
+// moduleIdentAllRecords returns every SZL 0x0011 sub-index this honeypot
+// implements, for a request with Index 0x0000. Only sub-indexes that are
+// answered individually are included, so the wildcard never serves more than
+// the per-index path does.
+func moduleIdentAllRecords() []szlRecord {
+	idxs := []uint16{0x0001}
+	records := make([]szlRecord, len(idxs))
+	for i, idx := range idxs {
+		records[i] = buildModuleIdentRecord(idx)
+	}
+	return records
 }
 
 // buildComponentRecord builds one SZL 0x001C record for the given
