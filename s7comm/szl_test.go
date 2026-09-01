@@ -240,6 +240,29 @@ func TestReadSZLComponentIdentIndexZeroReturnsAllExceptWithheld(t *testing.T) {
 	}
 }
 
+func TestReadSZLModuleIdentIndexZeroReturnsAllImplemented(t *testing.T) {
+	pdu := buildReadSZLRequest(1, szlModuleIdentification, 0x0000)
+	respBytes, ok := handlePDU(pdu, "192.0.2.14", newSession())
+	if !ok || respBytes == nil {
+		t.Fatalf("handlePDU = (%v, %v)", respBytes, ok)
+	}
+	resp := parseSZLResponse(t, respBytes)
+	if resp.retVal != itemRetvalOK {
+		t.Fatalf("retVal = 0x%02x, want success", resp.retVal)
+	}
+
+	seen := map[uint16]bool{}
+	for _, rec := range resp.records {
+		if len(rec) != szlModuleIdentRecordLen {
+			t.Fatalf("record length = %d, want %d", len(rec), szlModuleIdentRecordLen)
+		}
+		seen[binary.BigEndian.Uint16(rec[0:2])] = true
+	}
+	if !seen[0x0001] {
+		t.Error("index 0x0000 response is missing sub-index 0x0001")
+	}
+}
+
 func TestSZLLookupUnknownReturnsNotOK(t *testing.T) {
 	if _, _, ok := szlLookup(0x001C, 0x0009); ok {
 		t.Error("szlLookup(0x001C, 0x0009) = ok, want it excluded")
