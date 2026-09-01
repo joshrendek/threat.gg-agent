@@ -134,6 +134,11 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		// advances the session even before dispatch decides whether the
 		// function is one this honeypot implements.
 		sess.advance(stageEngaged)
+		// The MBAP header is otherwise consumed purely to build the response
+		// echo, but its unit id and transaction id are the only session-level
+		// client fingerprint Modbus/TCP offers -- record them before dispatch,
+		// so a request we decline still contributes what it reveals.
+		sess.recordFrame(hdr)
 
 		resp := handlePDU(pdu, host, sess)
 		if resp == nil {

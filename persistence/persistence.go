@@ -239,6 +239,22 @@ func SaveS7CommSession(in *proto.S7CommSessionRequest) error {
 	return err
 }
 
+// SaveModbusSession sends one bounded Modbus/TCP session record with a
+// deadline. The nil-client guard matters here for the same reason it does on
+// SaveS7CommSession: the honeypot serves attackers whether or not the control
+// plane connection came up, and a session that cannot be reported is still a
+// session that must not panic the listener.
+func SaveModbusSession(in *proto.ModbusSessionRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SaveModbusSession(ctx, in)
+	return err
+}
+
 func SaveRedisConnect(in *proto.RedisConnectRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
