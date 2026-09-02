@@ -264,3 +264,70 @@ func be16(v uint16) []byte {
 	binary.BigEndian.PutUint16(b, v)
 	return b
 }
+
+// TestReportServerIDHappyPath confirms function 0x11 returns a well-formed
+// response with the ProductCode identity and run indicator 0xFF.
+func TestReportServerIDHappyPath(t *testing.T) {
+	sess := newSession()
+	req := []byte{fnReportServerID}
+	resp := handlePDU(req, "192.0.2.30", sess)
+
+	if resp[0] != fnReportServerID {
+		t.Errorf("response function code = 0x%02X, want 0x%02X", resp[0], fnReportServerID)
+	}
+
+	expectedByteCount := byte(len(ProductCode) + 1)
+	if resp[1] != expectedByteCount {
+		t.Errorf("byte count = 0x%02X, want 0x%02X (len(serverID)+1)", resp[1], expectedByteCount)
+	}
+
+	serverIDBytes := resp[2 : 2+len(ProductCode)]
+	if string(serverIDBytes) != ProductCode {
+		t.Errorf("server ID = %s, want %s", string(serverIDBytes), ProductCode)
+	}
+
+	if resp[2+len(ProductCode)] != 0xFF {
+		t.Errorf("run indicator = 0x%02X, want 0xFF", resp[2+len(ProductCode)])
+	}
+
+	ops := sess.core.Operations()
+	if len(ops) != 1 || !ops[0].Handled {
+		t.Fatalf("expected exactly one handled=true operation, got %+v", ops)
+	}
+}
+
+// TestReportServerIDMalformedRejectsExtraBytes confirms that a request with
+// more than just the function code is rejected with IllegalDataValue.
+func TestReportServerIDMalformedRejectsExtraBytes(t *testing.T) {
+	sess := newSession()
+	req := []byte{fnReportServerID, 0x00, 0x01}
+	resp := handlePDU(req, "192.0.2.31", sess)
+
+	if resp[0] != fnReportServerID|0x80 || resp[1] != excIllegalDataValue {
+		t.Errorf("response = % x, want exception illegal_data_value", resp)
+	}
+
+	ops := sess.core.Operations()
+	if len(ops) != 1 || ops[0].Handled {
+		t.Fatalf("expected exactly one handled=false operation, got %+v", ops)
+	}
+}
+
+// TestReportServerIDNotException confirms function 0x11 no longer falls
+// through to the unknown-function path and returns an IllegalFunction
+// exception (it now returns a success response instead).
+func TestReportServerIDNotException(t *testing.T) {
+	sess := newSession()
+	req := []byte{fnReportServerID}
+	resp := handlePDU(req, "192.0.2.32", sess)
+
+	// Should NOT be an exception (high bit set on the function code)
+	if resp[0]&0x80 != 0 {
+		t.Errorf("response function code 0x%02X has high bit set (exception), want success", resp[0])
+	}
+
+	// Should be a valid response with at least the server ID and run indicator
+	if len(resp) < 4 {
+		t.Errorf("response length = %d, want at least 4 bytes", len(resp))
+	}
+}
