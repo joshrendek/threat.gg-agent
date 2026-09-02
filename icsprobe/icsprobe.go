@@ -4,6 +4,21 @@
 // answers nothing and emulates no protocol. The point is to find out whether
 // industrial scanning actually reaches our address space before investing in
 // a real S7comm/Modbus/etc. emulator.
+//
+// IT DELIBERATELY DOES NOT APPLY THE ICS NOISE BOUNDARY, and that is not an
+// oversight to be tidied up later (threat_gg-4zzd.10). The emulators drop a
+// session that never advanced past the bare TCP connect -- icscore.Session's
+// IsNoise, applied by s7comm/capture.go and modbus/capture.go -- because for
+// them a bare connect is scan noise rather than evidence. Here a bare connect
+// IS the measurement: this package exists to count reach, so discarding
+// connections that sent nothing would discard the signal it was built to
+// collect, and would silently bias the port-demand numbers that decide which
+// protocol gets emulated next.
+//
+// These two policies must stay separate, and the separation is enforced, not
+// merely asserted here: TestServeCapturesBareConnectWithNoBytesSent requires a
+// connection that sends nothing to still produce a record. Routing icsprobe
+// through IsNoise fails that test.
 package icsprobe
 
 import (
