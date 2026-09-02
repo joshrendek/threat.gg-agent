@@ -41,6 +41,9 @@ var _ honeypots.Honeypot = &honeypot{}
 
 type honeypot struct {
 	logger zerolog.Logger
+	// pacer models CPU response latency across this device's concurrent
+	// sessions -- see icscore.Pacer (threat_gg-4zzd.9).
+	pacer icscore.Pacer
 }
 
 // New builds the honeypot. It is side-effect free: no socket is opened
@@ -87,6 +90,11 @@ func (h *honeypot) serve(ln net.Listener) {
 // write state -- see state.go.
 func (h *honeypot) handleConnection(conn net.Conn) {
 	defer conn.Close()
+
+	// Register this session with the pacer so every concurrent session
+	// slows the others, the way communication jobs compete for a real
+	// CPU's scan cycle (threat_gg-4zzd.9).
+	defer h.pacer.Enter()()
 
 	host := icscore.RemoteHost(conn.RemoteAddr())
 
@@ -144,6 +152,9 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		if resp == nil {
 			continue // parsed fine, nothing plausible to answer with -- keep the session open
 		}
+		// Pace immediately before the write: the delay is only a fingerprint
+		// fix if it sits between the request and the reply.
+		h.pacer.Pace()
 		if err := writeMBAP(conn, hdr, resp); err != nil {
 			return
 		}

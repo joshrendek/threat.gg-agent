@@ -208,3 +208,42 @@ func assertConnectionCloses(t *testing.T, conn net.Conn) {
 		t.Fatal("expected the connection to close or the read to fail after malformed/truncated input, but the read succeeded")
 	}
 }
+
+// TestResponseIsPacedOnTheWire proves the pacer is actually wired into the
+// response path, which the icscore unit tests cannot: they verify the model,
+// not that anyone calls it. Removing h.pacer.Pace() from handleConnection
+// makes this fail, which is the point -- the fingerprint being removed here
+// (flat sub-millisecond replies) is only removed if the delay reaches the
+// wire.
+//
+// Asserts a floor rather than a window: scheduling noise can only make a
+// round trip SLOWER, so a lower bound is the assertion that cannot flake.
+// The 4ms bound sits below icscore's 6ms pacing floor so ordinary timer
+// slack cannot fail it, while still being far above the microseconds an
+// unpaced handler would take.
+func TestResponseIsPacedOnTheWire(t *testing.T) {
+	addr := startTestHoneypot(t)
+	conn := dialTest(t, addr)
+
+	// Read Device ID -- any answered function does; this one is known-good.
+	req := buildRequest(1, 1, []byte{0x2B, 0x0E, 0x01, 0x00})
+
+	start := time.Now()
+	if _, err := conn.Write(req); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, 512)
+	n, err := conn.Read(buf)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("empty response")
+	}
+	if elapsed < 4*time.Millisecond {
+		t.Errorf("round trip took %v, want at least ~4ms -- the response was not paced, "+
+			"which is the flat sub-millisecond fingerprint this is meant to remove", elapsed)
+	}
+}
