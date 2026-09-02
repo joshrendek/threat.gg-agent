@@ -26,6 +26,12 @@ const (
 	excIllegalFunction    = 0x01
 	excIllegalDataAddress = 0x02
 	excIllegalDataValue   = 0x03
+	// excServerDeviceBusy is the standard Modbus "the server is engaged in a
+	// long-duration program command" exception -- the protocol's own way of
+	// saying it cannot serve this request right now. It is what a real device
+	// at its connection limit answers, and it is why the connection cap does
+	// not need to drop the TCP connection (threat_gg-4zzd.9).
+	excServerDeviceBusy = 0x06
 )
 
 // Read/write quantity limits, SOURCED from the Modbus Application Protocol
