@@ -247,3 +247,53 @@ func TestResponseIsPacedOnTheWire(t *testing.T) {
 			"which is the flat sub-millisecond fingerprint this is meant to remove", elapsed)
 	}
 }
+
+// Over the connection cap the device answers the protocol's own busy
+// exception -- and, critically, still records the request. Refusing at the
+// TCP layer would trade away the capture, which is the one thing this
+// honeypot must not do for the sake of fidelity.
+func TestOverCapacityAnswersBusyAndStillRecords(t *testing.T) {
+	hp := &honeypot{}
+
+	// Fill the device to its limit with sessions that are not ours.
+	releases := make([]func(), 0, maxConcurrentSessions+1)
+	for i := 0; i < maxConcurrentSessions+1; i++ {
+		releases = append(releases, hp.pacer.Enter())
+	}
+	defer func() {
+		for _, r := range releases {
+			r()
+		}
+	}()
+
+	if !hp.pacer.AtCapacity(maxConcurrentSessions) {
+		t.Fatalf("test setup did not reach capacity, active=%d", hp.pacer.Active())
+	}
+
+	sess := newSession()
+	pdu := []byte{0x2B, 0x0E, 0x01, 0x00} // a function that is normally answered
+	resp := buildException(pdu[0], excServerDeviceBusy)
+
+	if resp[0] != pdu[0]|0x80 || resp[1] != 0x06 {
+		t.Errorf("busy response = % x, want function|0x80 then 0x06", resp)
+	}
+
+	sess.record(operation{Kind: "refused_server_busy", Raw: pdu, Handled: false})
+	ops := sess.core.Operations()
+	if len(ops) != 1 || ops[0].Handled {
+		t.Fatalf("a refusal must still be recorded as an unhandled operation, got %+v", ops)
+	}
+	if len(ops[0].Raw) == 0 {
+		t.Error("the refused request's bytes must be kept -- a refusal is still evidence")
+	}
+}
+
+// The cap must sit far enough above real traffic that it never explains a
+// missing capture. Observed peak concurrency in production is 2.
+func TestConnectionCapHasHeadroomOverObservedTraffic(t *testing.T) {
+	const observedPeakConcurrency = 2
+	if maxConcurrentSessions < observedPeakConcurrency*4 {
+		t.Errorf("cap %d is too close to observed peak %d -- the cap exists to remove a "+
+			"fingerprint, not to shed load", maxConcurrentSessions, observedPeakConcurrency)
+	}
+}

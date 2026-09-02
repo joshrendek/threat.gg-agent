@@ -167,3 +167,38 @@ func TestEnterAndReleaseAreConcurrencySafe(t *testing.T) {
 		t.Errorf("active = %d after all sessions released, want 0", got)
 	}
 }
+
+// AtCapacity excludes the caller's own session, so a device whose limit is 1
+// still serves the single client talking to it.
+func TestAtCapacityExcludesTheCallersOwnSession(t *testing.T) {
+	var p Pacer
+	release := p.Enter()
+	defer release()
+
+	if p.AtCapacity(1) {
+		t.Error("a lone session must not be at a limit of 1 -- the caller must not count against itself")
+	}
+
+	r2 := p.Enter()
+	defer r2()
+	if !p.AtCapacity(1) {
+		t.Error("a second concurrent session must reach a limit of 1")
+	}
+}
+
+func TestAtCapacityIsFalseWellBelowTheLimit(t *testing.T) {
+	var p Pacer
+	releases := make([]func(), 0, 4)
+	for i := 0; i < 4; i++ {
+		releases = append(releases, p.Enter())
+	}
+	defer func() {
+		for _, r := range releases {
+			r()
+		}
+	}()
+
+	if p.AtCapacity(16) {
+		t.Errorf("4 sessions must be well below a limit of 16, active=%d", p.Active())
+	}
+}

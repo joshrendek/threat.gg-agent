@@ -102,3 +102,20 @@ func (p *Pacer) Delay() time.Duration {
 // writing a response, never after: the delay has to sit between the request
 // and the reply to be the thing a client measures.
 func (p *Pacer) Pace() { sleepFunc(p.Delay()) }
+
+// AtCapacity reports whether this device already has as many sessions in
+// flight as it is willing to serve, EXCLUDING the caller's own session.
+//
+// Real CPUs support a small fixed number of concurrent PG/OP connections --
+// single digits to low double digits -- and a listener that cheerfully
+// accepts hundreds is a tell that costs an attacker nothing to check
+// (threat_gg-4zzd.9). limit is supplied by the calling protocol because the
+// plausible figure differs per device, and because icscore should not be the
+// place a device's identity is decided.
+//
+// Callers must still ACCEPT and RECORD the connection: refusing at the TCP
+// layer would lose the capture, which is the one thing this system must not
+// do. Answer with the protocol's own "busy" instead.
+func (p *Pacer) AtCapacity(limit int) bool {
+	return p.Active()-1 >= limit
+}
