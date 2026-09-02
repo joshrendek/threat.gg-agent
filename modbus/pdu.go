@@ -16,6 +16,7 @@ const (
 	fnWriteSingleReg     = 0x06
 	fnWriteMultipleCoils = 0x0F
 	fnWriteMultipleRegs  = 0x10
+	fnReportServerID     = 0x11 // Report Server ID
 	fnReadDeviceID       = 0x2B // Encapsulated Interface Transport (MEI) -- see deviceid.go
 )
 
@@ -62,6 +63,30 @@ func buildException(fc byte, code byte) []byte {
 	return []byte{fc | 0x80, code}
 }
 
+// handleReportServerID answers Report Server ID (0x11). Request is exactly
+// 1 byte (the function code itself). Response is: function code (1), byte
+// count (1), server ID bytes, and run indicator (1).
+func handleReportServerID(pdu []byte, sess *session) []byte {
+	const fc = fnReportServerID
+
+	if len(pdu) != 1 {
+		sess.record(operation{Kind: "malformed_report_server_id", Detail: fmt.Sprintf("pdu %d bytes, want 1", len(pdu)), Raw: pdu, Handled: false})
+		return buildException(fc, excIllegalDataValue)
+	}
+
+	serverID := ProductCode
+	resp := make([]byte, 2+len(serverID)+1)
+	resp[0] = fc
+	resp[1] = byte(len(serverID) + 1)
+	copy(resp[2:], []byte(serverID))
+	resp[2+len(serverID)] = 0xFF
+
+	sess.advance(stageIdentity)
+	sess.record(operation{Kind: "report_server_id", Detail: fmt.Sprintf("server_id=%s", serverID), Handled: true})
+
+	return resp
+}
+
 // handlePDU parses one Modbus PDU (the bytes an MBAP frame carried past the
 // header) and returns the response PDU to send back. It never returns nil:
 // every function code this honeypot doesn't implement gets an exception
@@ -91,6 +116,8 @@ func handlePDU(pdu []byte, ip string, sess *session) []byte {
 		return handleWriteMultipleCoils(pdu, ip, sess)
 	case fnWriteMultipleRegs:
 		return handleWriteMultipleRegs(pdu, ip, sess)
+	case fnReportServerID:
+		return handleReportServerID(pdu, sess)
 	case fnReadDeviceID:
 		return handleReadDeviceID(pdu, sess)
 	default:
