@@ -331,3 +331,75 @@ func TestReportServerIDNotException(t *testing.T) {
 		t.Errorf("response length = %d, want at least 4 bytes", len(resp))
 	}
 }
+
+// --- unknown-function worklist labelling (threat_gg-4zzd.16) ---
+
+// The 0x5A captures all share the shape 5A 00 <sub>, and splitting on that
+// third byte is what turns "something hits 0x5A 61 times" into a ranked list
+// of which specific commands are being hunted. These pin the real captured
+// payloads, taken from production on 2026-09-02.
+func TestUnknownVendorFunctionSplitsOnObservedSubByte(t *testing.T) {
+	cases := map[string]struct {
+		pdu      []byte
+		wantKind string
+	}{
+		"5a000100": {[]byte{0x5A, 0x00, 0x01, 0x00}, "unknown_fn=0x5A/sub=0x01"},
+		"5a0002":   {[]byte{0x5A, 0x00, 0x02}, "unknown_fn=0x5A/sub=0x02"},
+		"5a000300": {[]byte{0x5A, 0x00, 0x03, 0x00}, "unknown_fn=0x5A/sub=0x03"},
+		"5a0004":   {[]byte{0x5A, 0x00, 0x04}, "unknown_fn=0x5A/sub=0x04"},
+		"5a000606": {[]byte{0x5A, 0x00, 0x06, 0x06}, "unknown_fn=0x5A/sub=0x06"},
+		"5a0020":   {[]byte{0x5A, 0x00, 0x20, 0x00, 0x14}, "unknown_fn=0x5A/sub=0x20"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			sess := newSession()
+			resp := handlePDU(tc.pdu, "192.0.2.40", sess)
+
+			// The response must be unchanged: still refused, never answered.
+			if resp[0] != 0x5A|0x80 || resp[1] != excIllegalFunction {
+				t.Errorf("response = % x, want IllegalFunction exception -- 0x5A must not be answered", resp)
+			}
+
+			ops := sess.core.Operations()
+			if len(ops) != 1 {
+				t.Fatalf("expected exactly one operation, got %d", len(ops))
+			}
+			if ops[0].Kind != tc.wantKind {
+				t.Errorf("kind = %q, want %q", ops[0].Kind, tc.wantKind)
+			}
+			if ops[0].Handled {
+				t.Error("an unimplemented function must never record Handled: true")
+			}
+			if len(ops[0].Raw) == 0 {
+				t.Error("the verbatim request must be kept -- it is the evidence a future decision works from")
+			}
+		})
+	}
+}
+
+// A 0x5A too short to carry a third byte must not index past the slice, and
+// must fall back to the plain label rather than inventing a sub-function.
+func TestUnknownVendorFunctionTooShortForSubByte(t *testing.T) {
+	for _, pdu := range [][]byte{{0x5A}, {0x5A, 0x00}} {
+		sess := newSession()
+		resp := handlePDU(pdu, "192.0.2.41", sess)
+		if resp[0] != 0x5A|0x80 {
+			t.Errorf("pdu % x: want exception, got % x", pdu, resp)
+		}
+		ops := sess.core.Operations()
+		if len(ops) != 1 || ops[0].Kind != "unknown_fn=0x5A" {
+			t.Fatalf("pdu % x: kind = %+v, want plain unknown_fn=0x5A with no invented sub", pdu, ops)
+		}
+	}
+}
+
+// Every other unimplemented function keeps the original label: the split is
+// specific to the one code whose captures actually show sub-structure.
+func TestUnknownNonVendorFunctionKeepsPlainLabel(t *testing.T) {
+	sess := newSession()
+	handlePDU([]byte{0x42, 0x00, 0x07}, "192.0.2.42", sess)
+	ops := sess.core.Operations()
+	if len(ops) != 1 || ops[0].Kind != "unknown_fn=0x42" {
+		t.Fatalf("kind = %+v, want plain unknown_fn=0x42", ops)
+	}
+}

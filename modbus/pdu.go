@@ -124,14 +124,48 @@ func handlePDU(pdu []byte, ip string, sess *session) []byte {
 		// The unhandled-request worklist: capture the verbatim request so a
 		// future extension has real bytes to work from, bounded by
 		// record() at maxRawBytes.
+		kind, detail := unknownFunctionLabel(pdu, fc)
 		sess.record(operation{
-			Kind:    fmt.Sprintf("unknown_fn=0x%02X", fc),
-			Detail:  fmt.Sprintf("Modbus function 0x%02X is not implemented by this honeypot", fc),
+			Kind:    kind,
+			Detail:  detail,
 			Raw:     pdu,
 			Handled: false,
 		})
 		return buildException(fc, excIllegalFunction)
 	}
+}
+
+// fnVendorSchneider is function code 90, which production traffic hits 61
+// times against our Modicon M221 persona and which we do not implement
+// (threat_gg-4zzd.16). It is Schneider's vendor-specific range; this package
+// deliberately does NOT name it further or claim to know what its
+// sub-functions mean, because we have not verified that against a reference
+// and a wrong claim here would propagate into the worklist as if it were
+// fact.
+const fnVendorSchneider = 0x5A
+
+// unknownFunctionLabel builds the worklist entry for a function code this
+// honeypot does not implement.
+//
+// For most codes the function code alone is the whole story. For 0x5A it is
+// not: every captured request shares the shape 5A 00 <sub> ..., and the third
+// byte varies across at least 0x01/0x02/0x03/0x04/0x06/0x20 with very
+// different frequencies. Collapsing all of those into one entry says only
+// "something hits 0x5A a lot", which is not a worklist item -- splitting by
+// the observed third byte says which specific commands are being hunted and
+// how often, which is what decides whether any of them are worth answering.
+//
+// This REPORTS AN OBSERVED BYTE AND NOTHING MORE. It does not decode, name or
+// interpret the sub-function, and it does not change the response: 0x5A still
+// gets IllegalFunction. Instrument first, decide with data -- the same order
+// that turned SZL 0x0011/0x0000 from a guess into threat_gg-4zzd.15.
+func unknownFunctionLabel(pdu []byte, fc byte) (kind, detail string) {
+	if fc == fnVendorSchneider && len(pdu) >= 3 {
+		return fmt.Sprintf("unknown_fn=0x%02X/sub=0x%02X", fc, pdu[2]),
+			fmt.Sprintf("Modbus function 0x%02X (vendor-specific range) with third byte 0x%02X is not implemented by this honeypot", fc, pdu[2])
+	}
+	return fmt.Sprintf("unknown_fn=0x%02X", fc),
+		fmt.Sprintf("Modbus function 0x%02X is not implemented by this honeypot", fc)
 }
 
 // handleReadBits answers Read Coils (0x01) and Read Discrete Inputs (0x02).
