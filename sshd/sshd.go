@@ -47,6 +47,13 @@ const maxScpUploadBytes = 64 << 20
 // probe, not a terminal.
 const maxPtyTermLen = 4096
 
+// proxyUpstreamTimeout bounds a direct-tcpip proxied fetch. Long enough for a
+// slow site over tor, short enough that a hung upstream releases the channel.
+// A package var (like icsprobe's readDeadline) so tests can shrink it instead
+// of eating a real 20-second wait; it is read synchronously, never from a
+// goroutine that outlives its caller.
+var proxyUpstreamTimeout = 20 * time.Second
+
 // parsePtyRequest extracts the TERM string from a pty-req payload (RFC 4254
 // §6.2: string TERM, then four uint32 dimensions, then string modes). It
 // mirrors parseExecCommand because it had the same class of bug that one was
@@ -286,9 +293,9 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 		}
 
 		// The request IS the capture; whether we can proxy it is secondary.
-		// Persist it before attempting the upstream fetch so a failure there
-		// cannot cost us the observation, and attach the body afterwards if
-		// one arrives.
+		// proxyUpstream returns nil on every failure and is bounded by
+		// proxyUpstreamTimeout, so the save below always runs -- with the
+		// response body attached when one arrived, and without it otherwise.
 		body := proxyUpstream(url, toReq.Header)
 		if body != nil {
 			httpReq.Response = base64.StdEncoding.EncodeToString(body)
@@ -323,12 +330,17 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 // exited the process. Neither condition is the attacker's doing, and neither
 // justifies ending every honeypot on the node -- a nil client or a dead
 // upstream simply means there is no body to hand back.
+//
+// The fetch is bounded by proxyUpstreamTimeout: proxying is best-effort, and a
+// hung upstream must not pin this goroutine and its channel open indefinitely.
 func proxyUpstream(url string, headers http.Header) []byte {
 	if httpClient == nil {
 		logger.Debug().Str("url", url).Msg("proxy request captured; no outbound client configured (TOR_ENABLED unset)")
 		return nil
 	}
-	req, err := http.NewRequest("GET", fmt.Sprintf("http://%s", url), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), proxyUpstreamTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s", url), nil)
 	if err != nil {
 		logger.Debug().Err(err).Str("url", url).Msg("proxy request not forwardable")
 		return nil

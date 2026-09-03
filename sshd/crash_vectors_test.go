@@ -253,3 +253,34 @@ func TestChannelPanicIsContained(t *testing.T) {
 	// The save was dispatched before the write panicked; it must still land.
 	awaitSave(t, saved)
 }
+
+// A hung upstream must release the channel rather than pin it open for as long
+// as the far end cares to stall. The transport blocks until the request's
+// context is cancelled, so the only way this test finishes is the timeout.
+type hangingTransport struct{}
+
+func (hangingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	<-r.Context().Done()
+	return nil, r.Context().Err()
+}
+
+func TestProxyUpstreamIsBoundedByTimeout(t *testing.T) {
+	orig, origTimeout := httpClient, proxyUpstreamTimeout
+	httpClient = &http.Client{Transport: hangingTransport{}}
+	proxyUpstreamTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { httpClient, proxyUpstreamTimeout = orig, origTimeout })
+
+	start := time.Now()
+	body := proxyUpstream("hung.test/", http.Header{})
+	elapsed := time.Since(start)
+
+	if body != nil {
+		t.Error("a timed-out fetch must yield no body")
+	}
+	if elapsed > proxyUpstreamTimeout+2*time.Second {
+		t.Fatalf("proxyUpstream took %v against a hung upstream; the timeout is not being applied", elapsed)
+	}
+	if elapsed < proxyUpstreamTimeout-50*time.Millisecond {
+		t.Fatalf("proxyUpstream returned after %v, before the %v timeout -- the transport should have been held", elapsed, proxyUpstreamTimeout)
+	}
+}
