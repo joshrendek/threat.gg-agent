@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -20,16 +21,15 @@ import (
 )
 
 func TestRealGoMSSQLClientCanLoginAndQuery(t *testing.T) {
-	origLogin, origQuery, origLookup := saveMssqlLogin, saveQuery, lookupResponse
-	t.Cleanup(func() { saveMssqlLogin, saveQuery, lookupResponse = origLogin, origQuery, origLookup })
 	saved := make(chan struct{}, 2)
-	saveMssqlLogin = func(*proto.MssqlRequest) error { saved <- struct{}{}; return nil }
-	saveQuery = func(*proto.QueryRequest) error { saved <- struct{}{}; return nil }
-	lookupResponse = func(string, string) (string, bool) { return "", false }
-
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	h := &honeypot{logger: zerolog.Nop()}
+	h := &honeypot{
+		logger:    zerolog.Nop(),
+		saveLogin: func(*proto.MssqlRequest) error { saved <- struct{}{}; return nil },
+		saveQuery: func(*proto.QueryRequest) error { saved <- struct{}{}; return nil },
+		lookup:    func(string, string) (string, bool) { return "", false },
+	}
 	serveDone := make(chan struct{})
 	go func() { h.serve(listener); close(serveDone) }()
 	t.Cleanup(func() { listener.Close(); <-serveDone })
@@ -94,35 +94,34 @@ func TestReadMessageAggregatesPacketsAndEnforcesLimit(t *testing.T) {
 }
 
 func TestSessionCompletesLoginPersistsAndAnswersQuery(t *testing.T) {
-	origLogin, origQuery, origLookup := saveMssqlLogin, saveQuery, lookupResponse
-	t.Cleanup(func() { saveMssqlLogin, saveQuery, lookupResponse = origLogin, origQuery, origLookup })
-
 	var mu sync.Mutex
 	var login *proto.MssqlRequest
 	var query *proto.QueryRequest
 	saved := make(chan struct{}, 2)
-	saveMssqlLogin = func(in *proto.MssqlRequest) error {
-		mu.Lock()
-		login = in
-		mu.Unlock()
-		saved <- struct{}{}
-		return nil
-	}
-	saveQuery = func(in *proto.QueryRequest) error {
-		mu.Lock()
-		query = in
-		mu.Unlock()
-		saved <- struct{}{}
-		return nil
-	}
-	lookupResponse = func(commandType, command string) (string, bool) {
-		require.Equal(t, "mssql", commandType)
-		require.Equal(t, "select @@version", command)
-		return "authored-version", true
-	}
 
 	server, client := net.Pipe()
-	h := &honeypot{logger: zerolog.Nop()}
+	h := &honeypot{
+		logger: zerolog.Nop(),
+		saveLogin: func(in *proto.MssqlRequest) error {
+			mu.Lock()
+			login = in
+			mu.Unlock()
+			saved <- struct{}{}
+			return nil
+		},
+		saveQuery: func(in *proto.QueryRequest) error {
+			mu.Lock()
+			query = in
+			mu.Unlock()
+			saved <- struct{}{}
+			return nil
+		},
+		lookup: func(commandType, command string) (string, bool) {
+			require.Equal(t, "mssql", commandType)
+			require.Equal(t, "select @@version", command)
+			return "authored-version", true
+		},
+	}
 	done := make(chan struct{})
 	go func() { h.handleConnection(server); close(done) }()
 	t.Cleanup(func() { client.Close(); <-done })
@@ -174,11 +173,9 @@ func TestResponseForQueryHasPlausibleRecon(t *testing.T) {
 }
 
 func TestPersistenceQueueDropsInsteadOfBlocking(t *testing.T) {
-	orig := persistSlots
-	t.Cleanup(func() { persistSlots = orig })
-	persistSlots = make(chan struct{}, 1)
-	persistSlots <- struct{}{}
-	h := &honeypot{logger: zerolog.Nop()}
+	full := make(chan struct{}, 1)
+	full <- struct{}{}
+	h := &honeypot{logger: zerolog.Nop(), persistSlots: full}
 	called := false
 	start := time.Now()
 	h.persist(func() error { called = true; return errors.New("should not run") })
@@ -228,10 +225,7 @@ func TestInitialReadAndSessionDurationAreBounded(t *testing.T) {
 }
 
 func TestSessionQueryCapStopsFurtherBatches(t *testing.T) {
-	origLookup := lookupResponse
-	lookupResponse = func(string, string) (string, bool) { return "", false }
-	t.Cleanup(func() { lookupResponse = origLookup })
-	h := &honeypot{logger: zerolog.Nop(), queryLimit: 1}
+	h := &honeypot{logger: zerolog.Nop(), queryLimit: 1, lookup: func(string, string) (string, bool) { return "", false }}
 	require.Equal(t, maxQueries, (&honeypot{}).effectiveQueryLimit())
 	client, done := startLoggedInPipe(t, h)
 	require.NoError(t, writeMessage(client, packetSQLBatch, encodeUCS2("SELECT 1")))
@@ -246,10 +240,7 @@ func TestSessionQueryCapStopsFurtherBatches(t *testing.T) {
 }
 
 func TestUnsupportedPacketKeepsSessionUsable(t *testing.T) {
-	origLookup := lookupResponse
-	lookupResponse = func(string, string) (string, bool) { return "", false }
-	t.Cleanup(func() { lookupResponse = origLookup })
-	client, _ := startLoggedInPipe(t, &honeypot{logger: zerolog.Nop(), queryLimit: 2})
+	client, _ := startLoggedInPipe(t, &honeypot{logger: zerolog.Nop(), queryLimit: 2, lookup: func(string, string) (string, bool) { return "", false }})
 	require.NoError(t, writeMessage(client, packetRPC, []byte{1, 2, 3}))
 	_, unsupported, err := readMessage(client)
 	require.NoError(t, err)
@@ -262,16 +253,17 @@ func TestUnsupportedPacketKeepsSessionUsable(t *testing.T) {
 }
 
 func TestOverrideLookupIsNormalizedAndCachedPerSession(t *testing.T) {
-	origLookup := lookupResponse
 	calls := 0
-	lookupResponse = func(commandType, command string) (string, bool) {
-		calls++
-		require.Equal(t, "mssql", commandType)
-		require.Equal(t, "select @@version", command)
-		return "cached", true
-	}
-	t.Cleanup(func() { lookupResponse = origLookup })
-	client, _ := startLoggedInPipe(t, &honeypot{logger: zerolog.Nop(), queryLimit: 2})
+	client, _ := startLoggedInPipe(t, &honeypot{
+		logger:     zerolog.Nop(),
+		queryLimit: 2,
+		lookup: func(commandType, command string) (string, bool) {
+			calls++
+			require.Equal(t, "mssql", commandType)
+			require.Equal(t, "select @@version", command)
+			return "cached", true
+		},
+	})
 	for _, query := range []string{"SELECT   @@VERSION", " select @@version "} {
 		require.NoError(t, writeMessage(client, packetSQLBatch, encodeUCS2(query)))
 		_, reply, err := readMessage(client)
@@ -323,4 +315,28 @@ func login7Fixture(fields map[int]string) []byte {
 func TestSQLBatchDecodeTrimsWhitespace(t *testing.T) {
 	require.Equal(t, "SELECT 1", parseSQLBatch(encodeUCS2("  SELECT 1\r\n")))
 	require.False(t, strings.Contains(parseSQLBatch(encodeUCS2("SELECT 1")), "\x00"))
+}
+
+// threat_gg-x59t was an intermittent -race failure: tests swapped package-level
+// hooks in setup and restored them in t.Cleanup while connection goroutines
+// from an earlier test -- which outlive both serve() and the test -- still
+// read them. It reproduced at -count=30 once, then hid behind a partial
+// mitigation for weeks, and an intermittent race cannot be pinned by running
+// the suite and watching it pass. So this pins the STRUCTURE instead: the
+// hooks live on the honeypot struct, and no test may assign to a package
+// default. If this fails, the fix has been undone -- even if -race is green.
+func TestNoTestReassignsPackageDefaults(t *testing.T) {
+	src, err := os.ReadFile("mssql_test.go")
+	require.NoError(t, err)
+	for i, line := range strings.Split(string(src), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		for _, name := range []string{"defaultSaveLogin", "defaultSaveQuery", "defaultLookup", "defaultPersistSlots", "defaultConnectionSlots"} {
+			if strings.HasPrefix(trimmed, name+" =") || strings.HasPrefix(trimmed, name+"=") {
+				t.Errorf("mssql_test.go:%d assigns to %s; set the field on the honeypot struct instead (threat_gg-x59t)", i+1, name)
+			}
+		}
+	}
 }

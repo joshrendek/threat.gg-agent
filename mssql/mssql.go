@@ -26,24 +26,39 @@ const (
 	overrideLookupTimeout = 500 * time.Millisecond
 )
 
+// Package-level DEFAULTS, assigned once here and never reassigned. The hooks
+// tests need to replace live on the honeypot struct instead (threat_gg-x59t):
+// connection goroutines outlive both serve() and the test that started them,
+// so a package var a test swaps in setup and restores in t.Cleanup is read by
+// a goroutine from the previous test while the next test writes it. That race
+// cannot be closed by capturing the var into a local before spawning -- the
+// capture itself is the racing read. It is closed by having nothing to swap.
+// connectionSlots already worked this way; the rest now match it.
 var (
-	saveMssqlLogin = persistence.SaveMssqlLogin
-	saveQuery      = persistence.SaveQuery
-	lookupResponse = func(commandType, command string) (string, bool) {
+	defaultSaveLogin = persistence.SaveMssqlLogin
+	defaultSaveQuery = persistence.SaveQuery
+	defaultLookup    = func(commandType, command string) (string, bool) {
 		return cmdresp.LookupWithin(commandType, command, overrideLookupTimeout)
 	}
-	persistSlots           = make(chan struct{}, persistSlotsN)
+	defaultPersistSlots    = make(chan struct{}, persistSlotsN)
 	defaultConnectionSlots = make(chan struct{}, maxConnections)
 )
 
 var _ honeypots.Honeypot = (*honeypot)(nil)
 
 type honeypot struct {
-	logger          zerolog.Logger
-	idleTimeout     time.Duration
-	sessionLimit    time.Duration
-	queryLimit      int
+	logger       zerolog.Logger
+	idleTimeout  time.Duration
+	sessionLimit time.Duration
+	queryLimit   int
+
+	// Per-instance overrides. nil means "use the package default". Tests set
+	// these on the struct they construct; nothing ever mutates package state.
 	connectionSlots chan struct{}
+	persistSlots    chan struct{}
+	saveLogin       func(*proto.MssqlRequest) error
+	saveQuery       func(*proto.QueryRequest) error
+	lookup          func(commandType, command string) (string, bool)
 }
 
 func New() honeypots.Honeypot {
@@ -96,6 +111,34 @@ func (h *honeypot) effectiveConnectionSlots() chan struct{} {
 	return defaultConnectionSlots
 }
 
+func (h *honeypot) effectivePersistSlots() chan struct{} {
+	if h.persistSlots != nil {
+		return h.persistSlots
+	}
+	return defaultPersistSlots
+}
+
+func (h *honeypot) effectiveSaveLogin() func(*proto.MssqlRequest) error {
+	if h.saveLogin != nil {
+		return h.saveLogin
+	}
+	return defaultSaveLogin
+}
+
+func (h *honeypot) effectiveSaveQuery() func(*proto.QueryRequest) error {
+	if h.saveQuery != nil {
+		return h.saveQuery
+	}
+	return defaultSaveQuery
+}
+
+func (h *honeypot) effectiveLookup() func(commandType, command string) (string, bool) {
+	if h.lookup != nil {
+		return h.lookup
+	}
+	return defaultLookup
+}
+
 func (h *honeypot) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	started := time.Now()
@@ -124,13 +167,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		_ = writeMessage(conn, packetReply, errorResponse(18456, "Login failed for user."))
 		return
 	}
-	// Capture the package var BEFORE spawning (kubelet/kubelet.go:138 does the
-	// same). Reading saveMssqlLogin from inside the persist goroutine is a data
-	// race (threat_gg-x59t): tests swap these vars in setup and restore them in
-	// t.Cleanup, so a goroutine still in flight from an earlier test reads the var
-	// while the next test writes it. Capturing binds the goroutine to the function
-	// that was installed when the work was queued.
-	saveLogin := saveMssqlLogin
+	saveLogin := h.effectiveSaveLogin()
 	h.persist(func() error {
 		return saveLogin(&proto.MssqlRequest{
 			Guid: guid, RemoteAddr: remoteIP, Username: login.username, Password: login.password,
@@ -162,8 +199,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 			_ = writeMessage(conn, packetReply, appendDone(nil, 0, 0))
 			continue
 		}
-		// Captured before spawning, for the same reason as the login path above.
-		saveQ := saveQuery
+		saveQ := h.effectiveSaveQuery()
 		h.persist(func() error {
 			return saveQ(&proto.QueryRequest{Guid: guid, Query: query, CommandType: "mssql"})
 		})
@@ -172,7 +208,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		if cached, exists := overrides[normalized]; exists {
 			authored, ok = cached.response, cached.matched
 		} else {
-			authored, ok = lookupResponse("mssql", normalized)
+			authored, ok = h.effectiveLookup()("mssql", normalized)
 			if len(overrides) < overrideCacheEntries {
 				overrides[normalized] = overrideResult{response: authored, matched: ok}
 			}
@@ -224,15 +260,9 @@ func (h *honeypot) setDeadline(conn net.Conn, sessionEnd time.Time) {
 }
 
 func (h *honeypot) persist(save func() error) {
-	// Capture the channel before spawning, the way kubelet/kubelet.go:135 does.
-	//
-	// Reading the persistSlots PACKAGE VAR from inside the goroutine's defer is a
-	// data race (threat_gg-x59t): tests swap persistSlots to size the queue, and a
-	// goroutine spawned before the swap would then release a slot on the NEW
-	// channel while the test writes the var. Capturing binds each goroutine to the
-	// channel it actually acquired from, so acquire and release always pair up on
-	// the same channel regardless of any later reassignment.
-	slots := persistSlots
+	// Bind acquire and release to the same channel: the deferred release must
+	// hand the slot back to the channel it came from.
+	slots := h.effectivePersistSlots()
 	select {
 	case slots <- struct{}{}:
 		go func() {
