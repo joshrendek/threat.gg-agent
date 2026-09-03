@@ -42,6 +42,42 @@ const maxExecCommandLen = 64 * 1024
 // to the server's file pipeline; matches the server's MaxDownloadBytes guard (64 MiB).
 const maxScpUploadBytes = 64 << 20
 
+// maxPtyTermLen bounds the TERM string a pty-req may declare. Real values
+// are a few dozen bytes ("xterm-256color"); anything approaching this is a
+// probe, not a terminal.
+const maxPtyTermLen = 4096
+
+// proxyUpstreamTimeout bounds a direct-tcpip proxied fetch. Long enough for a
+// slow site over tor, short enough that a hung upstream releases the channel.
+// A package var (like icsprobe's readDeadline) so tests can shrink it instead
+// of eating a real 20-second wait; it is read synchronously, never from a
+// goroutine that outlives its caller.
+var proxyUpstreamTimeout = 20 * time.Second
+
+// parsePtyRequest extracts the TERM string from a pty-req payload (RFC 4254
+// §6.2: string TERM, then four uint32 dimensions, then string modes). It
+// mirrors parseExecCommand because it had the same class of bug that one was
+// hardened against: the inline code read Payload[3] as the length -- a single
+// byte of a four-byte field -- and sliced Payload[4:termLen+4] unchecked. A
+// payload under four bytes indexed out of range; a declared length past the
+// end sliced out of range; and because termLen was a byte, 253+4 wrapped to 1
+// and Payload[4:1] panicked even on an otherwise well-formed request
+// (threat_gg-ith). Any of the three ended the process, and with it every
+// honeypot on the node.
+func parsePtyRequest(payload []byte) (string, error) {
+	if len(payload) < 4 {
+		return "", fmt.Errorf("pty-req payload is shorter than the SSH string header")
+	}
+	termLen := uint64(binary.BigEndian.Uint32(payload[:4]))
+	if termLen > maxPtyTermLen {
+		return "", fmt.Errorf("pty-req TERM length %d exceeds limit %d", termLen, maxPtyTermLen)
+	}
+	if termLen > uint64(len(payload)-4) {
+		return "", fmt.Errorf("pty-req TERM length %d exceeds payload size %d", termLen, len(payload)-4)
+	}
+	return string(payload[4 : 4+int(termLen)]), nil
+}
+
 func parseExecCommand(payload []byte) (string, error) {
 	if len(payload) < 4 {
 		return "", fmt.Errorf("exec payload is shorter than the SSH string header")
@@ -65,6 +101,11 @@ var (
 	dialer      *tor.Dialer
 	httpClient  *http.Client
 	torEnabled  bool
+
+	// saveHTTPRequest is a package var so tests can capture what the proxy
+	// path persists without a gRPC client -- the saveIcsProbe/saveSession
+	// pattern used elsewhere in the agent.
+	saveHTTPRequest = persistence.SaveHTTPRequest
 )
 
 type honeypot struct {
@@ -208,6 +249,7 @@ type exitStatusMsg struct {
 
 func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.Permissions) {
 	defer channel.Close()
+	defer recoverChannelPanic("direct-tcpip")
 	//http := map[string]string{}
 	for {
 		// read up to 1MB of data
@@ -250,33 +292,83 @@ func HandleTcpReading(channel ssh.Channel, term *terminal.Terminal, perms *ssh.P
 			httpReq.Password = pass
 		}
 
-		req, reqErr := http.NewRequest("GET", fmt.Sprintf("http://%s", url), nil)
-		if reqErr != nil {
-			return
-		}
-		req.Header = toReq.Header
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			log.Fatalf("Body read error: %s", err)
+		// The request IS the capture; whether we can proxy it is secondary.
+		// proxyUpstream returns nil on every failure and is bounded by
+		// proxyUpstreamTimeout, so the save below always runs -- with the
+		// response body attached when one arrived, and without it otherwise.
+		body := proxyUpstream(url, toReq.Header)
+		if body != nil {
+			httpReq.Response = base64.StdEncoding.EncodeToString(body)
 		}
 
-		defer resp.Body.Close()
-		body, err2 := ioutil.ReadAll(resp.Body)
-		if err2 != nil {
-			log.Fatalf("Body read error: %s", err2)
-		}
-		encodedBody := base64.StdEncoding.EncodeToString(body)
-		httpReq.Response = encodedBody
-
+		// Read the hook synchronously and hand the goroutine the value. The
+		// goroutine outlives this call, and a package-level var read from a
+		// goroutine that outlives its caller is the race class threat_gg-x59t
+		// documents in mssql -- the test that swaps the hook would otherwise
+		// race with the save it is trying to observe.
+		save := saveHTTPRequest
 		go func(in *proto.HttpRequest) {
-			if err := persistence.SaveHTTPRequest(in); err != nil {
+			if err := save(in); err != nil {
 				logger.Error().Err(err).Msg("error saving http request")
 			}
 		}(httpReq)
 
-		channel.Write(body)
-
+		if body != nil {
+			channel.Write(body)
+		}
 		channel.Close()
+	}
+}
+
+// proxyUpstream performs the outbound fetch for a direct-tcpip proxy request
+// and returns the response body, or nil when there is nothing to return.
+//
+// Two of threat_gg-ith's three crash vectors lived here. httpClient is only
+// constructed when TOR_ENABLED=true, so with the default config it is nil and
+// the first proxied request dereferenced it; and both error branches called
+// log.Fatalf, so even with tor enabled a proxied request to a dead upstream
+// exited the process. Neither condition is the attacker's doing, and neither
+// justifies ending every honeypot on the node -- a nil client or a dead
+// upstream simply means there is no body to hand back.
+//
+// The fetch is bounded by proxyUpstreamTimeout: proxying is best-effort, and a
+// hung upstream must not pin this goroutine and its channel open indefinitely.
+func proxyUpstream(url string, headers http.Header) []byte {
+	if httpClient == nil {
+		logger.Debug().Str("url", url).Msg("proxy request captured; no outbound client configured (TOR_ENABLED unset)")
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), proxyUpstreamTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s", url), nil)
+	if err != nil {
+		logger.Debug().Err(err).Str("url", url).Msg("proxy request not forwardable")
+		return nil
+	}
+	req.Header = headers
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		logger.Warn().Err(err).Str("url", url).Msg("proxy upstream request failed")
+		return nil
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		logger.Warn().Err(err).Str("url", url).Msg("proxy upstream body read failed")
+		return nil
+	}
+	return body
+}
+
+// recoverChannelPanic contains a panic to the goroutine it happened in. This
+// process is every honeypot on the node; one attacker's channel is not allowed
+// to end all of them. The three known vectors are fixed individually above --
+// this is the backstop for the ones not yet found, and it logs loudly so they
+// get found.
+func recoverChannelPanic(where string) {
+	if r := recover(); r != nil {
+		logger.Error().Interface("panic", r).Str("where", where).Msg("recovered panic in ssh channel handler")
+		stats.Increment("ssh.recovered_panic")
 	}
 }
 
@@ -304,6 +396,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 
 		// Sessions have out-of-band requests such as "shell", "pty-req" and "env"
 		go func(in <-chan *ssh.Request) {
+			defer recoverChannelPanic("session-request")
 			for req := range in {
 				term := terminal.NewTerminal(channel, "")
 
@@ -494,9 +587,11 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 					// know we have a pty ready for input
 					ok = true
 					// Parse body...
-					termLen := req.Payload[3]
-					termEnv := string(req.Payload[4 : termLen+4])
-					h.logger.Info().Str("pty-req", termEnv).Msg("pty request")
+					if termEnv, perr := parsePtyRequest(req.Payload); perr != nil {
+						h.logger.Info().Err(perr).Msg("malformed pty request")
+					} else {
+						h.logger.Info().Str("pty-req", termEnv).Msg("pty request")
+					}
 				default:
 					h.logger.Info().Str("type", req.Type).Str("payload", string(req.Payload)).Msg("unknown payload")
 				}
