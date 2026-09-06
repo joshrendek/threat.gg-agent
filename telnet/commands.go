@@ -3,6 +3,7 @@ package telnet
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	pb "github.com/joshrendek/threat.gg-agent/proto"
@@ -37,7 +38,12 @@ var commandHandlers = map[string]func(args []string) string{
 }
 
 func executeCommand(input string) (string, bool) {
-	input = strings.TrimSpace(input)
+	// Bot shell probes often append NUL after the verb. Normalize only terminal
+	// padding here; persistence still receives the original command, and embedded
+	// controls must not join two command fragments into a different command.
+	input = strings.TrimSpace(strings.TrimRightFunc(input, func(r rune) bool {
+		return unicode.IsSpace(r) || r < 0x20 || r == 0x7f
+	}))
 	if input == "" {
 		return "", false
 	}

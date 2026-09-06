@@ -8,6 +8,35 @@ import (
 	pb "github.com/joshrendek/threat.gg-agent/proto"
 )
 
+func TestNULTerminatedShellProbes(t *testing.T) {
+	orig := getCommandResponse
+	t.Cleanup(func() { getCommandResponse = orig })
+	var lookedUp string
+	getCommandResponse = func(in *pb.CommandRequest) (*pb.CommandResponse, error) {
+		lookedUp = in.Command
+		return &pb.CommandResponse{}, nil
+	}
+	for _, command := range []string{"enable", "system", "shell", "sh", "linuxshell"} {
+		for _, end := range []string{"\x00", "\x00\r\n", "\x04", "\x00 \t\x00"} {
+			if response, exit := executeCommand(command + end); response != "" || exit || lookedUp != command {
+				t.Errorf("%q: response=%q exit=%v lookup=%q", command+end, response, exit, lookedUp)
+			}
+		}
+	}
+	if response, _ := executeCommand("/bin/busybox UNSTABLE\x00"); response != "UNSTABLE: applet not found\r\n" {
+		t.Fatal(response)
+	}
+	if response, _ := executeCommand("echo a\x00b\x00"); response != "a\x00b\r\n" || lookedUp != "echo a\x00b" {
+		t.Fatal("embedded bytes changed")
+	}
+	if response, exit := executeCommand("\x00\x04\r\n"); response != "" || exit {
+		t.Fatal("empty padding became a command")
+	}
+	if _, exit := executeCommand("exit\x00"); !exit {
+		t.Fatal("terminated exit did not close")
+	}
+}
+
 // TestExecuteCommand_ServerOverrideAndFallback exercises the core new logic via the
 // injectable getCommandResponse seam: a Matched server response is returned verbatim;
 // an unmatched response, an error, an oversized command, and exit commands all fall

@@ -61,7 +61,7 @@ type CatalogModel struct {
 // models now get a faithful 404 (a real box only serves what its owner pulled), the way to keep
 // probes landing is to stock a bigger shelf, not to answer for models we do not list.
 //
-// The last five entries are Ollama *cloud* models (threat_gg-1to). A cloud model is a thin local
+// The original five cloud entries came from threat_gg-1to. A cloud model is a thin local
 // stub that turns the box into an authenticated proxy to Ollama's hosted inference, so an exposed
 // one is free frontier-model access — which is why a scanner campaign is enumerating them (~60
 // probes across 20+ names on 2026-07-29, all of which we used to 404). Advertising them in
@@ -73,9 +73,10 @@ type CatalogModel struct {
 // Only names that genuinely resolve in the registry are listed. The campaign's list is a mix of
 // real and invented names (`glm-5:cloud`, `gpt-oss:cloud`, `qwen3-coder:cloud` and
 // `minimax-m2.1:cloud` all 404 upstream today), and advertising a model that does not exist
-// upstream is a tell in the other direction. Five is also a plausible number for one operator to
-// have pulled; mirroring all nineteen would not be.
-var seedModels = []CatalogModel{
+// upstream is a tell in the other direction. The September refresh appends only the eight
+// verified entries from the rotated campaign, preserving existing client model selections.
+// Cloud stubs occupy a few hundred bytes each and add no local weights or VRAM use.
+var seedModels = append([]CatalogModel{
 	{
 		Name: "llama3.2:latest", Model: "llama3.2:latest",
 		Size:   2019393189,
@@ -221,7 +222,7 @@ var seedModels = []CatalogModel{
 		},
 		Capabilities: []string{"completion", "tools", "thinking"},
 	},
-}
+}, registryCloudModels...)
 
 // catalog holds an immutable base model list plus per-source-IP overlays.
 //
@@ -281,12 +282,12 @@ func newCatalog() *catalog {
 	// Stagger the timestamps so the catalog looks accumulated over time rather than seeded at
 	// once. Computed at startup and stable thereafter: a scanner polling twice must see the
 	// same values.
-	base := time.Now().UTC().Add(-27 * 24 * time.Hour)
+	base := time.Now().UTC().Add(-time.Duration(len(c.base)) * 24 * time.Hour)
 	for i := range c.base {
 		c.base[i].showProfile = c.base[i].Name
 		c.base[i].immutableBase = true
 		c.base[i].ModifiedAt = base.
-			Add(time.Duration(i) * 53 * time.Hour).
+			Add(time.Duration(i) * 24 * time.Hour).
 			Add(time.Duration(i*7919) * time.Millisecond).
 			Format(time.RFC3339Nano)
 	}

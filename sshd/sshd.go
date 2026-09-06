@@ -105,7 +105,8 @@ var (
 	// saveHTTPRequest is a package var so tests can capture what the proxy
 	// path persists without a gRPC client -- the saveIcsProbe/saveSession
 	// pattern used elsewhere in the agent.
-	saveHTTPRequest = persistence.SaveHTTPRequest
+	saveHTTPRequest  = persistence.SaveHTTPRequest
+	saveShellCommand = persistence.SaveShellCommand
 )
 
 type honeypot struct {
@@ -402,6 +403,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 
 				h.logger.Info().Msgf("payload %+v\n", string(req.Payload))
 				ok := false
+				replied := false
 				switch req.Type {
 				// exec is used: ssh user@host 'some command'
 				case "exec":
@@ -515,13 +517,22 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 						req.Reply(true, nil) // tell the other end that we can run the request
 
 					} else {
-						resp, err := persistence.GetCommandResponse(&proto.CommandRequest{Command: command})
+						// Accept exec before output, and finish with an exit status. SSH
+						// libraries wait for acceptance before they begin reading stdout.
+						req.Reply(true, nil)
+						replied = true
+						resp, err := commandResponse(command)
 						if err != nil {
 							h.logger.Error().Err(err).Msg("error getting command response")
 						}
-						if err == nil {
+						if err == nil && resp != nil {
 							term.Write([]byte(resp.Response))
 						}
+						code := uint32(127)
+						if err == nil && resp != nil && resp.Matched {
+							code = 0
+						}
+						channel.SendRequest("exit-status", false, ssh.Marshal(&exitStatusMsg{Status: code}))
 					}
 
 					lr := &proto.ShellCommandRequest{
@@ -532,7 +543,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 					stats.Increment("ssh.shell_commands")
 
 					go func(in *proto.ShellCommandRequest) {
-						if err := persistence.SaveShellCommand(in); err != nil {
+						if err := saveShellCommand(in); err != nil {
 							logger.Error().Err(err).Msg("error saving ssh login request")
 						}
 					}(lr)
@@ -543,6 +554,8 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 					h.logger.Info().Msg("->>>>>>>>>>>>>>> sftp")
 				// shell is used: ssh user@host ... then commands are entered
 				case "shell":
+					req.Reply(true, nil)
+					replied = true
 					for {
 						term.Write([]byte("root@localhost:/# "))
 						line, err := term.ReadLine()
@@ -557,11 +570,11 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							h.logger.Error().Err(err).Msg("error running shell")
 						}
 
-						resp, err := persistence.GetCommandResponse(&proto.CommandRequest{Command: line})
+						resp, err := commandResponse(line)
 						if err != nil {
 							h.logger.Error().Err(err).Msg("error getting command response")
 						}
-						if err == nil {
+						if err == nil && resp != nil {
 							term.Write([]byte(resp.Response))
 						}
 
@@ -573,7 +586,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 						stats.Increment("ssh.shell_commands")
 
 						go func(in *proto.ShellCommandRequest) {
-							if err := persistence.SaveShellCommand(in); err != nil {
+							if err := saveShellCommand(in); err != nil {
 								logger.Error().Err(err).Msg("error saving ssh login request")
 							}
 						}(lr)
@@ -600,7 +613,9 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 					h.logger.Info().Str("type", req.Type).Msg("declining request")
 				}
 
-				req.Reply(ok, nil)
+				if !replied {
+					req.Reply(ok, nil)
+				}
 			}
 		}(requests)
 	}

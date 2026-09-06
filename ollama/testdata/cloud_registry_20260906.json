@@ -1,0 +1,378 @@
+{
+  "minimax-m3:cloud": {
+    "config": {
+      "architecture": "amd64",
+      "base_name": "minimax-m3",
+      "capabilities": [
+        "completion",
+        "tools",
+        "thinking",
+        "vision"
+      ],
+      "context_length": 524288,
+      "embedding_length": 0,
+      "file_type": "",
+      "model_type": "0",
+      "os": "linux",
+      "remote_host": "https://ollama.com",
+      "remote_model": "minimax-m3",
+      "rootfs": {
+        "diff_ids": [],
+        "type": "layers"
+      }
+    },
+    "digest": "8cd948b96f47afd232cef7d49faf65791d22bd9dbbef74add3b9355d9d75f765",
+    "size": 301,
+    "show": {
+      "capabilities": [
+        "completion",
+        "tools",
+        "thinking",
+        "vision"
+      ],
+      "details": {
+        "parent_model": "minimax-m3",
+        "format": "",
+        "family": "minimax-m3",
+        "families": null,
+        "parameter_size": "0",
+        "quantization_level": ""
+      },
+      "model_info": {
+        "general.architecture": "minimax-m3",
+        "general.parameter_count": 0,
+        "minimax-m3.context_length": 512000,
+        "minimax-m3.embedding_length": 0
+      },
+      "modified_at": "2026-06-01T00:00:00Z"
+    }
+  },
+  "kimi-k2.7-code:cloud": {
+    "config": {
+      "architecture": "amd64",
+      "base_name": "kimi-k2.7-code",
+      "capabilities": [
+        "vision",
+        "thinking",
+        "completion",
+        "tools"
+      ],
+      "context_length": 262144,
+      "embedding_length": 2048,
+      "file_type": "INT4",
+      "model_type": "1.04T",
+      "os": "linux",
+      "remote_host": "https://ollama.com",
+      "remote_model": "kimi-k2.7-code",
+      "rootfs": {
+        "diff_ids": [],
+        "type": "layers"
+      }
+    },
+    "digest": "e30d96cd393660995bd710d190440b53388b753086b9c2cf8fd098d16a567def",
+    "size": 320,
+    "show": {
+      "capabilities": [
+        "vision",
+        "thinking",
+        "completion",
+        "tools"
+      ],
+      "details": {
+        "parent_model": "kimi-k2.7-code",
+        "format": "",
+        "family": "kimi-k2",
+        "families": null,
+        "parameter_size": "1042000000000",
+        "quantization_level": "INT4"
+      },
+      "model_info": {
+        "general.architecture": "kimi-k2",
+        "general.parameter_count": 1042000000000,
+        "kimi-k2.context_length": 262144,
+        "kimi-k2.embedding_length": 2048
+      },
+      "modified_at": "2026-06-12T00:00:00Z"
+    }
+  },
+  "deepseek-v4-flash:cloud": {
+    "config": {
+      "architecture": "amd64",
+      "base_name": "deepseek-v4-flash:0731",
+      "capabilities": [
+        "completion",
+        "tools",
+        "thinking"
+      ],
+      "context_length": 1048576,
+      "embedding_length": 4096,
+      "file_type": "FP8",
+      "model_type": "304B",
+      "os": "linux",
+      "remote_host": "https://ollama.com",
+      "remote_model": "deepseek-v4-flash:0731",
+      "rootfs": {
+        "diff_ids": [],
+        "type": "layers"
+      }
+    },
+    "digest": "d3f1c87447216481a8001f48c517a51e13bfb141853a8df5e52f81bf765dabc3",
+    "size": 326,
+    "show": {
+      "capabilities": [
+        "completion",
+        "tools",
+        "thinking"
+      ],
+      "details": {
+        "parent_model": "deepseek-v4-flash:0731",
+        "format": "",
+        "family": "deepseek4",
+        "families": null,
+        "parameter_size": "304180418494",
+        "quantization_level": "FP8"
+      },
+      "model_info": {
+        "deepseek4.context_length": 1048576,
+        "deepseek4.embedding_length": 4096,
+        "general.architecture": "deepseek4",
+        "general.parameter_count": 304180418494
+      },
+      "modified_at": "2026-07-31T08:00:00-07:00"
+    }
+  },
+  "glm-5.3:cloud": {
+    "config": {
+      "architecture": "amd64",
+      "base_name": "glm-5.3",
+      "capabilities": [
+        "completion",
+        "thinking",
+        "tools"
+      ],
+      "context_length": 1048576,
+      "embedding_length": 0,
+      "file_type": "FP8",
+      "model_type": "753B",
+      "os": "linux",
+      "remote_host": "https://ollama.com",
+      "remote_model": "glm-5.3",
+      "rootfs": {
+        "diff_ids": [],
+        "type": "layers"
+      }
+    },
+    "digest": "8477dab3e25bb0f93c468af220186f55394262ee5e9f39262af4b60b54a8c4ba",
+    "size": 293,
+    "show": {
+      "capabilities": [
+        "completion",
+        "thinking",
+        "tools"
+      ],
+      "details": {
+        "parent_model": "glm-5.3",
+        "format": "",
+        "family": "glm_dsa_moe",
+        "families": null,
+        "parameter_size": "753329940480",
+        "quantization_level": "FP8"
+      },
+      "model_info": {
+        "general.architecture": "glm_dsa_moe",
+        "general.parameter_count": 753329940480,
+        "glm_dsa_moe.context_length": 1048576,
+        "glm_dsa_moe.embedding_length": 0
+      },
+      "modified_at": "2026-08-28T08:00:00-07:00"
+    }
+  },
+  "gemma4:31b-cloud": {
+    "config": {
+      "architecture": "amd64",
+      "base_name": "gemma4:31b",
+      "capabilities": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "context_length": 262144,
+      "embedding_length": 5376,
+      "file_type": "BF16",
+      "model_type": "32.7B",
+      "os": "linux",
+      "remote_host": "https://ollama.com",
+      "remote_model": "gemma4:31b",
+      "rootfs": {
+        "diff_ids": [],
+        "type": "layers"
+      }
+    },
+    "digest": "ef09f235533c96cd75e8deed88c628335cb69e2b3ce96275d0d7a67fe9887aba",
+    "size": 312,
+    "show": {
+      "capabilities": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "details": {
+        "parent_model": "gemma4:31b",
+        "format": "",
+        "family": "gemma4",
+        "families": null,
+        "parameter_size": "32682372656",
+        "quantization_level": "BF16"
+      },
+      "model_info": {
+        "gemma4.context_length": 262144,
+        "gemma4.embedding_length": 5376,
+        "general.architecture": "gemma4",
+        "general.parameter_count": 32682372656
+      },
+      "modified_at": "2026-04-02T09:00:00-08:00"
+    }
+  },
+  "glm-5.1:cloud": {
+    "config": {
+      "architecture": "amd64",
+      "base_name": "glm-5.1",
+      "capabilities": [
+        "thinking",
+        "completion",
+        "tools"
+      ],
+      "context_length": 202752,
+      "embedding_length": 6144,
+      "file_type": "FP8",
+      "model_type": "756B",
+      "os": "linux",
+      "remote_host": "https://ollama.com",
+      "remote_model": "glm-5.1",
+      "rootfs": {
+        "diff_ids": [],
+        "type": "layers"
+      }
+    },
+    "digest": "7aea7667808a4aed9488836bd4b2800a57287faf6273f436c8b5fbbe65a441c1",
+    "size": 295,
+    "show": {
+      "capabilities": [
+        "thinking",
+        "completion",
+        "tools"
+      ],
+      "details": {
+        "parent_model": "glm-5.1",
+        "format": "",
+        "family": "glm5.1",
+        "families": null,
+        "parameter_size": "756162687872",
+        "quantization_level": "FP8"
+      },
+      "model_info": {
+        "general.architecture": "glm5.1",
+        "general.parameter_count": 756162687872,
+        "glm5.1.context_length": 202752,
+        "glm5.1.embedding_length": 6144
+      },
+      "modified_at": "2026-04-07T08:00:00-07:00"
+    }
+  },
+  "glm-5.3-flash:cloud": {
+    "config": {
+      "architecture": "amd64",
+      "base_name": "glm-5.3-flash",
+      "capabilities": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "context_length": 1048576,
+      "embedding_length": 4096,
+      "file_type": "FP8",
+      "model_type": "321B",
+      "os": "linux",
+      "remote_host": "https://ollama.com",
+      "remote_model": "glm-5.3-flash",
+      "rootfs": {
+        "diff_ids": [],
+        "type": "layers"
+      }
+    },
+    "digest": "3e780905abc0e7240dd1489935ec1e3c7fcf1854a6f4e7f8688f9bb0bdacb1a5",
+    "size": 317,
+    "show": {
+      "capabilities": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "details": {
+        "parent_model": "glm-5.3-flash",
+        "format": "",
+        "family": "glm5_next",
+        "families": null,
+        "parameter_size": "321323031390",
+        "quantization_level": "FP8"
+      },
+      "model_info": {
+        "general.architecture": "glm5_next",
+        "general.parameter_count": 321323031390,
+        "glm5_next.context_length": 1048576,
+        "glm5_next.embedding_length": 4096
+      },
+      "modified_at": "2026-08-26T07:00:00-07:00"
+    }
+  },
+  "deepseek-v4-flash:0731-cloud": {
+    "config": {
+      "architecture": "amd64",
+      "base_name": "deepseek-v4-flash:0731",
+      "capabilities": [
+        "completion",
+        "tools",
+        "thinking"
+      ],
+      "context_length": 1048576,
+      "embedding_length": 4096,
+      "file_type": "FP8",
+      "model_type": "304B",
+      "os": "linux",
+      "remote_host": "https://ollama.com",
+      "remote_model": "deepseek-v4-flash:0731",
+      "rootfs": {
+        "diff_ids": [],
+        "type": "layers"
+      }
+    },
+    "digest": "d3f1c87447216481a8001f48c517a51e13bfb141853a8df5e52f81bf765dabc3",
+    "size": 326,
+    "show": {
+      "capabilities": [
+        "completion",
+        "tools",
+        "thinking"
+      ],
+      "details": {
+        "parent_model": "deepseek-v4-flash:0731",
+        "format": "",
+        "family": "deepseek4",
+        "families": null,
+        "parameter_size": "304180418494",
+        "quantization_level": "FP8"
+      },
+      "model_info": {
+        "deepseek4.context_length": 1048576,
+        "deepseek4.embedding_length": 4096,
+        "general.architecture": "deepseek4",
+        "general.parameter_count": 304180418494
+      },
+      "modified_at": "2026-07-31T08:00:00-07:00"
+    }
+  }
+}

@@ -305,6 +305,8 @@ func profileFor(m CatalogModel) architectureProfile {
 // already carries. A real server does not read the local stub to answer this — it proxies
 // ollama.com — so these are the upstream registry's own values, captured from that endpoint.
 type cloudShowProfile struct {
+	// Some hosted profiles differ from their local stub's advertised context.
+	contextLength int
 	// architecture is the vendor's architecture slug, which upstream reports as details.family.
 	architecture string
 	// parameterCount is the exact upstream count. details.parameter_size is its decimal string.
@@ -315,11 +317,19 @@ type cloudShowProfile struct {
 }
 
 var cloudShowProfiles = map[string]cloudShowProfile{
-	"gpt-oss:120b-cloud":    {architecture: "gptoss", parameterCount: 116829156672, modifiedAt: "2025-08-05T00:00:00Z"},
-	"deepseek-v4-pro:cloud": {architecture: "deepseek4", parameterCount: 1600000000000, modifiedAt: "2026-04-24T00:00:00Z"},
-	"glm-5.2:cloud":         {architecture: "glm5.2", parameterCount: 756162687872, modifiedAt: "2026-06-16T08:00:00-07:00"},
-	"kimi-k2.6:cloud":       {architecture: "kimi-k2", parameterCount: 1042000000000, modifiedAt: "2026-03-31T00:00:00Z"},
-	"minimax-m2.7:cloud":    {architecture: "minimax-m2", parameterCount: 229000000000, modifiedAt: "2026-03-18T00:00:00Z"},
+	"minimax-m3:cloud":             {architecture: "minimax-m3", parameterCount: 0, modifiedAt: "2026-06-01T00:00:00Z", contextLength: 512000},
+	"kimi-k2.7-code:cloud":         {architecture: "kimi-k2", parameterCount: 1042000000000, modifiedAt: "2026-06-12T00:00:00Z", contextLength: 262144},
+	"deepseek-v4-flash:cloud":      {architecture: "deepseek4", parameterCount: 304180418494, modifiedAt: "2026-07-31T08:00:00-07:00", contextLength: 1048576},
+	"glm-5.3:cloud":                {architecture: "glm_dsa_moe", parameterCount: 753329940480, modifiedAt: "2026-08-28T08:00:00-07:00", contextLength: 1048576},
+	"gemma4:31b-cloud":             {architecture: "gemma4", parameterCount: 32682372656, modifiedAt: "2026-04-02T09:00:00-08:00", contextLength: 262144},
+	"glm-5.1:cloud":                {architecture: "glm5.1", parameterCount: 756162687872, modifiedAt: "2026-04-07T08:00:00-07:00", contextLength: 202752},
+	"glm-5.3-flash:cloud":          {architecture: "glm5_next", parameterCount: 321323031390, modifiedAt: "2026-08-26T07:00:00-07:00", contextLength: 1048576},
+	"deepseek-v4-flash:0731-cloud": {architecture: "deepseek4", parameterCount: 304180418494, modifiedAt: "2026-07-31T08:00:00-07:00", contextLength: 1048576},
+	"gpt-oss:120b-cloud":           {architecture: "gptoss", parameterCount: 116829156672, modifiedAt: "2025-08-05T00:00:00Z"},
+	"deepseek-v4-pro:cloud":        {architecture: "deepseek4", parameterCount: 1600000000000, modifiedAt: "2026-04-24T00:00:00Z"},
+	"glm-5.2:cloud":                {architecture: "glm5.2", parameterCount: 756162687872, modifiedAt: "2026-06-16T08:00:00-07:00"},
+	"kimi-k2.6:cloud":              {architecture: "kimi-k2", parameterCount: 1042000000000, modifiedAt: "2026-03-31T00:00:00Z"},
+	"minimax-m2.7:cloud":           {architecture: "minimax-m2", parameterCount: 229000000000, modifiedAt: "2026-03-18T00:00:00Z"},
 }
 
 // parseParameterCount converts a vendor parameter label ("117B", "1.6T", "0") into an approximate
@@ -365,6 +375,10 @@ func buildCloudShow(m CatalogModel) showResponse {
 		}
 	}
 	arch := p.architecture
+	contextLength := m.Details.ContextLength
+	if p.contextLength > 0 {
+		contextLength = p.contextLength
+	}
 	return showResponse{
 		Details: showDetails{
 			ParentModel:       m.RemoteModel,
@@ -375,7 +389,7 @@ func buildCloudShow(m CatalogModel) showResponse {
 		ModelInfo: map[string]any{
 			"general.architecture":     arch,
 			"general.parameter_count":  p.parameterCount,
-			arch + ".context_length":   m.Details.ContextLength,
+			arch + ".context_length":   contextLength,
 			arch + ".embedding_length": m.Details.EmbeddingLength,
 		},
 		Capabilities: m.Capabilities,
