@@ -265,13 +265,21 @@ func replyFor(prompt, model string, bundle *promptrules.Bundle) ReplyResult {
 	return genericReply(p, model)
 }
 
-// builtinReply is the 13 compiled rule groups, unchanged in content and order from
-// before PRD 034 and now gated by the corpus's builtin_disable set. With no bundle
-// loaded, `on` is true for every id and this function is byte-for-byte the cascade
-// that shipped; llmcore/testdata/golden_replies.json is the proof rather than the
-// claim.
+// builtinReply evaluates the compiled rule groups, gated by the corpus's
+// builtin_disable set. New bounded validators stay under their existing groups;
+// golden_replies.json guards the previously shipped answers.
 func builtinReply(bundle *promptrules.Bundle, p, normalized, model string) (ReplyResult, bool) {
 	on := func(id string) bool { return !bundle.BuiltinDisabled(id) }
+	if on(promptrules.BuiltinEchoLiteral) {
+		if text, ok := reverseTokenReply(p); ok {
+			return ReplyResult{Text: text, Kind: ReplyKindValidationFact}, true
+		}
+	}
+	if on(promptrules.BuiltinIntroEN) {
+		if text, ok := identityValidatorReply(p, model); ok {
+			return ReplyResult{Text: text, Kind: ReplyKindModelIntroEN}, true
+		}
+	}
 
 	if on(promptrules.BuiltinOllamaDescription) && strings.Contains(normalized, "ollama server") &&
 		(strings.Contains(normalized, "what") && strings.Contains(normalized, "does") ||
@@ -939,8 +947,9 @@ func completionID(p Profile, prefix string) string {
 // from map[string]any would sort the keys alphabetically, which no real implementation does.
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string     `json:"role"`
+	Content   string     `json:"content"`
+	ToolCalls []toolCall `json:"tool_calls,omitempty"`
 }
 
 type openAIUsage struct {
@@ -966,8 +975,9 @@ type openAIChatResponse struct {
 }
 
 type openAIDelta struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string     `json:"role,omitempty"`
+	Content   string     `json:"content"`
+	ToolCalls []toolCall `json:"tool_calls,omitempty"`
 }
 
 type openAIChunkChoice struct {
@@ -1015,7 +1025,20 @@ func ChatCompletion(w http.ResponseWriter, r *http.Request, p Profile) {
 		WriteModelNotFoundV1(w, p, model)
 		return
 	}
-	reply, chunks, finish := capReply(classifiedReply(r, promptText(body), model).Text, maxTokensOf(body))
+	selected := classifiedReply(r, promptText(body), model)
+	if plan := planToolReply(body, selected); plan != nil {
+		if plan.error != "" {
+			WriteOpenAIError(w, p, http.StatusBadRequest, plan.error, "invalid_request_error")
+			return
+		}
+		applyToolPlan(r, plan)
+		if plan.call != nil {
+			writeOpenAIToolReply(w, body, p, model, *plan.call)
+			return
+		}
+		selected.Text = plan.text
+	}
+	reply, chunks, finish := capReply(selected.Text, maxTokensOf(body))
 	id := completionID(p, "chatcmpl")
 	created := time.Now().Unix()
 
@@ -1301,7 +1324,20 @@ func OllamaChat(w http.ResponseWriter, r *http.Request, p Profile) {
 		return
 	}
 	prompt := promptText(body)
-	reply, chunks, finish := capReply(classifiedReply(r, prompt, model).Text, maxTokensOf(body))
+	selected := classifiedReply(r, prompt, model)
+	if plan := planToolReply(body, selected); plan != nil {
+		if plan.error != "" {
+			WriteOllamaError(w, p, http.StatusBadRequest, plan.error)
+			return
+		}
+		applyToolPlan(r, plan)
+		if plan.call != nil {
+			writeOllamaToolReply(w, body, p, model, *plan.call)
+			return
+		}
+		selected.Text = plan.text
+	}
+	reply, chunks, finish := capReply(selected.Text, maxTokensOf(body))
 	pt := promptTokensFor(prompt)
 	t := newTimings(model, keepAliveOf(body), pt, len(chunks))
 
