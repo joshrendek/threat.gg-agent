@@ -265,11 +265,9 @@ func replyFor(prompt, model string, bundle *promptrules.Bundle) ReplyResult {
 	return genericReply(p, model)
 }
 
-// builtinReply is the 13 compiled rule groups, unchanged in content and order from
-// before PRD 034 and now gated by the corpus's builtin_disable set. With no bundle
-// loaded, `on` is true for every id and this function is byte-for-byte the cascade
-// that shipped; llmcore/testdata/golden_replies.json is the proof rather than the
-// claim.
+// builtinReply evaluates the compiled rule groups, gated by the corpus's
+// builtin_disable set. New bounded validators stay under their existing groups;
+// golden_replies.json guards the previously shipped answers.
 func builtinReply(bundle *promptrules.Bundle, p, normalized, model string) (ReplyResult, bool) {
 	on := func(id string) bool { return !bundle.BuiltinDisabled(id) }
 	if on(promptrules.BuiltinEchoLiteral) {
@@ -977,7 +975,7 @@ type openAIChatResponse struct {
 }
 
 type openAIDelta struct {
-	Role      string     `json:"role"`
+	Role      string     `json:"role,omitempty"`
 	Content   string     `json:"content"`
 	ToolCalls []toolCall `json:"tool_calls,omitempty"`
 }
