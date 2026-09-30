@@ -13,6 +13,7 @@ import (
 
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	pb "github.com/joshrendek/threat.gg-agent/proto"
+	"github.com/joshrendek/threat.gg-agent/termsafe"
 )
 
 const (
@@ -171,7 +172,7 @@ func handleConnection(conn net.Conn) {
 		}
 
 		if response != "" {
-			fmt.Fprint(conn, response)
+			fmt.Fprint(conn, termsafe.Sanitize(response))
 		}
 		fmt.Fprint(conn, "~ # ")
 	}
