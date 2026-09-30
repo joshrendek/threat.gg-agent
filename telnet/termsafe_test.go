@@ -8,20 +8,29 @@ import (
 	"github.com/joshrendek/threat.gg-agent/termsafe"
 )
 
-// Authored telnet rows are written raw today; pin that the one write site is sanitised.
+// Authored telnet rows were written raw; pin that the one response write is
+// sanitised and that our own prompt writes are not.
 func TestTelnetResponseWriteIsSanitised(t *testing.T) {
 	src, err := os.ReadFile("telnet.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), "fmt.Fprint(conn, termsafe.Sanitize(response))") {
+	body := string(src)
+	if n := strings.Count(body, "termsafe.Sanitize("); n != 1 {
+		t.Fatalf("want exactly one termsafe.Sanitize( call, got %d", n)
+	}
+	if !strings.Contains(body, "fmt.Fprint(conn, termsafe.Sanitize(response))") {
 		t.Fatal("telnet response write must go through termsafe.Sanitize")
 	}
-	if strings.Contains(string(src), "fmt.Fprint(conn, response)") {
+	if strings.Contains(body, "fmt.Fprint(conn, response)") {
 		t.Fatal("raw response write still present")
 	}
-	if !strings.Contains(string(src), `fmt.Fprint(conn, "~ # ")`) {
-		t.Fatal("prompt write must stay unchanged")
+	prompt := `fmt.Fprint(conn, "~ # ")`
+	if n := strings.Count(body, prompt); n < 1 {
+		t.Fatal("prompt writes missing")
+	}
+	if strings.Contains(body, "termsafe.Sanitize(\"~ # \")") {
+		t.Fatal("prompt write must not be wrapped in Sanitize")
 	}
 }
 

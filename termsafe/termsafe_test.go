@@ -24,6 +24,12 @@ func TestSanitize(t *testing.T) {
 		{"existing crlf unchanged", "a\r\nb\r\n\r\nc", "a\r\nb\r\n\r\nc"},
 		{"multibyte", "é中\n", "é中\r\n"},
 		{"nul removed", "a\x00b", "ab"},
+		{"c1 csi", "\xc2\x9b31mred", "red"},
+		{"c1 osc bel", "\xc2\x9d0;t\x07x", "x"},
+		{"c1 osc c1 st", "\xc2\x9d0;t\xc2\x9cx", "x"},
+		{"c1 nel", "a\xc2\x85b", "ab"},
+		{"bare c1 csi byte", "\x9b31mred", "red"},
+		{"bare c1 byte", "a\x85b", "ab"},
 	}
 	for _, c := range cases {
 		if got := Sanitize(c.in); got != c.want {
@@ -34,7 +40,7 @@ func TestSanitize(t *testing.T) {
 
 func TestSanitizeNeverEmitsEscape(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
-	alphabet := []byte("\x1b[]\\\x07\r\n\tm;0123AZa~ \x00\x7f")
+	alphabet := []byte("\xc2\x9b\xc2\x9d\xc2\x9c\xc2\x85\x1b[]\\\x07\r\n\tm;0123AZa~ \x00\x7f")
 	for i := 0; i < 20000; i++ {
 		buf := make([]byte, rng.Intn(40))
 		for j := range buf {
@@ -47,6 +53,11 @@ func TestSanitizeNeverEmitsEscape(t *testing.T) {
 		out := Sanitize(string(buf))
 		if strings.ContainsRune(out, 0x1b) {
 			t.Fatalf("ESC in output for %q: %q", buf, out)
+		}
+		for _, r := range out {
+			if r >= 0x80 && r <= 0x9f {
+				t.Fatalf("C1 rune %U in output for %q: %q", r, buf, out)
+			}
 		}
 		for k := 0; k < len(out); k++ {
 			c := out[k]

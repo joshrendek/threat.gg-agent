@@ -3,7 +3,10 @@
 // stray control bytes, and CRLF line endings the terminal expects.
 package termsafe
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // Sanitize strips CSI sequences, drops OSC sequences entirely, removes every
 // control byte except \n and \t, and normalizes line endings to \r\n. The
@@ -56,6 +59,46 @@ func Sanitize(s string) string {
 			b.WriteByte(c)
 		case c < 0x20 || c == 0x7f:
 			// drop
+		case c >= 0x80:
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError && size == 1 {
+				if c > 0x9f {
+					b.WriteByte(c)
+					continue
+				}
+				// bare C1 byte: honoured by 8-bit terminals, treat like the rune
+				r = rune(c)
+			}
+			switch {
+			case r == 0x9b: // C1 CSI: skip to final byte
+				j := i + size
+				for j < len(s) && !(s[j] >= 0x40 && s[j] <= 0x7e) {
+					j++
+				}
+				i = j
+			case r == 0x9d: // C1 OSC: skip to BEL, ESC \ or C1 ST
+				j := i + size
+				for j < len(s) {
+					if s[j] == 0x07 || s[j] == 0x9c {
+						break
+					}
+					if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+						j++
+						break
+					}
+					if s[j] == 0xc2 && j+1 < len(s) && s[j+1] == 0x9c {
+						j++
+						break
+					}
+					j++
+				}
+				i = j
+			case r >= 0x80 && r <= 0x9f: // other C1 controls dropped
+				i += size - 1
+			default:
+				b.WriteString(s[i : i+size])
+				i += size - 1
+			}
 		default:
 			b.WriteByte(c)
 		}
