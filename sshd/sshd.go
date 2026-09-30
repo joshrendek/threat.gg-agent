@@ -524,7 +524,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 						// libraries wait for acceptance before they begin reading stdout.
 						req.Reply(true, nil)
 						replied = true
-						reply = commandReply(perms.Extensions["guid"], command, "/")
+						reply = commandReply(perms.Extensions["guid"], command)
 						if reply.Output != "" {
 							term.Write(terminalBytes(termsafe.Sanitize(reply.Output)))
 						}
@@ -558,6 +558,14 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 					// otherwise the prompt is byte-identical to the legacy one.
 					cwd, hostname := "/", "localhost"
 					prompt := func() string { return "root@" + hostname + ":" + cwd + "# " }
+					// Prime the persona before the first prompt; empty keeps the defaults.
+					primedHost, primedCwd := primePrompt(perms.Extensions["guid"])
+					if primedHost != "" {
+						hostname = primedHost
+					}
+					if primedCwd != "" {
+						cwd = primedCwd
+					}
 					for {
 						term.Write([]byte(prompt()))
 						line, err := term.ReadLine()
@@ -572,7 +580,7 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							h.logger.Error().Err(err).Msg("error running shell")
 						}
 
-						reply := commandReply(perms.Extensions["guid"], line, cwd)
+						reply := commandReply(perms.Extensions["guid"], line)
 						if reply.Output != "" {
 							term.Write(terminalBytes(termsafe.Sanitize(reply.Output)))
 						}

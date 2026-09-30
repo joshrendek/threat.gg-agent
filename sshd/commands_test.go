@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/joshrendek/threat.gg-agent/proto"
 )
@@ -11,7 +12,7 @@ import (
 func TestSSHCommandValidators(t *testing.T) {
 	old := lookupCommandResponse
 	t.Cleanup(func() { lookupCommandResponse = old })
-	lookupCommandResponse = func(in *proto.CommandRequest) (*proto.CommandResponse, error) {
+	lookupCommandResponse = func(in *proto.CommandRequest, _ time.Duration) (*proto.CommandResponse, error) {
 		if in.CommandType != "ssh" {
 			t.Fatalf("wrong protocol: %q", in.CommandType)
 		}
@@ -39,13 +40,15 @@ func TestSSHCommandValidators(t *testing.T) {
 			t.Errorf("unsupported %q was answered: %+v, %v", command, got, err)
 		}
 	}
-	lookupCommandResponse = func(*proto.CommandRequest) (*proto.CommandResponse, error) {
+	lookupCommandResponse = func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
 		return &proto.CommandResponse{Response: "", Matched: true}, nil
 	}
 	if got, _ := commandResponse("echo xsec"); got.Response != "" {
 		t.Fatal("server override lost")
 	}
-	lookupCommandResponse = func(*proto.CommandRequest) (*proto.CommandResponse, error) { return nil, errors.New("offline") }
+	lookupCommandResponse = func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
+		return nil, errors.New("offline")
+	}
 	if got, err := commandResponse("echo xsec"); err != nil || got.Response != "xsec\r\n" {
 		t.Fatal("echo unavailable during control-plane outage")
 	}

@@ -1,6 +1,7 @@
 package sshd
 
 import (
+	"context"
 	"errors"
 	"regexp"
 	"strings"
@@ -9,9 +10,24 @@ import (
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"github.com/joshrendek/threat.gg-agent/termsafe"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-var lookupCommandResponse = persistence.GetCommandResponse
+// lookupCommandResponse is the legacy lookup with a caller-chosen deadline.
+// Swappable for tests.
+var lookupCommandResponse = persistence.GetCommandResponseWithin
+
+// lookupTimeout is the normal legacy lookup deadline. degradedLookupTimeout
+// replaces it after the generate call already timed out, so a degraded server
+// costs an attacker generateBudget plus a short lookup, not two full waits.
+const (
+	lookupTimeout         = 3 * time.Second
+	degradedLookupTimeout = 600 * time.Millisecond
+)
+
+// primeBudget bounds the hostname lookup made before the first shell prompt.
+const primeBudget = 1500 * time.Millisecond
 
 // generateResponse is the AI-first path. Swappable for tests.
 var generateResponse = persistence.GenerateResponse
@@ -47,13 +63,18 @@ var generatedSources = map[proto.GenerateSource]string{
 
 // commandReply asks the server for a generated reply first and falls back to
 // commandResponse on NONE, Unimplemented, any error, or a reply without a
-// terminal body. It never fails: the worst case is today's behaviour. cwd is
-// only used to fill Cwd when nothing better is known.
-func commandReply(guid, command, cwd string) shellReply {
+// terminal body. It never fails: the worst case is today's behaviour. When the
+// generate call itself timed out or the server is unreachable the legacy path
+// runs with a short lookup deadline so the worst case stays bounded.
+func commandReply(guid, command string) shellReply {
+	lookup := lookupTimeout
 	if strings.TrimSpace(command) != "" {
 		reply, err := generateResponse(&proto.GenerateRequest{
 			Guid: guid, Protocol: "ssh", Input: command, DeadlineMs: int32(generateBudget / time.Millisecond),
 		}, generateBudget)
+		if isServerSlow(err) {
+			lookup = degradedLookupTimeout
+		}
 		if err != nil && !errors.Is(err, persistence.ErrUnimplemented) {
 			logger.Debug().Err(err).Msg("generate response unavailable; using legacy path")
 		}
@@ -73,8 +94,8 @@ func commandReply(guid, command, cwd string) shellReply {
 			}
 		}
 	}
-	out := shellReply{ExitCode: 127, Cwd: cwd}
-	resp, err := commandResponse(command)
+	out := shellReply{ExitCode: 127}
+	resp, err := commandResponseWithin(command, lookup)
 	if err != nil {
 		logger.Error().Err(err).Msg("error getting command response")
 		return out
@@ -86,6 +107,45 @@ func commandReply(guid, command, cwd string) shellReply {
 		}
 	}
 	return out
+}
+
+// isServerSlow reports a generate failure that means the server is slow or
+// unreachable, as opposed to Unimplemented, NONE or a reply-level error.
+func isServerSlow(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.DeadlineExceeded, codes.Unavailable:
+		return true
+	}
+	return false
+}
+
+// primePrompt asks for the persona hostname and cwd before the first prompt so
+// an AI session never shows a placeholder prompt that later changes. The reply
+// text is discarded and nothing is recorded: the prime is not attacker input.
+// Anything but an AI reply with a terminal body keeps the legacy defaults.
+func primePrompt(guid string) (hostname, cwd string) {
+	reply, err := generateResponse(&proto.GenerateRequest{
+		Guid: guid, Protocol: "ssh", Input: "hostname", DeadlineMs: int32(primeBudget / time.Millisecond),
+	}, primeBudget)
+	if err != nil {
+		return "", ""
+	}
+	switch reply.GetSource() {
+	case proto.GenerateSource_GENERATE_SOURCE_AI, proto.GenerateSource_GENERATE_SOURCE_AI_CACHED:
+	default:
+		return "", ""
+	}
+	term := reply.GetTerminal()
+	if term == nil {
+		return "", ""
+	}
+	return promptField(term.GetHostname()), promptField(term.GetCwd())
 }
 
 // promptField sanitizes a server-supplied prompt component. Anything that is
@@ -114,7 +174,11 @@ var echoValidator = regexp.MustCompile(`^echo(?:[ \t]+(?:[A-Za-z0-9_./:-]+|"[A-Z
 var echoWord = regexp.MustCompile(`"[^"]*"|'[^']*'|[^ \t]+`)
 
 func commandResponse(command string) (*proto.CommandResponse, error) {
-	response, err := lookupCommandResponse(&proto.CommandRequest{Command: command, CommandType: "ssh"})
+	return commandResponseWithin(command, lookupTimeout)
+}
+
+func commandResponseWithin(command string, within time.Duration) (*proto.CommandResponse, error) {
+	response, err := lookupCommandResponse(&proto.CommandRequest{Command: command, CommandType: "ssh"}, within)
 	if err == nil && response != nil && response.Matched {
 		return response, nil
 	}
@@ -123,7 +187,7 @@ func commandResponse(command string) (*proto.CommandResponse, error) {
 	}
 	clean := strings.TrimSpace(command)
 	if unameValidator.MatchString(clean) {
-		canonical, lookupErr := lookupCommandResponse(&proto.CommandRequest{Command: "uname -a", CommandType: "ssh"})
+		canonical, lookupErr := lookupCommandResponse(&proto.CommandRequest{Command: "uname -a", CommandType: "ssh"}, within)
 		if lookupErr == nil && canonical != nil && canonical.Matched {
 			return canonical, nil
 		}

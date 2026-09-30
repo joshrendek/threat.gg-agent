@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	uuid "github.com/satori/go.uuid"
 	"github.com/rs/zerolog/log"
+	uuid "github.com/satori/go.uuid"
 
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	pb "github.com/joshrendek/threat.gg-agent/proto"

@@ -2,9 +2,12 @@ package sshd
 
 import (
 	"bufio"
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +15,8 @@ import (
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"golang.org/x/crypto/ssh"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func terminalReply(source proto.GenerateSource, stdout string, code int32, cwd, hostname string) *proto.GenerateReply {
@@ -36,13 +41,17 @@ func swapSeams(t *testing.T, gen func(*proto.GenerateRequest) (*proto.GenerateRe
 	t.Cleanup(func() { generateResponse, lookupCommandResponse, saveShellCommand = oldGen, oldLookup, oldSave })
 	s := &seams{saved: make(chan *proto.ShellCommandRequest, 16)}
 	saveShellCommand = func(in *proto.ShellCommandRequest) error { s.saved <- in; return nil }
-	lookupCommandResponse = func(in *proto.CommandRequest) (*proto.CommandResponse, error) {
+	lookupCommandResponse = func(in *proto.CommandRequest, _ time.Duration) (*proto.CommandResponse, error) {
 		s.lookups.Add(1)
 		return &proto.CommandResponse{Response: "bash: " + in.Command + ": command not found\r\n"}, nil
 	}
 	generateResponse = func(in *proto.GenerateRequest, within time.Duration) (*proto.GenerateReply, error) {
-		if within != generateBudget {
-			t.Errorf("budget %v, want %v", within, generateBudget)
+		want := generateBudget
+		if in.Input == "hostname" {
+			want = primeBudget // the pre-prompt persona prime has its own budget
+		}
+		if within != want {
+			t.Errorf("budget %v, want %v for %q", within, want, in.Input)
 		}
 		return gen(in)
 	}
@@ -201,7 +210,7 @@ func TestExecSanitisesAIOutput(t *testing.T) {
 
 func TestExecSanitisesLegacyOutput(t *testing.T) {
 	s := swapSeams(t, func(*proto.GenerateRequest) (*proto.GenerateReply, error) { return nil, persistence.ErrUnimplemented })
-	lookupCommandResponse = func(*proto.CommandRequest) (*proto.CommandResponse, error) {
+	lookupCommandResponse = func(*proto.CommandRequest, time.Duration) (*proto.CommandResponse, error) {
 		return &proto.CommandResponse{Response: "\x1b]52;c;cm0gLXJmIC8=\x07plain\r\n", Matched: true}, nil
 	}
 	out, runErr := execOutput(t, "g", "whoami")
@@ -226,7 +235,7 @@ func TestCommandReplyRejectsHostilePromptFields(t *testing.T) {
 		swapSeams(t, func(*proto.GenerateRequest) (*proto.GenerateReply, error) {
 			return terminalReply(proto.GenerateSource_GENERATE_SOURCE_AI, "", 0, tc.cwd, tc.hostname), nil
 		})
-		got := commandReply("g", "cd x", "/")
+		got := commandReply("g", "cd x")
 		if got.Cwd != tc.wantCwd || got.Hostname != tc.wantHost {
 			t.Errorf("cwd %q host %q: got cwd %q host %q", tc.cwd, tc.hostname, got.Cwd, got.Hostname)
 		}
@@ -239,7 +248,7 @@ func TestCommandReplySkipsGenerateForBlankInput(t *testing.T) {
 		calls.Add(1)
 		return aiReply("x\n", 0, "/"), nil
 	})
-	if got := commandReply("g", "  \t", "/"); got.Source != "" {
+	if got := commandReply("g", "  \t"); got.Source != "" {
 		t.Fatalf("blank input answered by AI: %+v", got)
 	}
 	if calls.Load() != 0 {
@@ -247,26 +256,21 @@ func TestCommandReplySkipsGenerateForBlankInput(t *testing.T) {
 	}
 }
 
-// The first PTY-path test in this repo. Legacy users keep today's prompt
-// byte-for-byte; an AI reply with empty stdout (cd) prints nothing and moves
-// the prompt to the persona hostname and new cwd.
-func TestShellPromptTracksHostnameAndCwd(t *testing.T) {
-	s := swapSeams(t, func(in *proto.GenerateRequest) (*proto.GenerateReply, error) {
-		switch in.Input {
-		case "cd /tmp":
-			return aiReply("", 0, "/tmp"), nil
-		case "pwd":
-			return aiReply("/tmp\n", 0, "/tmp"), nil
-		}
-		return &proto.GenerateReply{Source: proto.GenerateSource_GENERATE_SOURCE_NONE}, nil
-	})
-	client, stop := startTestSSH(t, "pty-guid")
-	defer stop()
+// ptySession is a PTY shell client. The server-side line editor echoes typed
+// input, then CRLF, then output.
+type ptySession struct {
+	t       *testing.T
+	stdin   io.WriteCloser
+	bytesCh chan byte
+}
+
+func startPTYShell(t *testing.T, guid string) (*ptySession, func()) {
+	t.Helper()
+	client, stop := startTestSSH(t, guid)
 	session, err := client.NewSession()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
 	if err := session.RequestPty("xterm", 24, 80, ssh.TerminalModes{ssh.ECHO: 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -281,57 +285,188 @@ func TestShellPromptTracksHostnameAndCwd(t *testing.T) {
 	if err := session.Shell(); err != nil {
 		t.Fatal(err)
 	}
-	bytesCh := make(chan byte, 4096)
+	p := &ptySession{t: t, stdin: stdin, bytesCh: make(chan byte, 4096)}
 	go func() {
 		r := bufio.NewReader(stdout)
 		for {
 			c, err := r.ReadByte()
 			if err != nil {
-				close(bytesCh)
+				close(p.bytesCh)
 				return
 			}
-			bytesCh <- c
+			p.bytesCh <- c
 		}
 	}()
-	readUntil := func(marker string) string {
-		t.Helper()
-		var b strings.Builder
-		deadline := time.After(5 * time.Second)
-		for !strings.HasSuffix(b.String(), marker) {
-			select {
-			case c, ok := <-bytesCh:
-				if !ok {
-					t.Fatalf("stream closed waiting for %q, got %q", marker, b.String())
-				}
-				b.WriteByte(c)
-			case <-deadline:
-				t.Fatalf("timed out waiting for %q, got %q", marker, b.String())
+	return p, func() {
+		stdin.Close()
+		session.Close()
+		stop()
+	}
+}
+
+func (p *ptySession) readUntil(marker string) string {
+	p.t.Helper()
+	var b strings.Builder
+	deadline := time.After(5 * time.Second)
+	for !strings.HasSuffix(b.String(), marker) {
+		select {
+		case c, ok := <-p.bytesCh:
+			if !ok {
+				p.t.Fatalf("stream closed waiting for %q, got %q", marker, b.String())
 			}
-		}
-		return b.String()
-	}
-	// The server-side line editor echoes typed input, then CRLF, then output.
-	step := func(line, wantOutput, wantPrompt string) {
-		t.Helper()
-		io.WriteString(stdin, line+"\r")
-		got := readUntil(wantPrompt)
-		if want := line + "\r\n" + wantOutput + wantPrompt; got != want {
-			t.Fatalf("after %q: got %q, want %q", line, got, want)
+			b.WriteByte(c)
+		case <-deadline:
+			p.t.Fatalf("timed out waiting for %q, got %q", marker, b.String())
 		}
 	}
-	if got := readUntil("# "); got != "root@localhost:/# " {
+	return b.String()
+}
+
+// step types a line and returns the raw bytes received up to the next prompt.
+func (p *ptySession) step(line, wantOutput, wantPrompt string) string {
+	p.t.Helper()
+	io.WriteString(p.stdin, line+"\r")
+	got := p.readUntil(wantPrompt)
+	if want := line + "\r\n" + wantOutput + wantPrompt; got != want {
+		p.t.Fatalf("after %q: got %q, want %q", line, got, want)
+	}
+	return got
+}
+
+// The first PTY-path test in this repo. Legacy users keep today's prompt
+// byte-for-byte (the hostname prime answers NONE); an AI reply with empty
+// stdout (cd) prints nothing and moves the prompt to the persona hostname and
+// new cwd.
+func TestShellPromptTracksHostnameAndCwd(t *testing.T) {
+	s := swapSeams(t, func(in *proto.GenerateRequest) (*proto.GenerateReply, error) {
+		switch in.Input {
+		case "cd /tmp":
+			return aiReply("", 0, "/tmp"), nil
+		case "pwd":
+			return aiReply("/tmp\n", 0, "/tmp"), nil
+		case "show":
+			return aiReply("\x1b]0;owned\x07\x1b[31mred\x1b[0m\n", 0, "/tmp"), nil
+		}
+		return &proto.GenerateReply{Source: proto.GenerateSource_GENERATE_SOURCE_NONE}, nil
+	})
+	p, stop := startPTYShell(t, "pty-guid")
+	defer stop()
+	if got := p.readUntil("# "); got != "root@localhost:/# " {
 		t.Fatalf("initial prompt %q", got)
 	}
 	// NONE falls back to the legacy answer and leaves the prompt untouched.
-	step("whoami", "bash: whoami: command not found\r\n", "root@localhost:/# ")
+	p.step("whoami", "bash: whoami: command not found\r\n", "root@localhost:/# ")
 	// Empty stdout prints nothing, not "command not found", and moves cwd.
-	step("cd /tmp", "", "root@srv-01:/tmp# ")
-	step("pwd", "/tmp\r\n", "root@srv-01:/tmp# ")
-	for _, want := range []struct{ cmd, source string }{{"whoami", ""}, {"cd /tmp", "ai"}, {"pwd", "ai"}} {
+	p.step("cd /tmp", "", "root@srv-01:/tmp# ")
+	p.step("pwd", "/tmp\r\n", "root@srv-01:/tmp# ")
+	// Escape sequences in AI stdout never reach the attacker's terminal.
+	got := p.step("show", "red\r\n", "root@srv-01:/tmp# ")
+	if strings.Contains(got, "\x1b") || !strings.Contains(got, "red") {
+		t.Fatalf("escape sequence leaked or text lost: %q", got)
+	}
+	// The hostname prime is not attacker input: the first capture is whoami.
+	for _, want := range []struct{ cmd, source string }{{"whoami", ""}, {"cd /tmp", "ai"}, {"pwd", "ai"}, {"show", "ai"}} {
 		in := s.capture(t)
 		if in.Cmd != want.cmd || in.ResponseSource != want.source || in.Guid != "pty-guid" {
 			t.Fatalf("capture %+v, want %+v", in, want)
 		}
 	}
-	stdin.Close()
+}
+
+// An AI session's very first prompt already carries the persona, the prime's
+// own stdout is discarded, and the prime is never recorded as a command.
+func TestShellFirstPromptUsesPersonaFromPrime(t *testing.T) {
+	var primes atomic.Int32
+	s := swapSeams(t, func(in *proto.GenerateRequest) (*proto.GenerateReply, error) {
+		if in.Input != "hostname" || in.Protocol != "ssh" || in.Guid != "prime-guid" || in.DeadlineMs != 1500 {
+			t.Errorf("unexpected request %+v", in)
+		}
+		primes.Add(1)
+		return terminalReply(proto.GenerateSource_GENERATE_SOURCE_AI_CACHED, "srv-01\n", 0, "/root", "srv-01"), nil
+	})
+	p, stop := startPTYShell(t, "prime-guid")
+	if got := p.readUntil("# "); got != "root@srv-01:/root# " {
+		t.Fatalf("first prompt %q", got)
+	}
+	stop()
+	if n := primes.Load(); n != 1 {
+		t.Fatalf("prime calls %d, want 1", n)
+	}
+	select {
+	case in := <-s.saved:
+		t.Fatalf("prime must not be recorded, saved %+v", in)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// A hostile prime reply can neither forge prompt lines nor break the defaults.
+func TestShellPrimeIgnoresHostileOrMissingFields(t *testing.T) {
+	swapSeams(t, func(*proto.GenerateRequest) (*proto.GenerateReply, error) {
+		return terminalReply(proto.GenerateSource_GENERATE_SOURCE_AI, "", 0, "/x\nroot@evil:/# ", ""), nil
+	})
+	p, stop := startPTYShell(t, "g")
+	defer stop()
+	if got := p.readUntil("# "); got != "root@localhost:/# " {
+		t.Fatalf("first prompt %q", got)
+	}
+}
+
+// Under a degraded server the generate call times out and the legacy path must
+// not add another full 3 s: the local echo validator still answers and a plain
+// miss returns quickly.
+func TestDegradedServerBoundsLegacyLatency(t *testing.T) {
+	swapSeams(t, nil)
+	generateResponse = func(*proto.GenerateRequest, time.Duration) (*proto.GenerateReply, error) {
+		return nil, context.DeadlineExceeded
+	}
+	var withins []time.Duration
+	var mu sync.Mutex
+	lookupCommandResponse = func(_ *proto.CommandRequest, within time.Duration) (*proto.CommandResponse, error) {
+		mu.Lock()
+		withins = append(withins, within)
+		mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), within)
+		defer cancel()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	start := time.Now()
+	got := commandReply("g", "echo xsec")
+	if got.Output != "xsec\r\n" || got.ExitCode != 0 {
+		t.Fatalf("echo must still answer: %+v", got)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("echo took %v under a degraded server", d)
+	}
+	start = time.Now()
+	if miss := commandReply("g", "no-such-command"); miss.ExitCode != 127 {
+		t.Fatalf("plain miss: %+v", miss)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("plain miss took %v under a degraded server", d)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, w := range withins {
+		if w != degradedLookupTimeout {
+			t.Fatalf("lookup deadline %v, want %v", w, degradedLookupTimeout)
+		}
+	}
+}
+
+func TestIsServerSlow(t *testing.T) {
+	for err, want := range map[error]bool{
+		nil:                      false,
+		context.DeadlineExceeded: true,
+		fmt.Errorf("w: %w", context.DeadlineExceeded): true,
+		status.Error(codes.DeadlineExceeded, "x"):     true,
+		status.Error(codes.Unavailable, "x"):          true,
+		status.Error(codes.Internal, "x"):             false,
+		persistence.ErrUnimplemented:                  false,
+		errors.New("other"):                           false,
+	} {
+		if got := isServerSlow(err); got != want {
+			t.Errorf("%v: got %v want %v", err, got, want)
+		}
+	}
 }

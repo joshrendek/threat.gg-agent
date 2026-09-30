@@ -19,7 +19,7 @@ func TestExecValidatorRepliesAndCapturesOriginal(t *testing.T) {
 	generateResponse = func(*proto.GenerateRequest, time.Duration) (*proto.GenerateReply, error) {
 		return nil, persistence.ErrUnimplemented
 	}
-	lookupCommandResponse = func(in *proto.CommandRequest) (*proto.CommandResponse, error) {
+	lookupCommandResponse = func(in *proto.CommandRequest, _ time.Duration) (*proto.CommandResponse, error) {
 		if in.Command == "uname -a" {
 			return &proto.CommandResponse{Response: "Linux configured-host test-kernel\r\n", Matched: true}, nil
 		}
