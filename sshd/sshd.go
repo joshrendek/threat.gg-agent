@@ -28,6 +28,7 @@ import (
 	"github.com/cretz/bine/tor"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/stats"
+	"github.com/joshrendek/threat.gg-agent/termsafe"
 	"github.com/rs/zerolog"
 	uuid "github.com/satori/go.uuid"
 	"golang.org/x/crypto/ssh"
@@ -415,6 +416,8 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 					ok = true
 
 					isScp := strings.Contains(command, "scp")
+					// Zero value (legacy, no AI link) for scp captures.
+					var reply shellReply
 
 					if isScp {
 						fmt.Println("*********************")
@@ -521,23 +524,18 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 						// libraries wait for acceptance before they begin reading stdout.
 						req.Reply(true, nil)
 						replied = true
-						resp, err := commandResponse(command)
-						if err != nil {
-							h.logger.Error().Err(err).Msg("error getting command response")
+						reply = commandReply(perms.Extensions["guid"], command, "/")
+						if reply.Output != "" {
+							term.Write(terminalBytes(termsafe.Sanitize(reply.Output)))
 						}
-						if err == nil && resp != nil {
-							term.Write([]byte(resp.Response))
-						}
-						code := uint32(127)
-						if err == nil && resp != nil && resp.Matched {
-							code = 0
-						}
-						channel.SendRequest("exit-status", false, ssh.Marshal(&exitStatusMsg{Status: code}))
+						channel.SendRequest("exit-status", false, ssh.Marshal(&exitStatusMsg{Status: reply.ExitCode}))
 					}
 
 					lr := &proto.ShellCommandRequest{
-						Cmd:  command,
-						Guid: perms.Extensions["guid"],
+						Cmd:            command,
+						Guid:           perms.Extensions["guid"],
+						ResponseSource: reply.Source,
+						GenerationId:   reply.GenerationID,
 					}
 
 					stats.Increment("ssh.shell_commands")
@@ -556,8 +554,12 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 				case "shell":
 					req.Reply(true, nil)
 					replied = true
+					// Per-session prompt state. Until a generated reply says
+					// otherwise the prompt is byte-identical to the legacy one.
+					cwd, hostname := "/", "localhost"
+					prompt := func() string { return "root@" + hostname + ":" + cwd + "# " }
 					for {
-						term.Write([]byte("root@localhost:/# "))
+						term.Write([]byte(prompt()))
 						line, err := term.ReadLine()
 						if err == io.EOF {
 							h.logger.Info().Msg("eof detected, closing")
@@ -570,17 +572,26 @@ func (h *honeypot) handleChannels(chans <-chan ssh.NewChannel, perms *ssh.Permis
 							h.logger.Error().Err(err).Msg("error running shell")
 						}
 
-						resp, err := commandResponse(line)
-						if err != nil {
-							h.logger.Error().Err(err).Msg("error getting command response")
+						reply := commandReply(perms.Extensions["guid"], line, cwd)
+						if reply.Output != "" {
+							term.Write(terminalBytes(termsafe.Sanitize(reply.Output)))
 						}
-						if err == nil && resp != nil {
-							term.Write([]byte(resp.Response))
+						if reply.Source != "" {
+							// Only a generated reply moves the prompt; empty
+							// fields keep the current value.
+							if reply.Cwd != "" {
+								cwd = reply.Cwd
+							}
+							if reply.Hostname != "" {
+								hostname = reply.Hostname
+							}
 						}
 
 						lr := &proto.ShellCommandRequest{
-							Cmd:  line,
-							Guid: perms.Extensions["guid"],
+							Cmd:            line,
+							Guid:           perms.Extensions["guid"],
+							ResponseSource: reply.Source,
+							GenerationId:   reply.GenerationID,
 						}
 
 						stats.Increment("ssh.shell_commands")
