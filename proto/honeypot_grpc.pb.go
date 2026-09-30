@@ -181,6 +181,7 @@ const (
 	Honeypot_SaveS7CommSession_FullMethodName    = "/honeypot.Honeypot/SaveS7commSession"
 	Honeypot_SaveModbusSession_FullMethodName    = "/honeypot.Honeypot/SaveModbusSession"
 	Honeypot_GetLlmBundle_FullMethodName         = "/honeypot.Honeypot/GetLlmBundle"
+	Honeypot_GenerateResponse_FullMethodName     = "/honeypot.Honeypot/GenerateResponse"
 )
 
 // HoneypotClient is the client API for Honeypot service.
@@ -269,6 +270,9 @@ type HoneypotClient interface {
 	// (rather than a new HTTP surface) because the agent already holds an
 	// authenticated TLS channel with API_KEY in metadata.
 	GetLlmBundle(ctx context.Context, in *LlmBundleRequest, opts ...grpc.CallOption) (*LlmBundleReply, error)
+	// BYOK AI responses (PRD 041). The server answers attacker input with the
+	// user's own OpenRouter key; NONE tells the agent to use its existing path.
+	GenerateResponse(ctx context.Context, in *GenerateRequest, opts ...grpc.CallOption) (*GenerateReply, error)
 }
 
 type honeypotClient struct {
@@ -819,6 +823,16 @@ func (c *honeypotClient) GetLlmBundle(ctx context.Context, in *LlmBundleRequest,
 	return out, nil
 }
 
+func (c *honeypotClient) GenerateResponse(ctx context.Context, in *GenerateRequest, opts ...grpc.CallOption) (*GenerateReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenerateReply)
+	err := c.cc.Invoke(ctx, Honeypot_GenerateResponse_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoneypotServer is the server API for Honeypot service.
 // All implementations must embed UnimplementedHoneypotServer
 // for forward compatibility.
@@ -905,6 +919,9 @@ type HoneypotServer interface {
 	// (rather than a new HTTP surface) because the agent already holds an
 	// authenticated TLS channel with API_KEY in metadata.
 	GetLlmBundle(context.Context, *LlmBundleRequest) (*LlmBundleReply, error)
+	// BYOK AI responses (PRD 041). The server answers attacker input with the
+	// user's own OpenRouter key; NONE tells the agent to use its existing path.
+	GenerateResponse(context.Context, *GenerateRequest) (*GenerateReply, error)
 	mustEmbedUnimplementedHoneypotServer()
 }
 
@@ -1076,6 +1093,9 @@ func (UnimplementedHoneypotServer) SaveModbusSession(context.Context, *ModbusSes
 }
 func (UnimplementedHoneypotServer) GetLlmBundle(context.Context, *LlmBundleRequest) (*LlmBundleReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetLlmBundle not implemented")
+}
+func (UnimplementedHoneypotServer) GenerateResponse(context.Context, *GenerateRequest) (*GenerateReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GenerateResponse not implemented")
 }
 func (UnimplementedHoneypotServer) mustEmbedUnimplementedHoneypotServer() {}
 func (UnimplementedHoneypotServer) testEmbeddedByValue()                  {}
@@ -2070,6 +2090,24 @@ func _Honeypot_GetLlmBundle_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_GenerateResponse_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GenerateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).GenerateResponse(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_GenerateResponse_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).GenerateResponse(ctx, req.(*GenerateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Honeypot_ServiceDesc is the grpc.ServiceDesc for Honeypot service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2292,6 +2330,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetLlmBundle",
 			Handler:    _Honeypot_GetLlmBundle_Handler,
+		},
+		{
+			MethodName: "GenerateResponse",
+			Handler:    _Honeypot_GenerateResponse_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

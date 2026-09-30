@@ -66,6 +66,24 @@ service Honeypot {
   rpc SaveMcp(McpRequest) returns (SaveReply) {}
   // SaveS3Request stores bounded metadata for one emulated MinIO/S3 operation.
   rpc SaveS3Request(S3Request) returns (SaveReply) {}
+  // SaveIcsProbe stores one bare-TCP probe against an ICS/SCADA port (Modbus,
+  // S7comm, DNP3, EtherNet/IP, OPC UA, ...). This is a measurement instrument,
+  // not a honeypot: it answers nothing and emulates nothing, it only records
+  // that something connected. Deliberately NOT an Attacker/AttackDatum row --
+  // see grpc_server/icsprobe.go.
+  rpc SaveIcsProbe(IcsProbeRequest) returns (SaveReply) {}
+  // SaveS7commSession stores one bounded S7comm (Siemens S7-300 PLC, TCP/102)
+  // session. Unlike SaveIcsProbe, this IS a real attack type: someone
+  // speaking S7comm to a fake PLC is an attacker, and stopping a PLC is
+  // unambiguous intent. Goes through the normal Attacker/AttackDatum path --
+  // see grpc_server/s7comm.go.
+  rpc SaveS7commSession(S7commSessionRequest) returns (SaveReply) {}
+  // SaveModbusSession stores one bounded Modbus/TCP (Schneider M221 class,
+  // TCP/502) session. Like SaveS7commSession and unlike SaveIcsProbe this IS
+  // a real attack type -- writing coils or holding registers on a device you
+  // do not own is an attempt to move a physical process -- so it goes through
+  // the normal Attacker/AttackDatum path. See grpc_server/modbus.go.
+  rpc SaveModbusSession(ModbusSessionRequest) returns (SaveReply) {}
   // GetLlmBundle serves the admin-authored LLM prompt-rule corpus (PRD 034).
   // Poll-and-cache, NOT a per-request lookup: the agent holds the compiled
   // bundle behind an atomic.Pointer and matches locally, so nothing on the
@@ -74,6 +92,10 @@ service Honeypot {
   // (rather than a new HTTP surface) because the agent already holds an
   // authenticated TLS channel with API_KEY in metadata.
   rpc GetLlmBundle (LlmBundleRequest) returns (LlmBundleReply) {}
+
+  // BYOK AI responses (PRD 041). The server answers attacker input with the
+  // user's own OpenRouter key; NONE tells the agent to use its existing path.
+  rpc GenerateResponse (GenerateRequest) returns (GenerateReply) {}
 }
 
 message SaveReply {
@@ -358,6 +380,8 @@ message HttpHeaderRequest {
 message ShellCommandRequest {
   string cmd = 1;
   string guid = 2;
+  string response_source = 3; // "" | "ai" | "ai_cached" | "local" | "authored" | "builtin"
+  string generation_id = 4;   // ai_generations.id when response_source starts with "ai" or is "local"
 }
 
 message OpenclawRequest {
@@ -597,4 +621,155 @@ message ResponseLookupRequest {
   string guid = 1;
   string command_type = 2;
   string lookup_key = 3;
+}
+
+// IcsProbeRequest carries one bare-TCP connection observed on an unused ICS
+// port: 102 S7comm, 502 Modbus, 2404 IEC 60870-5-104, 20000 DNP3, 44818
+// EtherNet/IP, 4840 OPC UA. (BACnet/IP 47808 is UDP and is out of scope.)
+// first_bytes is raw binary protocol data, not text -- bytes/bytea sidesteps
+// the NUL/invalid-UTF8 sanitization that text columns need (see this repo's
+// models/sanitize_utf8.go, threat_gg-e41; note this comment is also generated
+// into the agent repo, where that path does not resolve).
+message IcsProbeRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  uint32 port = 3;
+  bytes first_bytes = 4;
+  uint32 byte_count = 5;
+  uint32 ttfb_ms = 6;
+  uint32 duration_ms = 7;
+}
+
+// S7commOperation is one function-code/SZL request the emulated PLC handled
+// (or couldn't) during a session.
+//
+// handled=false plus raw is deliberately an unhandled-request queue: any
+// function code or SZL index the emulator could not answer, captured
+// verbatim. That is a ranked worklist of "attackers asked something we had
+// to guess at" -- the thing to triage first when extending the emulator.
+message S7commOperation {
+  string kind = 1;
+  string detail = 2;
+  bytes raw = 3;
+  bool handled = 4;
+}
+
+// S7commSessionRequest carries one bounded S7comm session against the
+// emulated Siemens S7-300 PLC on TCP/102.
+//
+// This shape is not arbitrary:
+//
+//   - reached_stage is a session progression funnel (connected / cotp /
+//     setup / identity / data / control). Where clients stop is the fidelity
+//     signal: one that completes the COTP handshake then immediately
+//     disconnects did not believe us. We have no reference hardware to diff
+//     against, so measuring where attackers give up is the substitute oracle.
+//   - operations, with its handled=false entries, is the unhandled-request
+//     queue described on S7commOperation above.
+//   - src_tsap / dst_tsap / negotiated_pdu_size fingerprint the client stack
+//     (snap7, libnodave, Step 7, bespoke). Captured traffic already shows
+//     scanners enumerating destination TSAPs for rack/slot.
+message S7commSessionRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string src_tsap = 3;
+  string dst_tsap = 4;
+  uint32 negotiated_pdu_size = 5;
+  string reached_stage = 6;
+  repeated S7commOperation operations = 7;
+  uint32 duration_ms = 8;
+}
+
+// ModbusOperation is one function-code request the emulated PLC handled (or
+// couldn't) during a session. Same contract as S7commOperation above:
+// handled=false plus raw is an unhandled-request queue, a ranked worklist of
+// what attackers asked that the emulator had to decline.
+message ModbusOperation {
+  string kind = 1;
+  string detail = 2;
+  bytes raw = 3;
+  bool handled = 4;
+}
+
+// ModbusSessionRequest carries one bounded Modbus/TCP session against the
+// emulated Schneider M221 on TCP/502.
+//
+// Unlike S7comm, Modbus/TCP has NO handshake -- it is stateless
+// request/response -- so there is no negotiated value to fingerprint the
+// client stack with, and nothing here corresponds to src_tsap / dst_tsap /
+// negotiated_pdu_size. The session-level fingerprint has to come from
+// behaviour across the connection instead:
+//
+//   - unit_ids are the distinct unit identifiers the client addressed, in the
+//     order first seen. This is the strongest reconnaissance signal the
+//     protocol offers: a client sweeping many ids is mapping a serial
+//     gateway, while one that goes straight to a single id already knows what
+//     it is talking to. Capped -- see maxModbusUnitIds in grpc_server.
+//   - first_transaction_id / last_transaction_id / request_count are recorded
+//     RAW, deliberately uninterpreted. Client libraries differ in how they
+//     seed and advance the MBAP transaction identifier (monotonic from 0 or
+//     1, pinned constant, random per request), and that is a real client-stack
+//     tell -- but we have no reference device to check a classification
+//     against, so the agent asserts no label. "Scanner sweeping unit ids" and
+//     "txid pinned to zero" are DERIVED at query time in the operator
+//     fidelity views, not baked into this wire format. Same reasoning as
+//     threat_gg-4zzd.3's "mark invented fields": declining to guess beats
+//     recording a guess that later reads as ground truth.
+//   - reached_stage is the progression funnel (connected / engaged /
+//     identity / read / write), carrying the same fidelity meaning it does
+//     for S7comm: where a client stops is where it stopped believing us.
+//     "write" is the high-signal terminal stage -- an attempt to change
+//     physical process state.
+//   - operations is the unhandled-request queue described on ModbusOperation.
+message ModbusSessionRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  repeated uint32 unit_ids = 3;
+  uint32 first_transaction_id = 4;
+  uint32 last_transaction_id = 5;
+  uint32 request_count = 6;
+  string reached_stage = 7;
+  repeated ModbusOperation operations = 8;
+  uint32 duration_ms = 9;
+}
+
+message GenerateRequest {
+  string guid = 1;        // attacker session GUID
+  string protocol = 2;    // "ssh" (phase 1), "postgres" | "mssql" (phase 2)
+  string input = 3;       // raw command line / query
+  int32 deadline_ms = 4;  // agent's remaining budget
+}
+
+enum GenerateSource {
+  GENERATE_SOURCE_UNSPECIFIED = 0;
+  GENERATE_SOURCE_NONE = 1;
+  GENERATE_SOURCE_AI = 2;
+  GENERATE_SOURCE_AI_CACHED = 3;
+  GENERATE_SOURCE_LOCAL = 4;
+}
+
+message Terminal {
+  string stdout = 1;
+  int32 exit_code = 2;
+  string cwd = 3;
+  string hostname = 4;
+}
+
+message Column { string name = 1; string type = 2; }
+message Row { repeated string values = 1; repeated bool nulls = 2; }
+message SqlError { string code = 1; string message = 2; }
+message ResultSet {                   // phase 2
+  repeated Column columns = 1;
+  repeated Row rows = 2;
+  string command_tag = 3;
+  SqlError error = 4;
+}
+
+message GenerateReply {
+  GenerateSource source = 1;
+  oneof body {
+    Terminal terminal = 2;
+    ResultSet result_set = 3;
+  }
+  string generation_id = 4;           // ai_generations.id (ours)
 }
