@@ -268,6 +268,29 @@ func errorResponse(number uint32, message string) []byte {
 	return errorResponseWith(number, 1, 14, message)
 }
 
+// parseSQLBatch decodes a SQL batch message to its query text, skipping the
+// ALL_HEADERS block that TDS 7.2+ clients send first.
 func parseSQLBatch(payload []byte) string {
-	return strings.TrimSpace(decodeUCS2(payload))
+	return strings.TrimSpace(decodeUCS2(payload[allHeadersLen(payload):]))
+}
+
+// allHeadersLen is the length of the leading ALL_HEADERS block (MS-TDS
+// 2.2.5.3), or 0 when the message is a bare batch, as TDS 7.1 clients send
+// it. The block is recognised only when its TotalLength fits the message and
+// its first header is well formed with a known type (1 query notifications,
+// 2 transaction descriptor, 3 trace activity); anything else is query text.
+// Lengths are compared as uint64 so a huge value cannot overflow int on 32-bit.
+func allHeadersLen(payload []byte) int {
+	const first = 4 // the first header follows TotalLength
+	if len(payload) < first+6 {
+		return 0
+	}
+	total := uint64(binary.LittleEndian.Uint32(payload[0:4]))
+	headerLen := uint64(binary.LittleEndian.Uint32(payload[first : first+4]))
+	headerType := binary.LittleEndian.Uint16(payload[first+4 : first+6])
+	if total < 4 || total > uint64(len(payload)) || headerLen < 6 || headerLen > total-first ||
+		headerType < 1 || headerType > 3 {
+		return 0
+	}
+	return int(total)
 }

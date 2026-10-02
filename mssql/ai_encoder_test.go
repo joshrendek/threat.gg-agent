@@ -24,9 +24,7 @@ import (
 // (item 5).
 
 // byQuery answers each query with the result set of the first key its text
-// contains; any other query gets the fallback. Contains, not equality:
-// go-mssqldb prefixes each batch with the TDS ALL_HEADERS block, which
-// parseSQLBatch does not strip today.
+// contains; any other query gets the fallback.
 func byQuery(fallback *proto.ResultSet, answers map[string]*proto.ResultSet) sqlai.Generate {
 	return func(in *proto.GenerateRequest, _ time.Duration) (*proto.GenerateReply, error) {
 		rs := fallback
