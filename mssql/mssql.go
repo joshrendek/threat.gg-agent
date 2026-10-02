@@ -12,6 +12,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
+	"github.com/joshrendek/threat.gg-agent/sqlai"
 	"github.com/rs/zerolog"
 	uuid "github.com/satori/go.uuid"
 )
@@ -40,8 +41,9 @@ var (
 	defaultLookup    = func(commandType, command string) (string, bool) {
 		return cmdresp.LookupWithin(commandType, command, overrideLookupTimeout)
 	}
-	defaultPersistSlots    = make(chan struct{}, persistSlotsN)
-	defaultConnectionSlots = make(chan struct{}, maxConnections)
+	defaultGenerate        sqlai.Generate = persistence.GenerateResponse
+	defaultPersistSlots                   = make(chan struct{}, persistSlotsN)
+	defaultConnectionSlots                = make(chan struct{}, maxConnections)
 )
 
 var _ honeypots.Honeypot = (*honeypot)(nil)
@@ -59,6 +61,7 @@ type honeypot struct {
 	saveLogin       func(*proto.MssqlRequest) error
 	saveQuery       func(*proto.QueryRequest) error
 	lookup          func(commandType, command string) (string, bool)
+	generate        sqlai.Generate
 }
 
 func New() honeypots.Honeypot {
@@ -139,6 +142,13 @@ func (h *honeypot) effectiveLookup() func(commandType, command string) (string, 
 	return defaultLookup
 }
 
+func (h *honeypot) effectiveGenerate() sqlai.Generate {
+	if h.generate != nil {
+		return h.generate
+	}
+	return defaultGenerate
+}
+
 func (h *honeypot) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	started := time.Now()
@@ -181,6 +191,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	}
 
 	overrides := make(map[string]overrideResult)
+	aiState := sqlai.Unknown
 	for queryCount := 0; queryCount < h.effectiveQueryLimit() && time.Now().Before(sessionEnd); queryCount++ {
 		h.setDeadline(conn, sessionEnd)
 		typeID, payload, err = readMessage(conn)
@@ -203,23 +214,33 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		h.persist(func() error {
 			return saveQ(&proto.QueryRequest{Guid: guid, Query: query, CommandType: "mssql"})
 		})
-		normalized := normalizeQuery(query)
-		authored, ok := "", false
-		if cached, exists := overrides[normalized]; exists {
-			authored, ok = cached.response, cached.matched
-		} else {
-			authored, ok = h.effectiveLookup()("mssql", normalized)
-			if len(overrides) < overrideCacheEntries {
-				overrides[normalized] = overrideResult{response: authored, matched: ok}
+
+		// AI first (spec §2 precedence, §15). The session state lives on this
+		// goroutine, since a TDS session is one connection. The legacy lookup
+		// is bounded at overrideLookupTimeout (500 ms), already under
+		// sqlai.DegradedLookup, so a slow generate call needs no shorter one.
+		ans := sqlai.Ask(h.effectiveGenerate(), "mssql", guid, query, aiState)
+		aiState = ans.State
+		reply := mssqlAIResponse(ans.ResultSet)
+		if reply == nil {
+			normalized := normalizeQuery(query)
+			authored, ok := "", false
+			if cached, exists := overrides[normalized]; exists {
+				authored, ok = cached.response, cached.matched
+			} else {
+				authored, ok = h.effectiveLookup()("mssql", normalized)
+				if len(overrides) < overrideCacheEntries {
+					overrides[normalized] = overrideResult{response: authored, matched: ok}
+				}
+			}
+			if ok {
+				reply = resultResponse("result", []string{authored})
+			} else {
+				reply = responseForQuery(query)
 			}
 		}
 		h.setDeadline(conn, sessionEnd)
-		if ok {
-			err = writeMessage(conn, packetReply, resultResponse("result", []string{authored}))
-		} else {
-			err = writeMessage(conn, packetReply, responseForQuery(query))
-		}
-		if err != nil {
+		if err = writeMessage(conn, packetReply, reply); err != nil {
 			return
 		}
 	}

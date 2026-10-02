@@ -333,7 +333,7 @@ func TestNoTestReassignsPackageDefaults(t *testing.T) {
 		if strings.HasPrefix(trimmed, "//") {
 			continue
 		}
-		for _, name := range []string{"defaultSaveLogin", "defaultSaveQuery", "defaultLookup", "defaultPersistSlots", "defaultConnectionSlots"} {
+		for _, name := range []string{"defaultSaveLogin", "defaultSaveQuery", "defaultLookup", "defaultGenerate", "defaultPersistSlots", "defaultConnectionSlots"} {
 			if strings.HasPrefix(trimmed, name+" =") || strings.HasPrefix(trimmed, name+"=") {
 				t.Errorf("mssql_test.go:%d assigns to %s; set the field on the honeypot struct instead (threat_gg-x59t)", i+1, name)
 			}

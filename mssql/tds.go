@@ -196,12 +196,19 @@ func appendU64(dst []byte, value uint64) []byte {
 	return binary.LittleEndian.AppendUint64(dst, value)
 }
 
+// bVarChar is a TDS B_VARCHAR: a length byte counting UTF-16 code units, then
+// UTF-16LE. A rune count desyncs the stream for any non-BMP character.
 func bVarChar(s string) []byte {
-	runes := []rune(s)
-	if len(runes) > 255 {
-		runes = runes[:255]
+	units := utf16.Encode([]rune(s))
+	if len(units) > 255 {
+		units = units[:255]
 	}
-	return append([]byte{byte(len(runes))}, encodeUCS2(string(runes))...)
+	b := make([]byte, 1+len(units)*2)
+	b[0] = byte(len(units))
+	for i, u := range units {
+		binary.LittleEndian.PutUint16(b[1+i*2:], u)
+	}
+	return b
 }
 
 func postLoginResponse(envDatabase string) []byte {
@@ -256,19 +263,9 @@ func resultResponse(column string, rows []string) []byte {
 	return appendDone(payload, 0x0010, uint64(len(rows))) // DONE_COUNT
 }
 
+// errorResponse is the built-in ERROR token: state 1, class 14, as before.
 func errorResponse(number uint32, message string) []byte {
-	msg := encodeUCS2(message)
-	body := appendU32(nil, number)
-	body = append(body, 1, 14)
-	body = appendU16(body, uint16(len([]rune(message))))
-	body = append(body, msg...)
-	body = append(body, bVarChar("SQLSERVER01")...)
-	body = append(body, bVarChar("")...)
-	body = appendU32(body, 1)
-	payload := []byte{0xaa}
-	payload = appendU16(payload, uint16(len(body)))
-	payload = append(payload, body...)
-	return appendDone(payload, 0x0002, 0) // DONE_ERROR
+	return errorResponseWith(number, 1, 14, message)
 }
 
 func parseSQLBatch(payload []byte) string {
