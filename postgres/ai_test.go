@@ -93,7 +93,7 @@ func startAIPostgresMode(t *testing.T, mode pgx.QueryExecMode) *pgx.Conn {
 	t.Helper()
 	// pgx refuses a connection whose server does not report
 	// standard_conforming_strings=on (ruling P3).
-	srv, err := wire.NewServer(handler, wire.GlobalParameters(wire.Parameters{"standard_conforming_strings": "on"}))
+	srv, err := wire.NewServer(handler, wire.GlobalParameters(startupParameters))
 	require.NoError(t, err)
 	srv.Auth = wire.ClearTextPassword(func(ctx context.Context, _, _ string) (context.Context, bool, error) {
 		return context.WithValue(ctx, "guid", uuid.NewV4()), true, nil
@@ -406,6 +406,29 @@ func TestPostgresHandlerAsksAIBeforeAuthoredLookup(t *testing.T) {
 	require.True(t, stateful >= 0 && ai > stateful && lookup > ai, "order must be: _pgenv state machine, AI, authored lookup (spec §2 precedence)")
 }
 
+// The production server and the test harness advertise the same startup parameters;
+// pgx refuses the simple protocol unless standard_conforming_strings=on is reported,
+// and a real PostgreSQL always sends these ParameterStatus values.
+func TestStartupParametersMatchRealPostgres(t *testing.T) {
+	for key, want := range map[string]string{
+		"standard_conforming_strings": "on",
+		"client_encoding":             "UTF8",
+		"integer_datetimes":           "on",
+		"DateStyle":                   "ISO, MDY",
+		"TimeZone":                    "UTC",
+	} {
+		require.Equal(t, want, startupParameters[wire.ParameterStatus(key)], "startup parameter %s", key)
+	}
+	// A pgx client over the SIMPLE protocol is accepted by the harness, which uses
+	// startupParameters; without standard_conforming_strings=on pgx refuses the query
+	// with "simple protocol queries must be run with standard_conforming_strings=on".
+	conn := startAIPostgresMode(t, pgx.QueryExecModeSimpleProtocol)
+	rows, err := conn.Query(context.Background(), "select 1")
+	require.NoError(t, err)
+	rows.Close()
+	require.NoError(t, rows.Err())
+}
+
 // TestLivePostgresProbe runs only for the deploy check (Task 12):
 // PG_PROBE_ADDR=<honeypot-ip>:5432 go test ./postgres -run TestLivePostgresProbe -v -count=1
 func TestLivePostgresProbe(t *testing.T) {
@@ -415,7 +438,10 @@ func TestLivePostgresProbe(t *testing.T) {
 	}
 	cfg, err := pgx.ParseConfig("postgres://postgres:probe@" + addr + "/postgres?sslmode=disable")
 	require.NoError(t, err)
-	cfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	// Extended protocol without Describe: works against both the old fleet agent (which never
+	// advertised standard_conforming_strings, so pgx refuses the simple protocol) and the new one,
+	// so the before/after deploy probes compare like with like.
+	cfg.DefaultQueryExecMode = pgx.QueryExecModeExec
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	conn, err := pgx.ConnectConfig(ctx, cfg)

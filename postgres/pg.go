@@ -64,7 +64,7 @@ func (h *honeypot) Start() {
 		}
 		return ctx, true, nil
 	})
-	server, _ := wire.NewServer(handler)
+	server, _ := wire.NewServer(handler, wire.GlobalParameters(startupParameters))
 	server.Auth = auth
 	// Advertise a server_version in the startup handshake. Without this, psql-wire omits the
 	// parameter entirely (a honeypot tell — a real postgres always sends it). Must stay
@@ -76,6 +76,18 @@ func (h *honeypot) Start() {
 
 	}
 	server.ListenAndServe(":" + port)
+}
+
+// startupParameters are the ParameterStatus values a real PostgreSQL sends in the
+// startup handshake. psql-wire omits them unless told, which is a honeypot tell and
+// also breaks pgx clients: pgx refuses the simple protocol unless the server
+// reports standard_conforming_strings=on. The test harness advertises the same set.
+var startupParameters = wire.Parameters{
+	"standard_conforming_strings": "on",
+	"client_encoding":             "UTF8",
+	"DateStyle":                   "ISO, MDY",
+	"integer_datetimes":           "on",
+	"TimeZone":                    "UTC",
 }
 
 func handler(ctx context.Context, query string) (wire.PreparedStatements, error) {
