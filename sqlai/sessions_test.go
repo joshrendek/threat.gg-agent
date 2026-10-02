@@ -19,13 +19,13 @@ func TestSessionsTieEvictsSmallestKey(t *testing.T) {
 		now := time.Unix(1_800_000_000, 0)
 		s.now = func() time.Time { return now }
 		for _, id := range orders[i%len(orders)] {
-			s.Set(id, Live)
+			s.Set(id, Session{State: Live})
 		}
-		s.Set("d", Live) // same timestamp as the rest; one entry must go
-		require.Equal(t, Unknown, s.Get("a"), "iteration %d", i)
-		require.Equal(t, Live, s.Get("b"), "iteration %d", i)
-		require.Equal(t, Live, s.Get("c"), "iteration %d", i)
-		require.Equal(t, Live, s.Get("d"), "iteration %d: the new entry is kept", i)
+		s.Set("d", Session{State: Live}) // same timestamp as the rest; one entry must go
+		require.Equal(t, Unknown, s.Get("a").State, "iteration %d", i)
+		require.Equal(t, Live, s.Get("b").State, "iteration %d", i)
+		require.Equal(t, Live, s.Get("c").State, "iteration %d", i)
+		require.Equal(t, Live, s.Get("d").State, "iteration %d: the new entry is kept", i)
 	}
 }
 
@@ -33,13 +33,13 @@ func TestSessionsGetRefreshesAge(t *testing.T) {
 	s := NewSessions(10, time.Minute)
 	now := time.Unix(1_800_000_000, 0)
 	s.now = func() time.Time { return now }
-	s.Set("a", Live)
+	s.Set("a", Session{State: Live})
 	now = now.Add(50 * time.Second)
-	require.Equal(t, Live, s.Get("a"))
+	require.Equal(t, Live, s.Get("a").State)
 	now = now.Add(50 * time.Second) // 100s after Set, 50s after the last Get
-	require.Equal(t, Live, s.Get("a"), "a session in use does not expire mid-session")
+	require.Equal(t, Live, s.Get("a").State, "a session in use does not expire mid-session")
 	now = now.Add(61 * time.Second)
-	require.Equal(t, Unknown, s.Get("a"), "idle past the TTL expires")
+	require.Equal(t, Unknown, s.Get("a").State, "idle past the TTL expires")
 }
 
 func TestSessionsNonPositiveTTLUsesDefault(t *testing.T) {
@@ -47,11 +47,11 @@ func TestSessionsNonPositiveTTLUsesDefault(t *testing.T) {
 		s := NewSessions(2, ttl)
 		now := time.Unix(1_800_000_000, 0)
 		s.now = func() time.Time { return now }
-		s.Set("a", Live)
+		s.Set("a", Session{State: Live})
 		now = now.Add(DefaultSessionTTL - time.Second)
-		require.Equal(t, Live, s.Get("a"), "ttl %v", ttl)
+		require.Equal(t, Live, s.Get("a").State, "ttl %v", ttl)
 		now = now.Add(DefaultSessionTTL + time.Second)
-		require.Equal(t, Unknown, s.Get("a"), "ttl %v", ttl)
+		require.Equal(t, Unknown, s.Get("a").State, "ttl %v", ttl)
 	}
 }
 
@@ -78,7 +78,7 @@ func TestSessionsConcurrent(t *testing.T) {
 			for i := 0; i < 3000; i++ {
 				id := fmt.Sprintf("s%d", (g*7+i)%40)
 				out := Ask(gen, "postgres", id, "SELECT 1", s.Get(id))
-				s.Set(id, out.State)
+				s.Set(id, out.Session)
 				if i%500 == 0 {
 					s.Reset()
 				}

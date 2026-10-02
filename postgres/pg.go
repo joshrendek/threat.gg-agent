@@ -102,7 +102,7 @@ func handler(ctx context.Context, query string) (wire.PreparedStatements, error)
 	// AI first (spec §2 precedence, §15). Unanswered → today's path unchanged.
 	ai, answered := aiStatement(uid.String(), raw)
 	if answered {
-		return ai.stmt, ai.err
+		return ai.stmt, nil
 	}
 
 	if strings.Contains(query, "create role") {
@@ -116,8 +116,9 @@ func handler(ctx context.Context, query string) (wire.PreparedStatements, error)
 	// FRAMES the stored plain text: row-returning queries render as a single ("result" text)
 	// row; set/begin-style statements render as a CommandComplete tag. On miss/error/oversize
 	// it returns ok=false and we fall through to the hardcoded responses map, so behavior
-	// never regresses if the server is unreachable. After a slow generate call the lookup
-	// gets sqlai.DegradedLookup instead of its normal 3 s.
+	// never regresses if the server is unreachable. After a slow generate call, or an
+	// unusable answer in a Live session, the lookup gets sqlai.DegradedLookup instead of
+	// its normal 3 s.
 	lookup := lookupServerStatement
 	if ai.degraded {
 		lookup = func(q string) (wire.PreparedStatements, bool) {

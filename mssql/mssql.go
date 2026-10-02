@@ -191,7 +191,7 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	}
 
 	overrides := make(map[string]overrideResult)
-	aiState := sqlai.Unknown
+	var aiSession sqlai.Session
 	for queryCount := 0; queryCount < h.effectiveQueryLimit() && time.Now().Before(sessionEnd); queryCount++ {
 		h.setDeadline(conn, sessionEnd)
 		typeID, payload, err = readMessage(conn)
@@ -219,9 +219,13 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 		// goroutine, since a TDS session is one connection. The legacy lookup
 		// is bounded at overrideLookupTimeout (500 ms), already under
 		// sqlai.DegradedLookup, so a slow generate call needs no shorter one.
-		ans := sqlai.Ask(h.effectiveGenerate(), "mssql", guid, query, aiState)
-		aiState = ans.State
-		reply := mssqlAIResponse(ans.ResultSet)
+		ans := sqlai.Ask(h.effectiveGenerate(), "mssql", guid, query, aiSession)
+		aiSession = ans.Session
+		reply, discarded := mssqlAIResponse(ans.ResultSet)
+		if discarded != "" {
+			// Billed by the server but never seen by the attacker.
+			h.logger.Warn().Str("generation_id", ans.GenerationID).Str("protocol", "mssql").Str("reason", discarded).Msg("discarded AI reply")
+		}
 		if reply == nil {
 			normalized := normalizeQuery(query)
 			authored, ok := "", false

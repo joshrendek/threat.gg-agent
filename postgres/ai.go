@@ -1,15 +1,18 @@
 package postgres
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
 	wire "github.com/jeroenrinzema/psql-wire"
 	pgcodes "github.com/jeroenrinzema/psql-wire/codes"
 	psqlerr "github.com/jeroenrinzema/psql-wire/errors"
+	"github.com/rs/zerolog"
 
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
@@ -27,33 +30,56 @@ var getCommandResponseWithin = persistence.GetCommandResponseWithin
 // aiSessions remembers per attacker session whether the server answers with AI.
 var aiSessions = sqlai.NewSessions(maxPostgresSessions, postgresSessionTTL)
 
+// aiLogger reports AI replies the agent discarded. It never logs query or
+// cell text. Swappable for tests.
+var aiLogger = zerolog.New(os.Stdout).With().Caller().Str("honeypot", "postgres").Logger()
+
 type aiAnswer struct {
 	stmt     wire.PreparedStatements
-	err      error
 	degraded bool
 }
 
 // aiStatement asks the server for a generated answer to raw (the query as the
 // client sent it). ok=false means use the legacy path; a.degraded then asks
-// for the short lookup deadline.
+// for the short lookup deadline. That happens when this ask already took
+// longer than a first ask may (a late NONE, or a slow error), or when a Live
+// session's ask produced nothing usable, so one query never waits the
+// generate budget plus the full legacy lookup.
 func aiStatement(guid, raw string) (aiAnswer, bool) {
-	out := sqlai.Ask(generateResponse, "postgres", guid, raw, aiSessions.Get(guid))
-	aiSessions.Set(guid, out.State)
+	before := aiSessions.Get(guid)
+	start := time.Now()
+	out := sqlai.Ask(generateResponse, "postgres", guid, raw, before)
+	elapsed := time.Since(start)
+	aiSessions.Set(guid, out.Session)
+	fallback := aiAnswer{degraded: out.Degraded || elapsed > sqlai.FirstBudget || before.State == sqlai.Live}
 	if out.ResultSet == nil {
-		return aiAnswer{degraded: out.Degraded}, false
+		return fallback, false
 	}
 	if e := out.ResultSet.GetError(); e != nil {
 		pgErr := postgresAIError(e)
 		if pgErr == nil {
-			return aiAnswer{}, false
+			logDiscardedAIReply(out.GenerationID, "error_not_mapped")
+			return fallback, false
 		}
-		return aiAnswer{err: pgErr}, true
+		// The error comes from the statement, never the handler: psql-wire
+		// then reports it at Execute, after Parse/Describe/Bind succeeded,
+		// so extended-protocol clients stay in sync through Sync.
+		return aiAnswer{stmt: wire.Prepared(wire.NewStatement(func(context.Context, wire.DataWriter, []wire.Parameter) error {
+			return pgErr
+		}))}, true
 	}
 	resp, ok := postgresAIResponse(out.ResultSet)
 	if !ok {
-		return aiAnswer{}, false
+		logDiscardedAIReply(out.GenerationID, "result_not_encodable")
+		return fallback, false
 	}
 	return aiAnswer{stmt: structuredStatement(resp)}, true
+}
+
+// logDiscardedAIReply records an answered reply the agent could not put on
+// the wire: the server billed it but the attacker got the legacy answer.
+func logDiscardedAIReply(generationID, reason string) {
+	aiLogger.Warn().Str("generation_id", generationID).Str("protocol", "postgres").Str("reason", reason).Msg("discarded AI reply")
 }
 
 // postgresAIError is the ErrorResponse for a mapped condition, or nil when the

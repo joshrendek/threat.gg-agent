@@ -31,6 +31,10 @@ const (
 	// MaxQueryBytes caps the raw query sent to the server. A longer query is
 	// never sent; the caller uses the legacy path.
 	MaxQueryBytes = 4096
+	// MaxSlowErrors is how many slow or unreachable generate calls in a row
+	// turn a Live session Off, so a server brownout cannot charge every
+	// query in a session the full LiveBudget plus the legacy lookup.
+	MaxSlowErrors = 3
 )
 
 // State is what a session has learned about AI.
@@ -42,13 +46,23 @@ const (
 	Off                  // no AI for this session: never ask again
 )
 
-// Outcome is one ask. ResultSet is non-nil only for an answered reply.
+// Session is what one attacker session has learned about AI. The zero value
+// is a session that has asked nothing yet.
+type Session struct {
+	State State
+	// slowErrors counts consecutive slow or unreachable generate calls while
+	// Live; MaxSlowErrors of them turn the session Off.
+	slowErrors int
+}
+
+// Outcome is one ask. ResultSet is non-nil only for an answered reply. The
+// embedded Session is the session after this ask; store it for the next one.
 type Outcome struct {
+	Session
 	ResultSet    *proto.ResultSet
 	Source       string // "ai", "ai_cached" or "local" when answered
 	GenerationID string
-	State        State // the session's state after this ask
-	Degraded     bool  // the server was slow or unreachable: use DegradedLookup
+	Degraded     bool // the server was slow or unreachable: use DegradedLookup
 }
 
 var answeredSources = map[proto.GenerateSource]string{
@@ -61,10 +75,13 @@ var answeredSources = map[proto.GenerateSource]string{
 // reply that is answered, or a NONE carrying a ledger id (the server has AI on
 // for this protocol), makes the session live; a first NONE without an id, or
 // any first-call error, turns AI off for the session, so a user without AI
-// pays exactly one fast RPC per session. A blank or oversized query makes no
-// call and leaves the state unchanged.
-func Ask(gen Generate, protocol, guid, query string, st State) Outcome {
-	out := Outcome{State: st}
+// pays exactly one fast RPC per session. A Live session turns Off after
+// MaxSlowErrors slow or unreachable calls in a row; any reply resets that
+// count. A blank or oversized query makes no call and leaves the session
+// unchanged.
+func Ask(gen Generate, protocol, guid, query string, s Session) Outcome {
+	out := Outcome{Session: s}
+	st := s.State
 	if gen == nil || st == Off || len(query) > MaxQueryBytes || strings.TrimSpace(query) == "" {
 		return out
 	}
@@ -77,11 +94,18 @@ func Ask(gen Generate, protocol, guid, query string, st State) Outcome {
 	}, budget)
 	if err != nil {
 		out.Degraded = IsServerSlow(err)
-		if st == Unknown {
+		switch {
+		case st == Unknown:
 			out.State = Off
+		case out.Degraded:
+			out.slowErrors++
+			if out.slowErrors >= MaxSlowErrors {
+				out.State, out.slowErrors = Off, 0
+			}
 		}
 		return out
 	}
+	out.slowErrors = 0
 	source, answered := answeredSources[reply.GetSource()]
 	switch {
 	case answered || reply.GetGenerationId() != "":
@@ -132,7 +156,7 @@ func Clean(s string, cell bool) string {
 	}, s)
 }
 
-// Sessions remembers each session's State, bounded in size and age.
+// Sessions remembers each Session, bounded in size and age.
 type Sessions struct {
 	mu    sync.Mutex
 	max   int
@@ -142,8 +166,8 @@ type Sessions struct {
 }
 
 type sessionEntry struct {
-	state State
-	seen  time.Time
+	session Session
+	seen    time.Time
 }
 
 // DefaultSessionTTL is used when NewSessions is given a ttl of zero or less.
@@ -162,32 +186,32 @@ func NewSessions(bound int, ttl time.Duration) *Sessions {
 	return &Sessions{max: bound, ttl: ttl, now: time.Now, items: map[string]sessionEntry{}}
 }
 
-// Get returns the session's state, or Unknown when it is absent or expired.
-// A hit refreshes the entry's age, so a live session that keeps querying
-// never expires mid-session.
-func (s *Sessions) Get(id string) State {
+// Get returns the session, or the zero Session (Unknown) when it is absent
+// or expired. A hit refreshes the entry's age, so a live session that keeps
+// querying never expires mid-session.
+func (s *Sessions) Get(id string) Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
 	e, ok := s.items[id]
 	if !ok || now.Sub(e.seen) > s.ttl {
 		delete(s.items, id)
-		return Unknown
+		return Session{}
 	}
 	e.seen = now
 	s.items[id] = e
-	return e.state
+	return e.session
 }
 
-// Set records the session's state and refreshes its age. Past the bound the
+// Set records the session and refreshes its age. Past the bound the
 // least recently used entry is evicted (ties go to the smaller key, so the
 // choice is deterministic); the scan is O(n) at the bound, which is acceptable
 // for the configured bound.
-func (s *Sessions) Set(id string, st State) {
+func (s *Sessions) Set(id string, sess Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	s.items[id] = sessionEntry{state: st, seen: now}
+	s.items[id] = sessionEntry{session: sess, seen: now}
 	if len(s.items) <= s.max {
 		return
 	}

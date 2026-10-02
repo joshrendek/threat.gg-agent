@@ -242,9 +242,13 @@ func TestMSSQLUnusableAIReplyFallsBack(t *testing.T) {
 		"bad date":     {Columns: []*proto.Column{{Name: "d", Type: "date"}}, Rows: []*proto.Row{{Values: []string{"0000-01-01"}}}},
 		"short row":    {Columns: []*proto.Column{{Name: "a", Type: "text"}, {Name: "b", Type: "text"}}, Rows: []*proto.Row{{Values: []string{"x"}}}},
 	} {
-		require.Nil(t, mssqlAIResponse(rs), name)
+		payload, discarded := mssqlAIResponse(rs)
+		require.Nil(t, payload, name)
+		require.NotEmpty(t, discarded, name)
 	}
-	require.Nil(t, mssqlAIResponse(nil))
+	payload, discarded := mssqlAIResponse(nil)
+	require.Nil(t, payload)
+	require.Empty(t, discarded, "no reply is not a discarded reply")
 	client, _ := startLoggedInPipe(t, &honeypot{logger: zerolog.Nop(), queryLimit: 1,
 		lookup:   func(string, string) (string, bool) { return "", false },
 		generate: aiResult(&proto.ResultSet{Error: &proto.SqlError{Code: "nope", Message: "x"}}),
@@ -256,7 +260,7 @@ func TestMSSQLUnusableAIReplyFallsBack(t *testing.T) {
 }
 
 func TestMSSQLAICleansServerText(t *testing.T) {
-	payload := mssqlAIResponse(&proto.ResultSet{Columns: []*proto.Column{{Name: "n\x1bame", Type: "text"}}, Rows: []*proto.Row{{Values: []string{"red\x1b[31m"}}}})
+	payload, _ := mssqlAIResponse(&proto.ResultSet{Columns: []*proto.Column{{Name: "n\x1bame", Type: "text"}}, Rows: []*proto.Row{{Values: []string{"red\x1b[31m"}}}})
 	require.NotNil(t, payload)
 	require.NotContains(t, string(payload), string(encodeUCS2("\x1b")))
 	require.Contains(t, string(payload), string(encodeUCS2("red[31m")))
