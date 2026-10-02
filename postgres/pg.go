@@ -14,6 +14,7 @@ import (
 
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
+	"github.com/joshrendek/threat.gg-agent/sqlai"
 
 	uuid "github.com/satori/go.uuid"
 
@@ -78,7 +79,8 @@ func (h *honeypot) Start() {
 }
 
 func handler(ctx context.Context, query string) (wire.PreparedStatements, error) {
-	// simple checks
+	// The model sees the query as the client sent it; the legacy paths match lowercase.
+	raw := query
 	query = strings.ToLower(query)
 	uid := ctx.Value("guid").(uuid.UUID)
 	q := &proto.QueryRequest{
@@ -97,6 +99,12 @@ func handler(ctx context.Context, query string) (wire.PreparedStatements, error)
 		return structuredStatement(response), nil
 	}
 
+	// AI first (spec §2 precedence, §15). Unanswered → today's path unchanged.
+	ai, answered := aiStatement(uid.String(), raw)
+	if answered {
+		return ai.stmt, ai.err
+	}
+
 	if strings.Contains(query, "create role") {
 		return wire.Prepared(wire.NewStatement(func(ctx context.Context, writer wire.DataWriter, parameters []wire.Parameter) error {
 			return writer.Complete("CREATE ROLE")
@@ -108,8 +116,15 @@ func handler(ctx context.Context, query string) (wire.PreparedStatements, error)
 	// FRAMES the stored plain text: row-returning queries render as a single ("result" text)
 	// row; set/begin-style statements render as a CommandComplete tag. On miss/error/oversize
 	// it returns ok=false and we fall through to the hardcoded responses map, so behavior
-	// never regresses if the server is unreachable.
-	if stmt, ok := lookupServerStatement(query); ok {
+	// never regresses if the server is unreachable. After a slow generate call the lookup
+	// gets sqlai.DegradedLookup instead of its normal 3 s.
+	lookup := lookupServerStatement
+	if ai.degraded {
+		lookup = func(q string) (wire.PreparedStatements, bool) {
+			return lookupServerStatementWithin(q, sqlai.DegradedLookup)
+		}
+	}
+	if stmt, ok := lookup(query); ok {
 		return stmt, nil
 	}
 
