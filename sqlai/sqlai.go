@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"google.golang.org/grpc/codes"
@@ -112,15 +113,19 @@ func IsServerSlow(err error) bool {
 
 // Clean makes server-supplied text safe to put on the wire to an attacker's
 // client: invalid UTF-8 is repaired, and ESC, DEL and every other C0 or C1
-// control is dropped, except newline and tab in cell values. The server
-// rejects such text already; this is the agent's own guarantee.
+// control is dropped, except newline and tab in cell values. Unicode format
+// characters (category Cf: bidi overrides and isolates, zero-width marks, BOM)
+// and the line and paragraph separators U+2028/U+2029 are dropped too, since
+// cells reach psql and sqlcmd terminals. The server rejects such text already;
+// this is the agent's own guarantee.
 func Clean(s string, cell bool) string {
 	s = strings.ToValidUTF8(s, "�")
 	return strings.Map(func(r rune) rune {
 		if cell && (r == '\n' || r == '\t') {
 			return r
 		}
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) ||
+			r == 0x2028 || r == 0x2029 || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
@@ -141,24 +146,43 @@ type sessionEntry struct {
 	seen  time.Time
 }
 
-func NewSessions(max int, ttl time.Duration) *Sessions {
-	if max < 1 {
-		max = 1
+// DefaultSessionTTL is used when NewSessions is given a ttl of zero or less.
+const DefaultSessionTTL = 30 * time.Minute
+
+// NewSessions returns a Sessions holding at most bound entries (minimum 1),
+// each forgotten after ttl without use. A ttl of zero or less is replaced by
+// DefaultSessionTTL.
+func NewSessions(bound int, ttl time.Duration) *Sessions {
+	if bound < 1 {
+		bound = 1
 	}
-	return &Sessions{max: max, ttl: ttl, now: time.Now, items: map[string]sessionEntry{}}
+	if ttl <= 0 {
+		ttl = DefaultSessionTTL
+	}
+	return &Sessions{max: bound, ttl: ttl, now: time.Now, items: map[string]sessionEntry{}}
 }
 
+// Get returns the session's state, or Unknown when it is absent or expired.
+// A hit refreshes the entry's age, so a live session that keeps querying
+// never expires mid-session.
 func (s *Sessions) Get(id string) State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.now()
 	e, ok := s.items[id]
-	if !ok || s.now().Sub(e.seen) > s.ttl {
+	if !ok || now.Sub(e.seen) > s.ttl {
 		delete(s.items, id)
 		return Unknown
 	}
+	e.seen = now
+	s.items[id] = e
 	return e.state
 }
 
+// Set records the session's state and refreshes its age. Past the bound the
+// least recently used entry is evicted (ties go to the smaller key, so the
+// choice is deterministic); the scan is O(n) at the bound, which is acceptable
+// for the configured bound.
 func (s *Sessions) Set(id string, st State) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -176,7 +200,7 @@ func (s *Sessions) Set(id string, st State) {
 			delete(s.items, k)
 			continue
 		}
-		if oldest == "" || e.seen.Before(oldestAt) {
+		if oldest == "" || e.seen.Before(oldestAt) || (e.seen.Equal(oldestAt) && k < oldest) {
 			oldest, oldestAt = k, e.seen
 		}
 	}
