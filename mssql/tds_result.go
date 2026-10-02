@@ -32,9 +32,12 @@ const (
 	tdsServerName = "SQLSERVER01"
 
 	maxErrorMessageRunes = 2048
-	maxColumnNameRunes   = 128
-	maxOffsetMinutes     = 14 * 60 // SQL Server's datetimeoffset range
-	daysFrom0001To1970   = 719162
+	// maxColumnNameUnits is SQL Server's sysname limit in UTF-16 units, which
+	// is also what B_VARCHAR counts, so 128 non-BMP characters (256 units)
+	// fall back to the legacy answer instead of being cut mid-pair.
+	maxColumnNameUnits = 128
+	maxOffsetMinutes   = 14 * 60 // SQL Server's datetimeoffset range
+	daysFrom0001To1970 = 719162
 )
 
 // tdsType is how one canonical column type goes over TDS. size is the fixed
@@ -186,7 +189,7 @@ func tdsResultSet(cols []*proto.Column, rows []*proto.Row) ([]byte, bool) {
 	for i, c := range cols {
 		t, ok := tdsTypes[c.GetType()]
 		name := sqlai.Clean(c.GetName(), false)
-		if !ok || len([]rune(name)) > maxColumnNameRunes {
+		if !ok || len(utf16.Encode([]rune(name))) > maxColumnNameUnits {
 			return nil, false
 		}
 		types[i] = t
