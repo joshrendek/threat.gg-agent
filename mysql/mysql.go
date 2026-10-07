@@ -138,9 +138,20 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	// precisely when writing the OK packet fails. Same family as the COM_QUIT case below.
 	defer func() { go h.persistSession(sess) }()
 
-	// Send OK (auth success)
-	if err := writeOKPacket(conn, 2, 0, 0); err != nil {
-		return
+	// Send auth success: for caching_sha2_password, MySQL 8 protocol sends fast-auth
+	// success marker (0x01 with payload 0x03) before the OK packet. For mysql_native_password
+	// and others, it sends OK directly at seqID 2.
+	if creds.authPlugin == "caching_sha2_password" || (creds.authPlugin == "" && len(creds.authData) == 32) {
+		if err := writePacket(conn, 2, []byte{0x03}); err != nil {
+			return
+		}
+		if err := writeOKPacket(conn, 3, 0, 0); err != nil {
+			return
+		}
+	} else {
+		if err := writeOKPacket(conn, 2, 0, 0); err != nil {
+			return
+		}
 	}
 
 	// Command phase
@@ -228,11 +239,18 @@ func (h *honeypot) persistSession(sess *session) {
 		return
 	}
 
+	password := ""
+	if p := cachingSha2PasswordArtifact(sess.scramble, sess.authData, sess.authPlugin); p != "" {
+		password = p
+	} else if p := nativePasswordArtifact(sess.scramble, sess.authData, sess.authPlugin); p != "" {
+		password = p
+	}
+
 	req := &proto.MysqlRequest{
 		RemoteAddr: sess.remoteIP,
 		Guid:       sess.guid,
 		Username:   sess.username,
-		Password:   nativePasswordArtifact(sess.scramble, sess.authData, sess.authPlugin),
+		Password:   password,
 	}
 	if err := saveMysqlLogin(req); err != nil {
 		h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist mysql login")

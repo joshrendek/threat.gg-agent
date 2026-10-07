@@ -11,19 +11,37 @@ const (
 	protocolVersion = 10
 	serverVersion   = "8.0.35-0ubuntu0.24.04.1"
 
-	// Capability flags
-	clientProtocol41    uint32 = 0x00000200
-	clientSecureConn    uint32 = 0x00008000
-	clientPluginAuth    uint32 = 0x00080000
-	clientConnectWithDB uint32 = 0x00000008
+	// Capability flags (standard MySQL 8.0 server without SSL)
+	clientLongPassword               uint32 = 0x00000001
+	clientFoundRows                  uint32 = 0x00000002
+	clientLongFlag                   uint32 = 0x00000004
+	clientConnectWithDB              uint32 = 0x00000008
+	clientProtocol41                 uint32 = 0x00000200
+	clientTransactions               uint32 = 0x00002000
+	clientSecureConn                 uint32 = 0x00008000
+	clientMultiStatements            uint32 = 0x00010000
+	clientMultiResults               uint32 = 0x00020000
+	clientPsMultiResults             uint32 = 0x00040000
+	clientPluginAuth                 uint32 = 0x00080000
+	clientConnectAttrs               uint32 = 0x00100000
+	clientPluginAuthLenencClientData uint32 = 0x00200000
+	clientCanHandleExpiredPasswords  uint32 = 0x00400000
+	clientSessionTrack               uint32 = 0x00800000
+	clientDeprecateEOF               uint32 = 0x01000000
+
+	serverCapabilities uint32 = clientLongPassword | clientFoundRows | clientLongFlag |
+		clientConnectWithDB | clientProtocol41 | clientTransactions | clientSecureConn |
+		clientMultiStatements | clientMultiResults | clientPsMultiResults | clientPluginAuth |
+		clientConnectAttrs | clientPluginAuthLenencClientData | clientCanHandleExpiredPasswords |
+		clientSessionTrack | clientDeprecateEOF
 
 	// Status flags
 	serverStatusAutocommit uint16 = 0x0002
 
-	// Character set
-	charsetUTF8MB4 byte = 0x2D // 45
+	// Character set: 0xFF (255 = utf8mb4_0900_ai_ci, standard MySQL 8.0 default)
+	charsetUTF8MB4 byte = 0xFF
 
-	authPluginName = "mysql_native_password"
+	authPluginName = "caching_sha2_password"
 )
 
 // credentials holds parsed auth data from the client handshake response.
@@ -50,7 +68,7 @@ func buildHandshakeV10(connID uint32) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 
-	capabilities := clientProtocol41 | clientSecureConn | clientPluginAuth | clientConnectWithDB
+	capabilities := serverCapabilities
 	capLow := uint16(capabilities & 0xFFFF)
 	capHigh := uint16((capabilities >> 16) & 0xFFFF)
 
@@ -205,15 +223,18 @@ func nativePasswordArtifact(scramble, authData []byte, authPlugin string) string
 	if len(scramble) != 20 || len(authData) != 20 {
 		return ""
 	}
-	// An empty plugin name means the client named none, which under the protocol means it
-	// used the plugin the server advertised -- and the greeting only ever advertises
-	// mysql_native_password. Treating it as native is therefore the protocol-correct read,
-	// not a permissive fallback. It does mean a client that omits CLIENT_PLUGIN_AUTH and
-	// sends 20 bytes of something else is taken at its word, which is the same trust any
-	// real server extends; if the advertised plugin ever changes (threat_gg-dpk), this
-	// default must change with it.
-	if authPlugin != "" && authPlugin != authPluginName {
+	if authPlugin != "" && authPlugin != "mysql_native_password" {
 		return ""
 	}
 	return "$mysqlna$" + hex.EncodeToString(scramble) + "*" + hex.EncodeToString(authData)
+}
+
+func cachingSha2PasswordArtifact(scramble, authData []byte, authPlugin string) string {
+	if len(scramble) != 20 || len(authData) != 32 {
+		return ""
+	}
+	if authPlugin != "" && authPlugin != "caching_sha2_password" {
+		return ""
+	}
+	return "$mysqlcaching$" + hex.EncodeToString(scramble) + "*" + hex.EncodeToString(authData)
 }
