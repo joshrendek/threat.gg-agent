@@ -139,9 +139,10 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	defer func() { go h.persistSession(sess) }()
 
 	// Send auth success: for caching_sha2_password, MySQL 8 protocol sends fast-auth
-	// success marker (0x01 with payload 0x03) before the OK packet. For mysql_native_password
-	// and others, it sends OK directly at seqID 2.
-	if creds.authPlugin == "caching_sha2_password" || (creds.authPlugin == "" && len(creds.authData) == 32) {
+	// success payload 0x03 at sequence ID 2 before the OK packet at sequence ID 3.
+	// For mysql_native_password and other plugins, it sends an OK packet directly at sequence ID 2.
+	isCachingSha2 := creds.authPlugin == "caching_sha2_password" || (creds.authPlugin == "" && len(creds.authData) == 32)
+	if isCachingSha2 {
 		if err := writePacket(conn, 2, []byte{0x03}); err != nil {
 			return
 		}
@@ -239,11 +240,21 @@ func (h *honeypot) persistSession(sess *session) {
 		return
 	}
 
-	password := ""
-	if p := cachingSha2PasswordArtifact(sess.scramble, sess.authData, sess.authPlugin); p != "" {
-		password = p
-	} else if p := nativePasswordArtifact(sess.scramble, sess.authData, sess.authPlugin); p != "" {
-		password = p
+	var password string
+	switch sess.authPlugin {
+	case "caching_sha2_password":
+		password = cachingSha2PasswordArtifact(sess.scramble, sess.authData, sess.authPlugin)
+	case "mysql_native_password":
+		password = nativePasswordArtifact(sess.scramble, sess.authData, sess.authPlugin)
+	case "":
+		// Client omitted CLIENT_PLUGIN_AUTH: resolve artifact by response length
+		if len(sess.authData) == 32 {
+			password = cachingSha2PasswordArtifact(sess.scramble, sess.authData, "")
+		} else if len(sess.authData) == 20 {
+			password = nativePasswordArtifact(sess.scramble, sess.authData, "")
+		}
+	default:
+		// Unrecognized or plaintext auth plugin (e.g. mysql_clear_password)
 	}
 
 	req := &proto.MysqlRequest{

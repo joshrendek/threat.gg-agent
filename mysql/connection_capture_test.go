@@ -340,3 +340,74 @@ func TestConnectionCapturesCachingSha2Credential(t *testing.T) {
 		t.Errorf("password = %q, want %q", login.Password, want)
 	}
 }
+
+func TestConnectionCapturesCachingSha2CredentialWithoutPluginName(t *testing.T) {
+	rec := withRecorder(t)
+	done := make(chan struct{})
+
+	server, client := net.Pipe()
+	h := &honeypot{logger: zerolog.Nop()}
+	go func() {
+		h.handleConnection(server)
+		close(done)
+	}()
+
+	_ = client.SetDeadline(time.Now().Add(10 * time.Second))
+	reader := bufio.NewReader(client)
+
+	greeting, _, err := readPacket(reader)
+	if err != nil {
+		t.Fatalf("read greeting: %v", err)
+	}
+	advertised := scrambleFromGreeting(t, greeting)
+
+	authData := make([]byte, 32)
+	for i := range authData {
+		authData[i] = byte(0xD0 + i%16)
+	}
+
+	// Build auth packet with 32 bytes and NO plugin name appended
+	authPkt := buildClientAuthPacket("implicituser", authData)
+
+	if err := writePacket(client, 1, authPkt); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+
+	// Server should send fast auth success (payload 0x03)
+	fastAuthPayload, _, err := readPacket(reader)
+	if err != nil {
+		t.Fatalf("read fast auth: %v", err)
+	}
+	if len(fastAuthPayload) != 1 || fastAuthPayload[0] != 0x03 {
+		t.Fatalf("expected fast auth marker 0x03, got %v", fastAuthPayload)
+	}
+
+	// Then server sends OK packet
+	if _, _, err := readPacket(reader); err != nil {
+		t.Fatalf("read auth OK: %v", err)
+	}
+
+	if err := writePacket(client, 0, []byte{comQuit}); err != nil {
+		t.Fatalf("write quit: %v", err)
+	}
+
+	<-done
+	client.Close()
+
+	waitFor(t, func() bool {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return len(rec.logins) == 1
+	}, "login to be persisted")
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	login := rec.logins[0]
+	if login.Username != "implicituser" {
+		t.Errorf("username = %q, want implicituser", login.Username)
+	}
+	want := "$mysqlcaching$" + hex.EncodeToString(advertised) + "*" + hex.EncodeToString(authData)
+	if login.Password != want {
+		t.Errorf("password = %q, want %q", login.Password, want)
+	}
+}

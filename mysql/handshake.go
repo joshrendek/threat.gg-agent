@@ -229,6 +229,11 @@ func nativePasswordArtifact(scramble, authData []byte, authPlugin string) string
 	return "$mysqlna$" + hex.EncodeToString(scramble) + "*" + hex.EncodeToString(authData)
 }
 
+// cachingSha2PasswordArtifact renders a captured caching_sha2_password exchange in
+// Hashcat format ($mysqlcaching$<scramble>*<response>).
+//
+// Returns empty unless scramble is 20 bytes and authData is exactly 32 bytes, and the
+// client either named caching_sha2_password or omitted CLIENT_PLUGIN_AUTH (empty plugin name).
 func cachingSha2PasswordArtifact(scramble, authData []byte, authPlugin string) string {
 	if len(scramble) != 20 || len(authData) != 32 {
 		return ""

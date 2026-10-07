@@ -89,7 +89,7 @@ func TestNativePasswordArtifactRejectsOtherPlugins(t *testing.T) {
 		})
 	}
 
-	// The native password plugin, and a client that names none with 20 bytes, both stand.
+	// Both explicit "mysql_native_password" and an omitted plugin string (client using default) produce the $mysqlna$ format for 20-byte data.
 	for _, plugin := range []string{"", "mysql_native_password"} {
 		if got := nativePasswordArtifact(scramble, clearPassword, plugin); got == "" {
 			t.Errorf("artifact empty for plugin %q, want the mysqlna form", plugin)
@@ -112,6 +112,11 @@ func TestCachingSha2PasswordArtifact(t *testing.T) {
 	if got != want {
 		t.Errorf("artifact = %q, want %q", got, want)
 	}
+	// Client omitting CLIENT_PLUGIN_AUTH (empty string) also produces $mysqlcaching$
+	if got := cachingSha2PasswordArtifact(scramble, authData, ""); got != want {
+		t.Errorf("artifact for empty plugin = %q, want %q", got, want)
+	}
+
 
 	// Missing or wrong length should reject
 	if got := cachingSha2PasswordArtifact(scramble, make([]byte, 20), "caching_sha2_password"); got != "" {

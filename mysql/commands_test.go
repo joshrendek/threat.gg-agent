@@ -200,3 +200,34 @@ func TestHandleComQuery_MalformedQueryReturnsError1064(t *testing.T) {
 		t.Fatalf("expected SQLSTATE #42000, got %q", string(data[7:13]))
 	}
 }
+
+func TestHandleComQuery_StandardAdminAndTransactionCommands(t *testing.T) {
+	commands := []string{
+		"GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'",
+		"REVOKE ALL PRIVILEGES ON *.* FROM 'guest'@'%'",
+		"COMMIT",
+		"ROLLBACK",
+		"FLUSH PRIVILEGES",
+		"KILL 42",
+		"LOCK TABLES users READ",
+		"UNLOCK TABLES",
+		"START TRANSACTION",
+		"BEGIN",
+		"DESCRIBE users",
+		"EXPLAIN SELECT 1",
+	}
+
+	for _, cmd := range commands {
+		t.Run(cmd, func(t *testing.T) {
+			var buf bytes.Buffer
+			_, err := handleComQuery(&buf, 1, cmd)
+			if err != nil {
+				t.Fatalf("handleComQuery(%q) failed: %v", cmd, err)
+			}
+			data := buf.Bytes()
+			if len(data) < 5 || data[4] != 0x00 {
+				t.Fatalf("expected OK packet (0x00) for command %q", cmd)
+			}
+		})
+	}
+}
