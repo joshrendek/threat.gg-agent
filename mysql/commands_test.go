@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"bytes"
+	"encoding/binary"
 	"strings"
 	"testing"
 )
@@ -172,5 +173,61 @@ func TestHandleComQuery_SelectDatabase(t *testing.T) {
 	result := buf.String()
 	if !strings.Contains(result, "production") {
 		t.Fatalf("expected 'production' in response, got %q", result)
+	}
+}
+
+func TestHandleComQuery_MalformedQueryReturnsError1064(t *testing.T) {
+	var buf bytes.Buffer
+	_, err := handleComQuery(&buf, 1, "AND 1=1 UNION SELECT 1")
+	if err != nil {
+		t.Fatalf("handleComQuery failed: %v", err)
+	}
+	data := buf.Bytes()
+	if len(data) < 5 {
+		t.Fatal("response too short")
+	}
+	// Error packet marker is 0xFF
+	if data[4] != 0xFF {
+		t.Fatalf("expected ERR packet marker 0xFF, got 0x%02x", data[4])
+	}
+	// Error code 1064 = 0x0428
+	code := binary.LittleEndian.Uint16(data[5:7])
+	if code != 1064 {
+		t.Fatalf("expected error code 1064, got %d", code)
+	}
+	// SQLSTATE "#42000"
+	if string(data[7:13]) != "#42000" {
+		t.Fatalf("expected SQLSTATE #42000, got %q", string(data[7:13]))
+	}
+}
+
+func TestHandleComQuery_StandardAdminAndTransactionCommands(t *testing.T) {
+	commands := []string{
+		"GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'",
+		"REVOKE ALL PRIVILEGES ON *.* FROM 'guest'@'%'",
+		"COMMIT",
+		"ROLLBACK",
+		"FLUSH PRIVILEGES",
+		"KILL 42",
+		"LOCK TABLES users READ",
+		"UNLOCK TABLES",
+		"START TRANSACTION",
+		"BEGIN",
+		"DESCRIBE users",
+		"EXPLAIN SELECT 1",
+	}
+
+	for _, cmd := range commands {
+		t.Run(cmd, func(t *testing.T) {
+			var buf bytes.Buffer
+			_, err := handleComQuery(&buf, 1, cmd)
+			if err != nil {
+				t.Fatalf("handleComQuery(%q) failed: %v", cmd, err)
+			}
+			data := buf.Bytes()
+			if len(data) < 5 || data[4] != 0x00 {
+				t.Fatalf("expected OK packet (0x00) for command %q", cmd)
+			}
+		})
 	}
 }

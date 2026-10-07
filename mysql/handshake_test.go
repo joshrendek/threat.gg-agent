@@ -54,6 +54,46 @@ func TestBuildHandshakeV10_ScrambleLength(t *testing.T) {
 	}
 }
 
+func TestBuildHandshakeV10_MySQL8Defaults(t *testing.T) {
+	pkt, _, err := buildHandshakeV10(1)
+	if err != nil {
+		t.Fatalf("buildHandshakeV10 failed: %v", err)
+	}
+
+	verEnd := bytes.IndexByte(pkt[1:], 0x00) + 1
+	p1 := 1 + verEnd + 4 // connID (4)
+	capLowOffset := p1 + 8 + 1
+	capLow := binary.LittleEndian.Uint16(pkt[capLowOffset:])
+	charset := pkt[capLowOffset+2]
+	capHighOffset := capLowOffset + 2 + 1 + 2
+	capHigh := binary.LittleEndian.Uint16(pkt[capHighOffset:])
+	caps := uint32(capLow) | (uint32(capHigh) << 16)
+
+	// Character set must be 0xFF (utf8mb4_0900_ai_ci, standard 8.0 default)
+	if charset != 0xFF {
+		t.Fatalf("expected charset 0xFF (utf8mb4_0900_ai_ci), got 0x%02X", charset)
+	}
+
+	// Capabilities must include MySQL 8.0 server features
+	if caps&clientTransactions == 0 {
+		t.Error("capabilities missing clientTransactions")
+	}
+	if caps&clientSessionTrack == 0 {
+		t.Error("capabilities missing clientSessionTrack")
+	}
+	if caps&clientDeprecateEOF == 0 {
+		t.Error("capabilities missing clientDeprecateEOF")
+	}
+	if caps&clientPluginAuth == 0 {
+		t.Error("capabilities missing clientPluginAuth")
+	}
+
+	// Auth plugin name is at the end of the packet
+	if !bytes.HasSuffix(pkt, []byte("caching_sha2_password\x00")) {
+		t.Fatalf("expected greeting to end with caching_sha2_password\\0, got tail %q", pkt[len(pkt)-25:])
+	}
+}
+
 func TestParseHandshakeResponse(t *testing.T) {
 	// Construct a minimal HandshakeResponse41
 	buf := make([]byte, 0, 128)

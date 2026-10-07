@@ -158,9 +158,27 @@ func handleComQueryForSession(w io.Writer, seqID uint8, query, guid string) (uin
 		err := writeOKPacket(w, seqID, 0, 0)
 		return seqID + 1, err
 
-	default:
-		// Unknown: return OK
+	case strings.HasPrefix(normalized, "grant") ||
+		strings.HasPrefix(normalized, "revoke") ||
+		strings.HasPrefix(normalized, "commit") ||
+		strings.HasPrefix(normalized, "rollback") ||
+		strings.HasPrefix(normalized, "flush") ||
+		strings.HasPrefix(normalized, "kill") ||
+		strings.HasPrefix(normalized, "lock") ||
+		strings.HasPrefix(normalized, "unlock") ||
+		strings.HasPrefix(normalized, "start") ||
+		strings.HasPrefix(normalized, "begin") ||
+		strings.HasPrefix(normalized, "desc") ||
+		strings.HasPrefix(normalized, "describe") ||
+		strings.HasPrefix(normalized, "explain"):
+		// Other standard SQL session/transaction/admin commands: return OK
 		err := writeOKPacket(w, seqID, 0, 0)
+		return seqID + 1, err
+
+	default:
+		// Malformed or unrecognized statement: return MySQL syntax error 1064 (42000)
+		msg := "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '" + truncate(query, 64) + "' at line 1"
+		err := writeERRPacket(w, seqID, 1064, "42000", msg)
 		return seqID + 1, err
 	}
 }

@@ -89,11 +89,41 @@ func TestNativePasswordArtifactRejectsOtherPlugins(t *testing.T) {
 		})
 	}
 
-	// The plugin we actually advertise, and a client that names none, both stand.
-	for _, plugin := range []string{"", authPluginName} {
+	// Both explicit "mysql_native_password" and an omitted plugin string (client using default) produce the $mysqlna$ format for 20-byte data.
+	for _, plugin := range []string{"", "mysql_native_password"} {
 		if got := nativePasswordArtifact(scramble, clearPassword, plugin); got == "" {
 			t.Errorf("artifact empty for plugin %q, want the mysqlna form", plugin)
 		}
+	}
+}
+
+func TestCachingSha2PasswordArtifact(t *testing.T) {
+	scramble := make([]byte, 20)
+	authData := make([]byte, 32)
+	for i := range scramble {
+		scramble[i] = byte(i)
+	}
+	for i := range authData {
+		authData[i] = byte(0xC0 + i%16)
+	}
+
+	got := cachingSha2PasswordArtifact(scramble, authData, "caching_sha2_password")
+	want := "$mysqlcaching$" + hex.EncodeToString(scramble) + "*" + hex.EncodeToString(authData)
+	if got != want {
+		t.Errorf("artifact = %q, want %q", got, want)
+	}
+	// Client omitting CLIENT_PLUGIN_AUTH (empty string) also produces $mysqlcaching$
+	if got := cachingSha2PasswordArtifact(scramble, authData, ""); got != want {
+		t.Errorf("artifact for empty plugin = %q, want %q", got, want)
+	}
+
+
+	// Missing or wrong length should reject
+	if got := cachingSha2PasswordArtifact(scramble, make([]byte, 20), "caching_sha2_password"); got != "" {
+		t.Errorf("expected empty for 20-byte authData in caching_sha2, got %q", got)
+	}
+	if got := cachingSha2PasswordArtifact(scramble, authData, "mysql_native_password"); got != "" {
+		t.Errorf("expected empty for wrong plugin name in caching_sha2, got %q", got)
 	}
 }
 
