@@ -412,7 +412,11 @@ func SaveTelnetCommand(in *proto.TelnetCommandRequest) error {
 }
 
 func SaveRdpConnect(in *proto.RdpRequest) error {
-	ctx := context.Background()
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveRdpConnect(ctx, in)
 	return err

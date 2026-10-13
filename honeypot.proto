@@ -552,6 +552,46 @@ message RdpRequest {
   string ntlm_workstation = 7;
   string ntlm_hash = 8;
   string os_version = 9;
+  string selected_protocol = 10;
+  string reached_stage = 11;
+  string failure_class = 12;
+  uint32 duration_ms = 13;
+  uint32 bytes_read = 14;
+  string client_fingerprint = 15;
+  string tls_fingerprint = 16;
+  string tls_version = 17;
+  string tls_cipher = 18;
+  string credssp_version = 19;
+  string spnego_mechanism = 20;
+  uint32 ntlm_negotiate_flags = 21;
+  uint32 ntlm_authenticate_flags = 22;
+  string ntlm_version = 23;
+  bool ntlm_mic_present = 24;
+  string lm_response_kind = 25;
+  string persona_id = 26;
+  string server_hostname = 27;
+  string server_domain = 28;
+  uint32 retry_count = 29;
+  string client_build = 30;
+  uint32 desktop_width = 31;
+  uint32 desktop_height = 32;
+  string keyboard_layout = 33;
+  string client_name = 34;
+  repeated string virtual_channels = 35;
+  repeated RdpAuthAttempt auth_attempts = 36;
+}
+
+message RdpAuthAttempt {
+  string guid = 1;
+  string username = 2;
+  string domain = 3;
+  string workstation = 4;
+  string ntlm_hash = 5;
+  uint32 ntlm_flags = 6;
+  string ntlm_version = 7;
+  bool mic_present = 8;
+  string lm_response_kind = 9;
+  uint32 observed_at_offset_ms = 10;
 }
 
 message VncRequest {

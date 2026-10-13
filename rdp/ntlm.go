@@ -3,15 +3,13 @@ package rdp
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/pem"
+	"errors"
 	"fmt"
-	"math/big"
 	"net"
 	"strings"
 	"time"
@@ -28,86 +26,501 @@ var ntlmsspSignature = []byte("NTLMSSP\x00")
 
 type ntlmSession struct {
 	challenge [8]byte
+	hostname  string
+	domain    string
 }
 
 func newNTLMSession() *ntlmSession {
 	s := &ntlmSession{}
-	rand.Read(s.challenge[:])
+	if _, err := rand.Read(s.challenge[:]); err != nil {
+		return s
+	}
 	return s
 }
 
-// handleNTLM upgrades the connection to TLS and performs CredSSP/NTLM capture.
-func handleNTLM(conn net.Conn, sess *session) {
-	tlsConn := tls.Server(conn, &tls.Config{
-		Certificates: []tls.Certificate{sess.tlsCert},
-	})
+// NTLMCaptureInput describes one independent CredSSP capture. The helper does
+// not persist or log any credentials; callers decide how to retain the result.
+type NTLMCaptureInput struct {
+	Conn            net.Conn
+	Certificate     tls.Certificate
+	PersonaHostname string
+	PersonaDomain   string
+	Deadline        time.Time
+}
+
+type ntlmCaptureInput = NTLMCaptureInput
+
+// NTLMCaptureAttempt is one accepted NTLMSSP Authenticate message.
+type NTLMCaptureAttempt struct {
+	GUID               string
+	Offset             int64
+	ObservedAtOffsetMs uint32
+	Challenge          [8]byte
+	Username           string
+	Domain             string
+	Workstation        string
+	Hash               string
+	Type3Flags         uint32
+	NTLMVersion        string
+	MIC                bool
+	LMClass            string
+}
+type ntlmCaptureAttempt = NTLMCaptureAttempt
+
+// NTLMCaptureResult contains bounded protocol telemetry and captured attempts.
+type NTLMCaptureResult struct {
+	TLSVersion      uint16
+	TLSCipherSuite  uint16
+	TLSFingerprint  string
+	CredSSPVersion  uint32
+	SPNEGOMechanism string
+	Type1Flags      uint32
+	Type3Flags      uint32
+	NTLMVersion     string
+	MIC             bool
+	LMClass         string
+	FailureClass    string
+	BytesRead       int64
+	Attempts        []NTLMCaptureAttempt
+	Username        string
+	Domain          string
+	Workstation     string
+	Hash            string
+
+	Type1Seen     bool
+	ChallengeSent bool
+	CredSSPSeen   bool
+}
+
+type ntlmCaptureResult = NTLMCaptureResult
+
+const (
+	ntlmFailureTLS      = "tls"
+	ntlmFailureRead     = "read"
+	ntlmFailureWrite    = "write"
+	ntlmFailureProtocol = "protocol"
+	ntlmFailureClosed   = "closed"
+	ntlmFailureDeadline = "deadline"
+)
+
+// CaptureNTLM upgrades conn to TLS and captures at most three CredSSP cycles.
+func CaptureNTLM(input NTLMCaptureInput) NTLMCaptureResult {
+	return captureNTLM(input)
+}
+
+func captureNTLM(input ntlmCaptureInput) ntlmCaptureResult {
+	result := ntlmCaptureResult{}
+	if input.Conn == nil {
+		result.FailureClass = ntlmFailureRead
+		return result
+	}
+	hostname := strings.TrimSpace(input.PersonaHostname)
+	domain := strings.TrimSpace(input.PersonaDomain)
+	if hostname == "" && len(input.Certificate.Certificate) != 0 {
+		if cert, err := x509.ParseCertificate(input.Certificate.Certificate[0]); err == nil {
+			hostname = cert.Subject.CommonName
+			if hostname == "" && len(cert.DNSNames) != 0 {
+				hostname = cert.DNSNames[0]
+			}
+		}
+	}
+	if hostname == "" {
+		hostname = "server"
+	}
+	if domain == "" {
+		domain = "workgroup"
+	}
+	if len(input.Certificate.Certificate) != 0 && !certificateMatchesHostname(input.Certificate, hostname) {
+		result.FailureClass = ntlmFailureProtocol
+		return result
+	}
+	if input.Deadline.IsZero() {
+		input.Deadline = time.Now().Add(30 * time.Second)
+	}
+	started := time.Now()
+
+	counted := &countingConn{Conn: input.Conn}
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{input.Certificate},
+		MinVersion:   tls.VersionTLS12,
+	}
+	cfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		result.TLSFingerprint = fingerprintClientHello(hello)
+		clone := cfg.Clone()
+		clone.GetConfigForClient = nil
+		return clone, nil
+	}
+	tlsConn := tls.Server(counted, cfg)
 	defer tlsConn.Close()
-
-	tlsConn.SetDeadline(time.Now().Add(30 * time.Second))
+	if err := tlsConn.SetDeadline(input.Deadline); err != nil {
+		result.FailureClass = ntlmFailureDeadline
+		return result
+	}
 	if err := tlsConn.Handshake(); err != nil {
-		sess.logger.Debug().Err(err).Str("session", sess.guid).Msg("TLS handshake failed")
-		return
+		if classifyNTLMError(err) == ntlmFailureDeadline {
+			result.FailureClass = ntlmFailureDeadline
+		} else {
+			result.FailureClass = ntlmFailureTLS
+		}
+		result.BytesRead = counted.read
+		return result
 	}
+	state := tlsConn.ConnectionState()
+	result.TLSVersion = state.Version
+	result.TLSCipherSuite = state.CipherSuite
 
-	ntlmSess := newNTLMSession()
+	cycles := 0
+	for cycles < 3 {
+		type1Data, err := readTSRequest(tlsConn)
+		result.BytesRead = counted.read
+		if err != nil {
+			result.FailureClass = classifyNTLMError(err)
+			break
+		}
+		if !validTSRequest(type1Data) {
+			result.FailureClass = ntlmFailureProtocol
+			break
+		}
+		result.CredSSPSeen = true
+		version, mech := parseTSRequestMetadata(type1Data)
+		if version != 0 {
+			result.CredSSPVersion = version
+		}
+		if mech != "" {
+			result.SPNEGOMechanism = mech
+		}
+		type1 := extractNTLMSSP(type1Data)
+		if !isNTLMSSP(type1) || getNTLMMessageType(type1) != ntlmNegotiate {
+			result.FailureClass = ntlmFailureProtocol
+			break
+		}
+		result.Type1Seen = true
+		if len(type1) >= 16 {
+			result.Type1Flags = binary.LittleEndian.Uint32(type1[12:16])
+		}
+		cycles++
 
-	// Step 1: Read TSRequest containing NTLMSSP Type 1 (Negotiate)
-	tsData, err := readTSRequest(tlsConn)
+		ntlmSess := newNTLMSession()
+		ntlmSess.hostname, ntlmSess.domain = hostname, domain
+		if err := writeTSRequest(tlsConn, wrapSPNEGOChallenge(buildType2ChallengeForPersona(ntlmSess, hostname, domain))); err != nil {
+			result.FailureClass = ntlmFailureWrite
+			break
+		}
+		result.ChallengeSent = true
+		type3Data, err := readTSRequest(tlsConn)
+		result.BytesRead = counted.read
+		if err != nil {
+			result.FailureClass = classifyNTLMError(err)
+			break
+		}
+		if !validTSRequest(type3Data) {
+			result.FailureClass = ntlmFailureProtocol
+			_ = writeTSRequestFailure(tlsConn)
+			continue
+		}
+		version, mech = parseTSRequestMetadata(type3Data)
+		if version != 0 {
+			result.CredSSPVersion = version
+		}
+		if mech != "" {
+			result.SPNEGOMechanism = mech
+		}
+		type3 := extractNTLMSSP(type3Data)
+		if !isNTLMSSP(type3) || getNTLMMessageType(type3) != ntlmAuthenticate {
+			result.FailureClass = ntlmFailureProtocol
+			_ = writeTSRequestFailure(tlsConn)
+			continue
+		}
+		parsed := parseType3Details(type3)
+		offset := counted.read
+		elapsed := time.Since(started).Milliseconds()
+		if len(result.Attempts) != 0 && elapsed <= int64(result.Attempts[len(result.Attempts)-1].ObservedAtOffsetMs) {
+			elapsed = int64(result.Attempts[len(result.Attempts)-1].ObservedAtOffsetMs) + 1
+		}
+		if elapsed > int64(^uint32(0)) {
+			elapsed = int64(^uint32(0))
+		}
+		attempt := NTLMCaptureAttempt{
+			GUID:               newNTLMGUID(),
+			Offset:             offset,
+			ObservedAtOffsetMs: uint32(elapsed),
+			Challenge:          ntlmSess.challenge,
+			Username:           parsed.username,
+			Domain:             parsed.domain,
+			Workstation:        parsed.workstation,
+			Hash:               formatNetNTLMv2Hash(parsed.username, parsed.domain, ntlmSess.challenge, parsed.ntResponse),
+			Type3Flags:         parsed.flags,
+			NTLMVersion:        parsed.version,
+			MIC:                parsed.mic,
+			LMClass:            parsed.lmClass,
+		}
+		result.Attempts = append(result.Attempts, attempt)
+		result.Type3Flags, result.NTLMVersion = parsed.flags, parsed.version
+		result.MIC, result.LMClass = parsed.mic, parsed.lmClass
+		result.Username, result.Domain, result.Workstation, result.Hash = attempt.Username, attempt.Domain, attempt.Workstation, attempt.Hash
+		result.BytesRead = counted.read
+		if err := writeTSRequestFailure(tlsConn); err != nil {
+			result.FailureClass = ntlmFailureWrite
+			break
+		}
+	}
+	if cycles == 3 && result.FailureClass == "" {
+		result.FailureClass = ntlmFailureProtocol
+	}
+	return result
+}
+
+type tlsCaptureInput struct {
+	Conn        net.Conn
+	Certificate tls.Certificate
+	Deadline    time.Time
+}
+
+type TLSCaptureInput = tlsCaptureInput
+type TLSCaptureResult = tlsCaptureResult
+
+type tlsCaptureResult struct {
+	Conn           *tls.Conn
+	TLSVersion     uint16
+	TLSCipherSuite uint16
+	TLSFingerprint string
+	BytesRead      int64
+	FailureClass   string
+}
+
+// captureTLS performs only the bounded TLS handshake used by SSL MCS.
+func captureTLS(input tlsCaptureInput) tlsCaptureResult {
+	result := tlsCaptureResult{}
+	if input.Conn == nil {
+		result.FailureClass = ntlmFailureRead
+		return result
+	}
+	if input.Deadline.IsZero() {
+		input.Deadline = time.Now().Add(totalTimeout)
+	}
+	counted := &countingConn{Conn: input.Conn}
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{input.Certificate},
+		MinVersion:   tls.VersionTLS12,
+	}
+	cfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		result.TLSFingerprint = fingerprintClientHello(hello)
+		clone := cfg.Clone()
+		clone.GetConfigForClient = nil
+		return clone, nil
+	}
+	tlsConn := tls.Server(counted, cfg)
+	if err := tlsConn.SetDeadline(input.Deadline); err != nil {
+		result.FailureClass = ntlmFailureDeadline
+		_ = tlsConn.Close()
+		return result
+	}
+	if err := tlsConn.Handshake(); err != nil {
+		if classifyNTLMError(err) == ntlmFailureDeadline {
+			result.FailureClass = ntlmFailureDeadline
+		} else {
+			result.FailureClass = ntlmFailureTLS
+		}
+		result.BytesRead = counted.read
+		_ = tlsConn.Close()
+		return result
+	}
+	state := tlsConn.ConnectionState()
+	result.Conn = tlsConn
+	result.TLSVersion = state.Version
+	result.TLSCipherSuite = state.CipherSuite
+	result.BytesRead = counted.read
+	return result
+}
+
+// CaptureTLS exposes bounded TLS-only telemetry and closes the live stream.
+func CaptureTLS(input tlsCaptureInput) tlsCaptureResult {
+	result := captureTLS(input)
+	if result.Conn != nil {
+		_ = result.Conn.Close()
+		result.Conn = nil
+	}
+	return result
+}
+
+type countingConn struct {
+	net.Conn
+	read int64
+}
+
+func (c *countingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.read += int64(n)
+	return n, err
+}
+
+func classifyNTLMError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return ntlmFailureClosed
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return ntlmFailureDeadline
+	}
+	return ntlmFailureRead
+}
+
+func newNTLMGUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("00000000-0000-4000-8000-%012x", uint64(time.Now().UnixNano())&0xffffffffffff)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		binary.BigEndian.Uint32(b[0:4]), binary.BigEndian.Uint16(b[4:6]),
+		binary.BigEndian.Uint16(b[6:8]), binary.BigEndian.Uint16(b[8:10]),
+		binary.BigEndian.Uint64(b[8:16])&0xffffffffffff)
+}
+
+func fingerprintClientHello(hello *tls.ClientHelloInfo) string {
+	if hello == nil {
+		return ""
+	}
+	var material bytes.Buffer
+	put16 := func(v uint16) {
+		var b [2]byte
+		binary.BigEndian.PutUint16(b[:], v)
+		material.Write(b[:])
+	}
+	putList16 := func(values []uint16) {
+		put16(uint16(len(values)))
+		for _, value := range values {
+			put16(value)
+		}
+	}
+	putList8 := func(values []uint8) {
+		put16(uint16(len(values)))
+		material.Write(values)
+	}
+	putListString := func(values []string) {
+		put16(uint16(len(values)))
+		for _, value := range values {
+			if len(value) > 255 {
+				value = value[:255]
+			}
+			material.WriteByte(byte(len(value)))
+			material.WriteString(value)
+		}
+	}
+	putList16(hello.SupportedVersions)
+	putList16(hello.CipherSuites)
+	curves := make([]uint16, len(hello.SupportedCurves))
+	for i, curve := range hello.SupportedCurves {
+		curves[i] = uint16(curve)
+	}
+	putList16(curves)
+	putList8(hello.SupportedPoints)
+	sigs := make([]uint16, len(hello.SignatureSchemes))
+	for i, sig := range hello.SignatureSchemes {
+		sigs[i] = uint16(sig)
+	}
+	putList16(sigs)
+	putListString(hello.SupportedProtos)
+	sum := sha256.Sum256(material.Bytes())
+	return hex.EncodeToString(sum[:])
+}
+
+func parseTSRequestMetadata(data []byte) (uint32, string) {
+	version := uint32(0)
+	var walk func([]byte, int)
+	walk = func(blob []byte, depth int) {
+		if depth > 32 {
+			return
+		}
+		for pos := 0; pos+2 <= len(blob); {
+			tag := blob[pos]
+			length, n, ok := parseDERLength(blob[pos+1:])
+			if !ok || pos+1+n+length > len(blob) {
+				return
+			}
+			value := blob[pos+1+n : pos+1+n+length]
+			if tag == 0xa0 && len(value) >= 2 && value[0] == 0x02 {
+				if integerLen, integerN, ok := parseDERLength(value[1:]); ok && 2+integerN+integerLen <= len(value) && integerLen <= 4 {
+					version = 0
+					for _, b := range value[2+integerN : 2+integerN+integerLen] {
+						version = (version << 8) | uint32(b)
+					}
+				}
+			}
+			if tag&0x20 != 0 || tag >= 0xa0 {
+				walk(value, depth+1)
+			}
+			pos += 1 + n + length
+		}
+	}
+	walk(data, 0)
+	oid := []byte{0x06, 0x0a, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x02, 0x0a}
+	if bytes.Contains(data, oid) {
+		return version, "NTLM"
+	}
+	return version, ""
+}
+
+func parseDERLength(data []byte) (int, int, bool) {
+	if len(data) == 0 {
+		return 0, 0, false
+	}
+	if data[0] < 0x80 {
+		return int(data[0]), 1, true
+	}
+	n := int(data[0] & 0x7f)
+	if n == 0 || n > 4 || len(data) < n+1 {
+		return 0, 0, false
+	}
+	length := 0
+	for _, b := range data[1 : n+1] {
+		length = (length << 8) | int(b)
+	}
+	return length, n + 1, true
+}
+
+func writeFull(conn net.Conn, data []byte) error {
+	for len(data) != 0 {
+		n, err := conn.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return net.ErrClosed
+		}
+	}
+	return nil
+}
+
+func writeTSRequestFailure(conn net.Conn) error {
+	version := asn1Wrap(0xA0, asn1Wrap(0x02, []byte{0x03}))
+	// STATUS_LOGON_FAILURE (0xc000006d) is an unsigned errorCode; DER INTEGER
+	// needs a leading zero when the high bit is set.
+	status := asn1Wrap(0xA4, asn1Wrap(0x02, []byte{0x00, 0xc0, 0x00, 0x00, 0x6d}))
+	return writeFull(conn, asn1Wrap(0x30, append(version, status...)))
+}
+func certificateMatchesHostname(cert tls.Certificate, hostname string) bool {
+	if len(cert.Certificate) == 0 {
+		return true
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
-		sess.logger.Debug().Err(err).Str("session", sess.guid).Msg("failed to read TSRequest 1")
-		return
+		return false
 	}
-
-	ntlmMsg := extractNTLMSSP(tsData)
-	if ntlmMsg == nil || !isNTLMSSP(ntlmMsg) {
-		sess.logger.Debug().Str("session", sess.guid).Msg("no NTLMSSP in TSRequest 1")
-		return
+	if len(leaf.DNSNames) == 0 && leaf.Subject.CommonName == "" {
+		return false
 	}
-
-	if getNTLMMessageType(ntlmMsg) != ntlmNegotiate {
-		sess.logger.Debug().Str("session", sess.guid).Msg("expected NTLMSSP Type 1")
-		return
+	if err := leaf.VerifyHostname(hostname); err == nil {
+		return true
 	}
-
-	// Step 2: Send TSRequest containing NTLMSSP Type 2 (Challenge)
-	challengeBlob := buildType2Challenge(ntlmSess)
-	spnegoResp := wrapSPNEGOChallenge(challengeBlob)
-	if err := writeTSRequest(tlsConn, spnegoResp); err != nil {
-		sess.logger.Debug().Err(err).Str("session", sess.guid).Msg("failed to send challenge")
-		return
-	}
-
-	// Step 3: Read TSRequest containing NTLMSSP Type 3 (Authenticate)
-	tsData, err = readTSRequest(tlsConn)
-	if err != nil {
-		sess.logger.Debug().Err(err).Str("session", sess.guid).Msg("failed to read TSRequest 2")
-		return
-	}
-
-	ntlmMsg = extractNTLMSSP(tsData)
-	if ntlmMsg == nil || !isNTLMSSP(ntlmMsg) {
-		sess.logger.Debug().Str("session", sess.guid).Msg("no NTLMSSP in TSRequest 2")
-		return
-	}
-
-	if getNTLMMessageType(ntlmMsg) != ntlmAuthenticate {
-		sess.logger.Debug().Str("session", sess.guid).Msg("expected NTLMSSP Type 3")
-		return
-	}
-
-	username, domain, workstation, ntlmResponse := parseType3Auth(ntlmMsg)
-	sess.ntlmUsername = username
-	sess.ntlmDomain = domain
-	sess.ntlmWorkstation = workstation
-	sess.ntlmHash = formatNetNTLMv2Hash(username, domain, ntlmSess.challenge, ntlmResponse)
-
-	sess.logger.Info().
-		Str("session", sess.guid).
-		Str("username", username).
-		Str("domain", domain).
-		Str("workstation", workstation).
-		Bool("has_hash", sess.ntlmHash != "").
-		Msg("NTLM authentication captured via RDP/NLA")
+	return strings.EqualFold(leaf.Subject.CommonName, hostname)
 }
 
 // readTSRequest reads an ASN.1-encoded TSRequest from the connection.
@@ -115,7 +528,7 @@ func handleNTLM(conn net.Conn, sess *session) {
 func readTSRequest(conn net.Conn) ([]byte, error) {
 	// Read first byte (ASN.1 tag, should be 0x30 for SEQUENCE)
 	tagBuf := make([]byte, 1)
-	if _, err := conn.Read(tagBuf); err != nil {
+	if _, err := readFull(conn, tagBuf); err != nil {
 		return nil, fmt.Errorf("reading TSRequest tag: %w", err)
 	}
 
@@ -148,6 +561,18 @@ func readTSRequest(conn net.Conn) ([]byte, error) {
 	return full.Bytes(), nil
 }
 
+func validTSRequest(data []byte) bool {
+	if len(data) < 2 || data[0] != 0x30 {
+		return false
+	}
+	length, n, ok := parseDERLength(data[1:])
+	if !ok || 1+n+length != len(data) || length == 0 {
+		return false
+	}
+	tag := data[1+n]
+	return tag == 0xa0 || tag == 0xa1 || tag == 0xa2 || tag == 0xa3 || tag == 0xa4
+}
+
 // readFull reads exactly len(buf) bytes from the connection.
 func readFull(conn net.Conn, buf []byte) (int, error) {
 	total := 0
@@ -165,7 +590,7 @@ func readFull(conn net.Conn, buf []byte) (int, error) {
 // Returns the length value and the raw length bytes.
 func readASN1Length(conn net.Conn) (int, []byte, error) {
 	firstByte := make([]byte, 1)
-	if _, err := conn.Read(firstByte); err != nil {
+	if _, err := readFull(conn, firstByte); err != nil {
 		return 0, nil, err
 	}
 
@@ -201,23 +626,22 @@ func writeTSRequest(conn net.Conn, negoToken []byte) error {
 	// }
 
 	// version: [0] INTEGER 3
-	versionInt := asn1Wrap(0x02, []byte{0x03})     // INTEGER 3
-	versionField := asn1Wrap(0xA0, versionInt)       // context tag [0]
+	versionInt := asn1Wrap(0x02, []byte{0x03}) // INTEGER 3
+	versionField := asn1Wrap(0xA0, versionInt) // context tag [0]
 
 	// negoToken: [1] SEQUENCE OF { SEQUENCE { [0] OCTET STRING } }
-	tokenOctet := asn1Wrap(0x04, negoToken)          // OCTET STRING
-	tokenField := asn1Wrap(0xA0, tokenOctet)          // context tag [0]
-	innerSeq := asn1Wrap(0x30, tokenField)            // SEQUENCE
-	outerSeq := asn1Wrap(0x30, innerSeq)              // SEQUENCE OF
-	negoTokensField := asn1Wrap(0xA1, outerSeq)       // context tag [1]
+	tokenOctet := asn1Wrap(0x04, negoToken)     // OCTET STRING
+	tokenField := asn1Wrap(0xA0, tokenOctet)    // context tag [0]
+	innerSeq := asn1Wrap(0x30, tokenField)      // SEQUENCE
+	outerSeq := asn1Wrap(0x30, innerSeq)        // SEQUENCE OF
+	negoTokensField := asn1Wrap(0xA1, outerSeq) // context tag [1]
 
 	var content bytes.Buffer
 	content.Write(versionField)
 	content.Write(negoTokensField)
 
 	tsReq := asn1Wrap(0x30, content.Bytes())
-	_, err := conn.Write(tsReq)
-	return err
+	return writeFull(conn, tsReq)
 }
 
 // extractNTLMSSP scans for the NTLMSSP signature within a blob.
@@ -261,120 +685,148 @@ func decodeUTF16LE(b []byte) string {
 }
 
 func buildType2Challenge(sess *ntlmSession) []byte {
-	targetName := encodeUTF16LE("WORKGROUP")
-	computerName := encodeUTF16LE("SERVER")
-	dnsDomain := encodeUTF16LE("workgroup")
-	dnsComputer := encodeUTF16LE("server")
+	return buildType2ChallengeForPersona(sess, sess.hostname, sess.domain)
+}
+
+func buildType2ChallengeForPersona(sess *ntlmSession, hostname, domain string) []byte {
+	hostname = strings.TrimSpace(hostname)
+	domain = strings.TrimSpace(domain)
+	if hostname == "" {
+		hostname = "server"
+	}
+	if domain == "" {
+		domain = "workgroup"
+	}
+	nbComputer := strings.ToUpper(strings.SplitN(hostname, ".", 2)[0])
+	nbDomain := strings.ToUpper(strings.SplitN(domain, ".", 2)[0])
+	dnsComputer := strings.ToLower(hostname)
+	dnsDomain := strings.ToLower(domain)
+	targetName := encodeUTF16LE(nbDomain)
+	computerName := encodeUTF16LE(nbComputer)
+	dnsDomainValue := encodeUTF16LE(dnsDomain)
+	dnsComputerValue := encodeUTF16LE(dnsComputer)
 
 	var targetInfo bytes.Buffer
-
-	// MsvAvNbDomainName (type 2)
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(0x0002))
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(len(targetName)))
-	targetInfo.Write(targetName)
-
-	// MsvAvNbComputerName (type 1)
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(0x0001))
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(len(computerName)))
-	targetInfo.Write(computerName)
-
-	// MsvAvDnsDomainName (type 4)
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(0x0004))
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(len(dnsDomain)))
-	targetInfo.Write(dnsDomain)
-
-	// MsvAvDnsComputerName (type 3)
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(0x0003))
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(len(dnsComputer)))
-	targetInfo.Write(dnsComputer)
-
-	// MsvAvTimestamp (type 7)
-	ft := windowsFileTime(time.Now())
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(0x0007))
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(8))
-	binary.Write(&targetInfo, binary.LittleEndian, ft)
-
-	// MsvAvEOL (type 0)
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(0x0000))
-	binary.Write(&targetInfo, binary.LittleEndian, uint16(0))
+	writeAV := func(kind uint16, value []byte) {
+		_ = binary.Write(&targetInfo, binary.LittleEndian, kind)
+		_ = binary.Write(&targetInfo, binary.LittleEndian, uint16(len(value)))
+		targetInfo.Write(value)
+	}
+	writeAV(0x0002, targetName)       // MsvAvNbDomainName
+	writeAV(0x0001, computerName)     // MsvAvNbComputerName
+	writeAV(0x0004, dnsDomainValue)   // MsvAvDnsDomainName
+	writeAV(0x0003, dnsComputerValue) // MsvAvDnsComputerName
+	var timestamp [8]byte
+	binary.LittleEndian.PutUint64(timestamp[:], windowsFileTime(time.Now()))
+	writeAV(0x0007, timestamp[:]) // MsvAvTimestamp
+	writeAV(0x0000, nil)          // MsvAvEOL
 
 	targetInfoBytes := targetInfo.Bytes()
-
 	targetNameOffset := uint32(48)
 	targetInfoOffset := targetNameOffset + uint32(len(targetName))
-
 	var msg bytes.Buffer
 	msg.Write(ntlmsspSignature)
-	binary.Write(&msg, binary.LittleEndian, ntlmChallenge)
-
-	// TargetNameFields
-	binary.Write(&msg, binary.LittleEndian, uint16(len(targetName)))
-	binary.Write(&msg, binary.LittleEndian, uint16(len(targetName)))
-	binary.Write(&msg, binary.LittleEndian, targetNameOffset)
-
-	// NegotiateFlags
-	binary.Write(&msg, binary.LittleEndian, uint32(0x00028233))
-
-	// ServerChallenge
+	_ = binary.Write(&msg, binary.LittleEndian, ntlmChallenge)
+	_ = binary.Write(&msg, binary.LittleEndian, uint16(len(targetName)))
+	_ = binary.Write(&msg, binary.LittleEndian, uint16(len(targetName)))
+	_ = binary.Write(&msg, binary.LittleEndian, targetNameOffset)
+	_ = binary.Write(&msg, binary.LittleEndian, uint32(0x00028233))
 	msg.Write(sess.challenge[:])
-
-	// Reserved
 	msg.Write(make([]byte, 8))
-
-	// TargetInfoFields
-	binary.Write(&msg, binary.LittleEndian, uint16(len(targetInfoBytes)))
-	binary.Write(&msg, binary.LittleEndian, uint16(len(targetInfoBytes)))
-	binary.Write(&msg, binary.LittleEndian, targetInfoOffset)
-
+	_ = binary.Write(&msg, binary.LittleEndian, uint16(len(targetInfoBytes)))
+	_ = binary.Write(&msg, binary.LittleEndian, uint16(len(targetInfoBytes)))
+	_ = binary.Write(&msg, binary.LittleEndian, targetInfoOffset)
 	msg.Write(targetName)
 	msg.Write(targetInfoBytes)
-
 	return msg.Bytes()
 }
 
+type parsedType3 struct {
+	username, domain, workstation string
+	ntResponse, lmResponse        []byte
+	flags                         uint32
+	version                       string
+	mic                           bool
+	lmClass                       string
+}
+
+func parseType3Details(data []byte) parsedType3 {
+	var result parsedType3
+	if len(data) < 64 || getNTLMMessageType(data) != ntlmAuthenticate {
+		return result
+	}
+	readSec := func(at int) []byte {
+		if at+8 > len(data) {
+			return nil
+		}
+		length := int(binary.LittleEndian.Uint16(data[at : at+2]))
+		offset := binary.LittleEndian.Uint32(data[at+4 : at+8])
+		if length == 0 || offset < 64 || offset > uint32(len(data)) || length > len(data)-int(offset) {
+			return nil
+		}
+		return append([]byte(nil), data[offset:uint32(int(offset)+length)]...)
+	}
+	result.lmResponse = readSec(12)
+	result.ntResponse = readSec(20)
+	result.domain = decodeUTF16LE(readSec(28))
+	result.username = decodeUTF16LE(readSec(36))
+	result.workstation = decodeUTF16LE(readSec(44))
+	result.flags = binary.LittleEndian.Uint32(data[60:64])
+	micStart := 64
+	if result.flags&0x02000000 != 0 {
+		micStart = 72
+	}
+	ntOffset := 0
+	if len(data) >= 28 {
+		ntOffset = int(binary.LittleEndian.Uint32(data[24:28]))
+	}
+	if ntOffset >= micStart+16 && len(data) >= micStart+16 {
+		for _, b := range data[micStart : micStart+16] {
+			if b != 0 {
+				result.mic = true
+				break
+			}
+		}
+	}
+	if isNetNTLMv2Response(result.ntResponse) {
+		result.version = "NTLMv2"
+		if len(result.lmResponse) == 24 {
+			result.lmClass = "LMv2"
+		} else {
+			result.lmClass = "none"
+		}
+	} else if len(result.ntResponse) == 24 {
+		result.version = "NTLMv1"
+		if len(result.lmResponse) == 24 {
+			result.lmClass = "LMv1"
+		} else {
+			result.lmClass = "none"
+		}
+	} else if len(result.lmResponse) == 24 {
+		result.lmClass = "LM"
+	} else {
+		result.lmClass = "none"
+	}
+	return result
+}
+
 func parseType3Auth(data []byte) (username, domain, workstation string, ntlmResponse []byte) {
-	if len(data) < 52 {
-		return
-	}
+	parsed := parseType3Details(data)
+	return parsed.username, parsed.domain, parsed.workstation, parsed.ntResponse
+}
 
-	ntLen := binary.LittleEndian.Uint16(data[20:22])
-	ntOffset := binary.LittleEndian.Uint32(data[24:28])
-
-	domainLen := binary.LittleEndian.Uint16(data[28:30])
-	domainOffset := binary.LittleEndian.Uint32(data[32:36])
-
-	userLen := binary.LittleEndian.Uint16(data[36:38])
-	userOffset := binary.LittleEndian.Uint32(data[40:44])
-
-	wsLen := binary.LittleEndian.Uint16(data[44:46])
-	wsOffset := binary.LittleEndian.Uint32(data[48:52])
-
-	if int(domainOffset)+int(domainLen) <= len(data) {
-		domain = decodeUTF16LE(data[domainOffset : domainOffset+uint32(domainLen)])
-	}
-
-	if int(userOffset)+int(userLen) <= len(data) {
-		username = decodeUTF16LE(data[userOffset : userOffset+uint32(userLen)])
-	}
-
-	if int(wsOffset)+int(wsLen) <= len(data) {
-		workstation = decodeUTF16LE(data[wsOffset : wsOffset+uint32(wsLen)])
-	}
-
-	if int(ntOffset)+int(ntLen) <= len(data) {
-		ntlmResponse = make([]byte, ntLen)
-		copy(ntlmResponse, data[ntOffset:ntOffset+uint32(ntLen)])
-	}
-
-	return
+func isNetNTLMv2Response(response []byte) bool {
+	// NT proof (16 bytes) followed by the NTLMv2 response blob. A valid blob
+	// starts with respType=1 and hiRespType=1; this rejects NTLMv1's 24-byte
+	// response and arbitrary long values.
+	return len(response) >= 32 && response[16] == 0x01 && response[17] == 0x01
 }
 
 // formatNetNTLMv2Hash formats credentials for hashcat mode 5600.
 func formatNetNTLMv2Hash(username, domain string, challenge [8]byte, ntResponse []byte) string {
-	if len(ntResponse) < 24 {
+	if !isNetNTLMv2Response(ntResponse) {
 		return ""
 	}
-
 	return strings.Join([]string{
 		username,
 		"",
@@ -423,37 +875,4 @@ func asn1Wrap(tag byte, data []byte) []byte {
 	}
 	buf.Write(data)
 	return buf.Bytes()
-}
-
-// generateSelfSignedCert creates an RSA 2048 self-signed certificate with a random hostname.
-func generateSelfSignedCert() (tls.Certificate, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generating RSA key: %w", err)
-	}
-
-	// Random hostname: WIN-<8 hex chars>
-	randBytes := make([]byte, 4)
-	rand.Read(randBytes)
-	cn := fmt.Sprintf("WIN-%s", strings.ToUpper(hex.EncodeToString(randBytes)))
-
-	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: cn},
-		NotBefore:    time.Now().Add(-24 * time.Hour),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("creating certificate: %w", err)
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-
-	return tls.X509KeyPair(certPEM, keyPEM)
 }
