@@ -398,6 +398,9 @@ func SaveLdapSearch(in *proto.LdapSearchRequest) error {
 }
 
 func SaveTelnetLogin(in *proto.TelnetLoginRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveTelnetLogin(ctx, in)
@@ -405,6 +408,9 @@ func SaveTelnetLogin(in *proto.TelnetLoginRequest) error {
 }
 
 func SaveTelnetCommand(in *proto.TelnetCommandRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
 	_, err := honeypotClient.SaveTelnetCommand(ctx, in)

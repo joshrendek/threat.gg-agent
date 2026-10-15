@@ -540,6 +540,8 @@ message TelnetLoginRequest {
 message TelnetCommandRequest {
   string guid = 1;
   string command = 2;
+  string response_source = 3; // "" | "ai" | "ai_cached" | "local" | "authored" | "builtin"
+  string generation_id = 4;   // ai_generations.id when response_source starts with "ai" or is "local"
 }
 
 message RdpRequest {

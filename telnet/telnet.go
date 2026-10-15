@@ -27,6 +27,13 @@ const (
 	hostname         = "device"
 )
 
+// saveTelnetLogin and saveTelnetCommand are seams over the capture RPCs so a
+// connection test can run without a gRPC client.
+var (
+	saveTelnetLogin   = persistence.SaveTelnetLogin
+	saveTelnetCommand = persistence.SaveTelnetCommand
+)
+
 type honeypot struct {
 	port string
 }
@@ -121,7 +128,7 @@ func handleConnection(conn net.Conn) {
 			authenticated = true
 
 			// Persist login
-			go persistence.SaveTelnetLogin(&pb.TelnetLoginRequest{
+			go saveTelnetLogin(&pb.TelnetLoginRequest{
 				RemoteAddr: host,
 				Guid:       guid,
 				Username:   username,
@@ -160,18 +167,26 @@ func handleConnection(conn net.Conn) {
 
 		cmdCount++
 
-		// Persist command
-		go persistence.SaveTelnetCommand(&pb.TelnetCommandRequest{
-			Guid:    guid,
-			Command: cleanLine,
+		reply := commandReply(guid, cleanLine)
+
+		// Persist the command after answering it so the capture carries the AI
+		// marker. It records the line as received, not the normalized form.
+		go func(in *pb.TelnetCommandRequest) {
+			if err := saveTelnetCommand(in); err != nil {
+				log.Error().Err(err).Msg("error saving telnet command")
+			}
+		}(&pb.TelnetCommandRequest{
+			Guid:           guid,
+			Command:        cleanLine,
+			ResponseSource: reply.Source,
+			GenerationId:   reply.GenerationID,
 		})
 
-		response, shouldExit := executeCommand(cleanLine)
-		if shouldExit {
+		if reply.Exit {
 			return
 		}
 
-		if response != "" {
+		if response := reply.Output; response != "" {
 			fmt.Fprint(conn, termsafe.Sanitize(response))
 		}
 		fmt.Fprint(conn, "~ # ")

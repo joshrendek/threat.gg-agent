@@ -247,6 +247,14 @@ func TestSaveS7CommSessionIsNoOpWithoutClient(t *testing.T) {
 	require.NoError(t, SaveS7CommSession(&proto.S7CommSessionRequest{}))
 }
 
+func TestSaveTelnetCallsAreNoOpWithoutClient(t *testing.T) {
+	originalClient := honeypotClient
+	t.Cleanup(func() { honeypotClient = originalClient })
+	honeypotClient = nil
+	require.NoError(t, SaveTelnetLogin(&proto.TelnetLoginRequest{}))
+	require.NoError(t, SaveTelnetCommand(&proto.TelnetCommandRequest{}))
+}
+
 func TestGetCommandResponseWithinHonorsConcurrentShortDeadlines(t *testing.T) {
 	originalClient := honeypotClient
 	t.Cleanup(func() { honeypotClient = originalClient })

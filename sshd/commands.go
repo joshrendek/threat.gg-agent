@@ -1,7 +1,6 @@
 package sshd
 
 import (
-	"context"
 	"errors"
 	"regexp"
 	"strings"
@@ -9,9 +8,8 @@ import (
 
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
+	"github.com/joshrendek/threat.gg-agent/shellai"
 	"github.com/joshrendek/threat.gg-agent/termsafe"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // lookupCommandResponse is the legacy lookup with a caller-chosen deadline.
@@ -22,8 +20,8 @@ var lookupCommandResponse = persistence.GetCommandResponseWithin
 // replaces it after the generate call already timed out, so a degraded server
 // costs an attacker generateBudget plus a short lookup, not two full waits.
 const (
-	lookupTimeout         = 3 * time.Second
-	degradedLookupTimeout = 600 * time.Millisecond
+	lookupTimeout         = shellai.LookupTimeout
+	degradedLookupTimeout = shellai.DegradedLookupTimeout
 )
 
 // primeBudget bounds the hostname lookup made before the first shell prompt.
@@ -34,7 +32,7 @@ var generateResponse = persistence.GenerateResponse
 
 // generateBudget bounds how long an attacker waits for an AI reply before the
 // legacy path answers instead.
-const generateBudget = 3 * time.Second
+const generateBudget = shellai.GenerateBudget
 
 // maxPromptField caps a server-supplied cwd or hostname shown in the prompt.
 const maxPromptField = 256
@@ -53,46 +51,29 @@ type shellReply struct {
 	GenerationID string
 }
 
-// generatedSources maps the GenerateResponse sources that carry an answer to
-// their capture label. NONE and UNSPECIFIED are absent: they mean fall back.
-var generatedSources = map[proto.GenerateSource]string{
-	proto.GenerateSource_GENERATE_SOURCE_AI:        "ai",
-	proto.GenerateSource_GENERATE_SOURCE_AI_CACHED: "ai_cached",
-	proto.GenerateSource_GENERATE_SOURCE_LOCAL:     "local",
-}
-
 // commandReply asks the server for a generated reply first and falls back to
 // commandResponse on NONE, Unimplemented, any error, or a reply without a
 // terminal body. It never fails: the worst case is today's behaviour. When the
 // generate call itself timed out or the server is unreachable the legacy path
 // runs with a short lookup deadline so the worst case stays bounded.
 func commandReply(guid, command string) shellReply {
+	ai, err := shellai.Ask(generateResponse, "ssh", guid, command)
+	if err != nil && !errors.Is(err, persistence.ErrUnimplemented) {
+		logger.Debug().Err(err).Msg("generate response unavailable; using legacy path")
+	}
+	if ai.Answered {
+		return shellReply{
+			Output:       ai.Stdout,
+			ExitCode:     ai.ExitCode,
+			Cwd:          promptField(ai.Cwd),
+			Hostname:     promptField(ai.Hostname),
+			Source:       ai.Source,
+			GenerationID: ai.GenerationID,
+		}
+	}
 	lookup := lookupTimeout
-	if strings.TrimSpace(command) != "" {
-		reply, err := generateResponse(&proto.GenerateRequest{
-			Guid: guid, Protocol: "ssh", Input: command, DeadlineMs: int32(generateBudget / time.Millisecond),
-		}, generateBudget)
-		if isServerSlow(err) {
-			lookup = degradedLookupTimeout
-		}
-		if err != nil && !errors.Is(err, persistence.ErrUnimplemented) {
-			logger.Debug().Err(err).Msg("generate response unavailable; using legacy path")
-		}
-		if source, ok := generatedSources[reply.GetSource()]; err == nil && ok && reply.GetTerminal() != nil {
-			term := reply.GetTerminal()
-			code := term.GetExitCode()
-			if code < 0 || code > 255 {
-				code = 255
-			}
-			return shellReply{
-				Output:       term.GetStdout(),
-				ExitCode:     uint32(code),
-				Cwd:          promptField(term.GetCwd()),
-				Hostname:     promptField(term.GetHostname()),
-				Source:       source,
-				GenerationID: reply.GetGenerationId(),
-			}
-		}
+	if ai.Degraded {
+		lookup = degradedLookupTimeout
 	}
 	out := shellReply{ExitCode: 127}
 	resp, err := commandResponseWithin(command, lookup)
@@ -107,22 +88,6 @@ func commandReply(guid, command string) shellReply {
 		}
 	}
 	return out
-}
-
-// isServerSlow reports a generate failure that means the server is slow or
-// unreachable, as opposed to Unimplemented, NONE or a reply-level error.
-func isServerSlow(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	switch status.Code(err) {
-	case codes.DeadlineExceeded, codes.Unavailable:
-		return true
-	}
-	return false
 }
 
 // primePrompt asks for the persona hostname and cwd before the first prompt so

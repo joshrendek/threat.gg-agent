@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -15,8 +14,6 @@ import (
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"golang.org/x/crypto/ssh"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func terminalReply(source proto.GenerateSource, stdout string, code int32, cwd, hostname string) *proto.GenerateReply {
@@ -450,23 +447,6 @@ func TestDegradedServerBoundsLegacyLatency(t *testing.T) {
 	for _, w := range withins {
 		if w != degradedLookupTimeout {
 			t.Fatalf("lookup deadline %v, want %v", w, degradedLookupTimeout)
-		}
-	}
-}
-
-func TestIsServerSlow(t *testing.T) {
-	for err, want := range map[error]bool{
-		nil:                      false,
-		context.DeadlineExceeded: true,
-		fmt.Errorf("w: %w", context.DeadlineExceeded): true,
-		status.Error(codes.DeadlineExceeded, "x"):     true,
-		status.Error(codes.Unavailable, "x"):          true,
-		status.Error(codes.Internal, "x"):             false,
-		persistence.ErrUnimplemented:                  false,
-		errors.New("other"):                           false,
-	} {
-		if got := isServerSlow(err); got != want {
-			t.Errorf("%v: got %v want %v", err, got, want)
 		}
 	}
 }

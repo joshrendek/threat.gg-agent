@@ -1,21 +1,29 @@
 package telnet
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	pb "github.com/joshrendek/threat.gg-agent/proto"
+	"github.com/joshrendek/threat.gg-agent/shellai"
 )
 
-// maxServerLookupLen bounds the attacker-controlled command we forward to the server's
-// response lookup; anything longer skips the lookup and falls back to local handlers.
+// maxServerLookupLen bounds the attacker-controlled command we forward to the server
+// (generate and the authored lookup); anything longer goes straight to the local handlers.
 const maxServerLookupLen = 4096
 
-// getCommandResponse is an injectable seam over the gRPC call so the server-matched and
-// miss/error paths are unit-testable without a live server.
-var getCommandResponse = persistence.GetCommandResponse
+// generateResponse is the AI path and lookupCommandResponse the authored
+// command_responses lookup with a caller-chosen deadline. Both are seams over
+// the gRPC calls so every branch is unit-testable without a live server.
+var (
+	generateResponse      = persistence.GenerateResponse
+	lookupCommandResponse = persistence.GetCommandResponseWithin
+)
 
 var commandHandlers = map[string]func(args []string) string{
 	"uname":      handleUname,
@@ -37,52 +45,97 @@ var commandHandlers = map[string]func(args []string) string{
 	"linuxshell": handleShell,
 }
 
-func executeCommand(input string) (string, bool) {
+// shellVerbs are the bare words bots send to escape a vendor CLI into a shell
+// before probing it. A real device answers them with nothing, and bots check
+// for exactly that, so they are answered locally and never sent to the server.
+var shellVerbs = map[string]bool{"enable": true, "system": true, "shell": true, "sh": true, "linuxshell": true}
+
+// telnetReply is what one command writes and records.
+type telnetReply struct {
+	Output string // raw text; the caller sanitizes before writing
+	Exit   bool
+	// Source is "ai", "ai_cached" or "local" for a generated answer and "" for
+	// every other path, the same vocabulary as ssh; it is recorded as
+	// TelnetCommandRequest.ResponseSource together with GenerationID.
+	Source       string
+	GenerationID string
+}
+
+// commandReply answers one command line. Order: exit; the deterministic bot
+// probes (bare shell verbs and every /bin/busybox applet call), which never
+// reach the server; then the AI; then the authored lookup; then the local
+// handlers. It never fails: with no AI and no server it is the legacy
+// behaviour. After a slow or unreachable generate call the authored lookup
+// uses the short degraded deadline so an attacker's wait stays bounded.
+func commandReply(guid, line string) telnetReply {
 	// Bot shell probes often append NUL after the verb. Normalize only terminal
 	// padding here; persistence still receives the original command, and embedded
 	// controls must not join two command fragments into a different command.
-	input = strings.TrimSpace(strings.TrimRightFunc(input, func(r rune) bool {
+	input := strings.TrimSpace(strings.TrimRightFunc(line, func(r rune) bool {
 		return unicode.IsSpace(r) || r < 0x20 || r == 0x7f
 	}))
 	if input == "" {
-		return "", false
+		return telnetReply{}
 	}
 
 	parts := strings.Fields(input)
 	cmd := parts[0]
 	args := parts[1:]
 
-	// Check for exit commands
 	if cmd == "exit" || cmd == "quit" || cmd == "logout" {
-		return "", true
+		return telnetReply{Exit: true}
+	}
+	if out, ok := probeReply(cmd, args); ok {
+		return telnetReply{Output: out}
 	}
 
-	// Server-authored response override (admin-editable command_responses, scoped to
-	// command_type="telnet"). Matched distinguishes an intentionally-empty response from
-	// a miss; on miss or any error we fall through to the local handlers below, so
-	// behavior never regresses if the server is unreachable. Input is length-bounded so
-	// an oversized command can't be forwarded to the gRPC lookup.
+	// Input is length-bounded so an oversized command is never forwarded to the server.
 	if len(input) <= maxServerLookupLen {
-		if resp, err := getCommandResponse(&pb.CommandRequest{Command: input, CommandType: "telnet"}); err == nil && resp.Matched {
-			return resp.Response, false
+		ai, err := shellai.Ask(generateResponse, "telnet", guid, input)
+		if err != nil && !errors.Is(err, persistence.ErrUnimplemented) {
+			log.Debug().Err(err).Msg("telnet generate response unavailable; using legacy path")
 		}
-	}
+		if ai.Answered {
+			return telnetReply{Output: ai.Stdout, Source: ai.Source, GenerationID: ai.GenerationID}
+		}
+		lookup := shellai.LookupTimeout
+		if ai.Degraded {
+			lookup = shellai.DegradedLookupTimeout
+		}
 
-	// BusyBox invokes known applets and identifies unknown probe markers with the
-	// applet-specific error bots expect when testing command execution.
-	if cmd == "/bin/busybox" && len(args) > 0 {
-		applet := args[0]
-		if handler, ok := commandHandlers[applet]; ok {
-			return handler(args[1:]), false
+		// Server-authored response override (admin-editable command_responses, scoped
+		// to command_type="telnet"). Matched distinguishes an intentionally-empty
+		// response from a miss; on a miss or any error we fall through to the local
+		// handlers below, so behaviour never regresses if the server is unreachable.
+		resp, err := lookupCommandResponse(&pb.CommandRequest{Command: input, CommandType: "telnet"}, lookup)
+		if err == nil && resp != nil && resp.Matched {
+			return telnetReply{Output: resp.Response}
 		}
-		return fmt.Sprintf("%s: applet not found\r\n", printableAppletName(applet)), false
 	}
 
 	handler, ok := commandHandlers[cmd]
 	if !ok {
-		return fmt.Sprintf("-sh: %s: not found\r\n", cmd), false
+		return telnetReply{Output: fmt.Sprintf("-sh: %s: not found\r\n", cmd)}
 	}
-	return handler(args), false
+	return telnetReply{Output: handler(args)}
+}
+
+// probeReply answers the bot probes whose reply must be exact and never vary:
+// a bare shell verb prints nothing, a known /bin/busybox applet runs its
+// handler, and an unknown one prints the applet-specific error bots use to
+// confirm command execution (they send a random marker and look for it).
+func probeReply(cmd string, args []string) (string, bool) {
+	if len(args) == 0 && shellVerbs[cmd] {
+		return "", true
+	}
+	if cmd == "/bin/busybox" && len(args) > 0 {
+		applet := args[0]
+		if handler, ok := commandHandlers[applet]; ok {
+			return handler(args[1:]), true
+		}
+		return fmt.Sprintf("%s: applet not found\r\n", printableAppletName(applet)), true
+	}
+	return "", false
 }
 
 func printableAppletName(applet string) string {
