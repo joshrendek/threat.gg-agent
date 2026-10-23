@@ -2,15 +2,18 @@ package mysql
 
 import (
 	"bufio"
+	"errors"
 	"math/rand"
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
+	"github.com/joshrendek/threat.gg-agent/sqlai"
 	"github.com/rs/zerolog"
 	uuid "github.com/satori/go.uuid"
 )
@@ -35,8 +38,18 @@ var (
 	saveQuery      = persistence.SaveQuery
 )
 
+// defaultGenerate is the AI-first path (spec §8 item 7, §15). Tests set
+// honeypot.generate instead of swapping this, as in the mssql package.
+var defaultGenerate sqlai.Generate = persistence.GenerateResponse
+
 type honeypot struct {
 	logger zerolog.Logger
+	// Per-instance overrides; nil means the package default. Tests set these on the
+	// honeypot they construct instead of swapping package state, which a connection
+	// goroutine left over from an earlier test could be reading (as in mssql).
+	generate   sqlai.Generate
+	loginSaver func(*proto.MysqlRequest) error
+	querySaver func(*proto.QueryRequest) error
 }
 
 func New() honeypots.Honeypot {
@@ -45,6 +58,27 @@ func New() honeypots.Honeypot {
 
 func (h *honeypot) Name() string {
 	return "mysql"
+}
+
+func (h *honeypot) effectiveGenerate() sqlai.Generate {
+	if h.generate != nil {
+		return h.generate
+	}
+	return defaultGenerate
+}
+
+func (h *honeypot) effectiveSaveLogin() func(*proto.MysqlRequest) error {
+	if h.loginSaver != nil {
+		return h.loginSaver
+	}
+	return saveMysqlLogin
+}
+
+func (h *honeypot) effectiveSaveQuery() func(*proto.QueryRequest) error {
+	if h.querySaver != nil {
+		return h.querySaver
+	}
+	return saveQuery
 }
 
 func (h *honeypot) Start() {
@@ -59,10 +93,17 @@ func (h *honeypot) Start() {
 		h.logger.Fatal().Err(err).Msg("failed to start mysql listener")
 	}
 	h.logger.Info().Str("addr", addr).Msg("starting mysql honeypot")
+	h.serve(listener)
+}
 
+// serve accepts connections until the listener is closed.
+func (h *honeypot) serve(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			h.logger.Error().Err(err).Msg("accept error")
 			continue
 		}
@@ -83,6 +124,17 @@ type session struct {
 	// authPlugin is the plugin the client named, and it decides whether the pair above may
 	// be labelled a native-password digest at all. See nativePasswordArtifact.
 	authPlugin string
+	// deprecateEOF is the negotiated CLIENT_DEPRECATE_EOF; it frames every result set.
+	deprecateEOF bool
+	// ai is what this session has learned about AI answers. A MySQL session is one
+	// connection, so it lives here, on the connection's goroutine.
+	ai sqlai.Session
+
+	// loginOnce files the login exactly once, whether at auth (saveLoginAtAuth) or at the
+	// end of the session (persistSession); loginErr is its result. Do blocks a second
+	// caller until the first save finishes, so queries never outrun the login.
+	loginOnce sync.Once
+	loginErr  error
 }
 
 func (h *honeypot) handleConnection(conn net.Conn) {
@@ -125,12 +177,17 @@ func (h *honeypot) handleConnection(conn net.Conn) {
 	sess.database = creds.database
 	sess.authData = creds.authData
 	sess.authPlugin = creds.authPlugin
+	sess.deprecateEOF = creds.deprecateEOF()
 
 	h.logger.Info().
 		Str("session", sess.guid).
 		Str("username", creds.username).
 		Str("database", creds.database).
 		Msg("auth received")
+
+	// File the login now, as the other SQL honeypots do, so the server can tie this
+	// session's AI requests (keyed by guid) to the attacker from the first query.
+	h.saveLoginAtAuth(sess)
 
 	// From here on the credential is captured, so every exit must run persistSession.
 	// A bare return would lose it exactly where it is most valuable: a credential-spraying
@@ -183,7 +240,7 @@ commandLoop:
 				Str("session", sess.guid).
 				Str("query", truncate(cmdData, 200)).
 				Msg("query received")
-			_, cmdErr = handleComQueryForSession(conn, seqID+1, cmdData, sess.guid)
+			cmdErr = h.answerQuery(conn, seqID+1, cmdData, sess)
 
 		case comPing:
 			cmdErr = handleComPing(conn, seqID+1)
@@ -220,7 +277,8 @@ commandLoop:
 	// persistSession runs from the deferred call above, which covers this exit too.
 }
 
-// persistSession records the login and then every query the session issued. It skips only
+// persistSession records the login (or waits for the save saveLoginAtAuth started) and
+// then every query the session issued. It skips only
 // sessions that produced nothing at all -- no username, no credential, no query -- so an
 // ordinary port scan that opens a connection and leaves does not manufacture an attacker
 // row. Any one of the three is enough to record: an unauthenticated query, a credential
@@ -240,6 +298,69 @@ func (h *honeypot) persistSession(sess *session) {
 		return
 	}
 
+	if err := h.saveLogin(sess); err != nil {
+		h.logger.Error().Err(err).Str("session", sess.guid).Msg("mysql login not persisted; dropping the session's queries")
+		return
+	}
+
+	// Queries are saved here rather than inline in the command loop so they cannot outrun
+	// the login above. Capture is deliberately independent of the cmdresp override lookup:
+	// that path skips credential-bearing statements to avoid forwarding secrets to the
+	// response server -- isSensitiveMySQLLookup drops anything containing "identified by",
+	// "set password" or "password(" -- which used to mean the statements most worth having
+	// were the ones guaranteed to be recorded nowhere.
+	// A single failure is transient and must not cost the rest of the session -- the
+	// statement worth having is as likely to be last as first. A run of them means the
+	// backend is down, and grinding through the remaining queries would hold this
+	// goroutine, and the session's captured payloads, for maxCommands * saveTimeout
+	// (~42 minutes at 500 x 5s) while succeeding at nothing. Give up after a few.
+	consecutiveFailures := 0
+	for i, query := range sess.queries {
+		if err := h.effectiveSaveQuery()(&proto.QueryRequest{
+			Guid:        sess.guid,
+			Query:       query,
+			CommandType: "mysql",
+		}); err != nil {
+			h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist mysql query")
+			consecutiveFailures++
+			if consecutiveFailures >= maxConsecutivePersistFailures {
+				h.logger.Error().
+					Str("session", sess.guid).
+					Int("abandoned", len(sess.queries)-i-1).
+					Msg("abandoning mysql query persistence; backend appears unavailable")
+				return
+			}
+			continue
+		}
+		consecutiveFailures = 0
+	}
+}
+
+// saveLoginAtAuth files the login in the background as soon as the client has
+// authenticated, when there is a credential to file. A session with neither a username
+// nor auth data is filed only if it goes on to send a query (persistSession), so a bare
+// port scan still manufactures no attacker row.
+func (h *honeypot) saveLoginAtAuth(sess *session) {
+	if sess.username == "" && len(sess.authData) == 0 {
+		return
+	}
+	go func() {
+		if err := h.saveLogin(sess); err != nil {
+			h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist mysql login")
+		}
+	}()
+}
+
+// saveLogin files the session's login exactly once and returns that one attempt's
+// result to every caller. It reads only fields fixed at auth time.
+func (h *honeypot) saveLogin(sess *session) error {
+	sess.loginOnce.Do(func() { sess.loginErr = h.effectiveSaveLogin()(loginRequest(sess)) })
+	return sess.loginErr
+}
+
+// loginRequest renders the captured credential: the password field holds a crackable
+// artifact for the plugin the client used, or nothing.
+func loginRequest(sess *session) *proto.MysqlRequest {
 	var password string
 	switch sess.authPlugin {
 	case "caching_sha2_password":
@@ -257,47 +378,11 @@ func (h *honeypot) persistSession(sess *session) {
 		// Unrecognized or plaintext auth plugin (e.g. mysql_clear_password)
 	}
 
-	req := &proto.MysqlRequest{
+	return &proto.MysqlRequest{
 		RemoteAddr: sess.remoteIP,
 		Guid:       sess.guid,
 		Username:   sess.username,
 		Password:   password,
-	}
-	if err := saveMysqlLogin(req); err != nil {
-		h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist mysql login")
-		return
-	}
-
-	// Queries are saved here rather than inline in the command loop so they cannot outrun
-	// the login above. Capture is deliberately independent of the cmdresp override lookup:
-	// that path skips credential-bearing statements to avoid forwarding secrets to the
-	// response server -- isSensitiveMySQLLookup drops anything containing "identified by",
-	// "set password" or "password(" -- which used to mean the statements most worth having
-	// were the ones guaranteed to be recorded nowhere.
-	// A single failure is transient and must not cost the rest of the session -- the
-	// statement worth having is as likely to be last as first. A run of them means the
-	// backend is down, and grinding through the remaining queries would hold this
-	// goroutine, and the session's captured payloads, for maxCommands * saveTimeout
-	// (~42 minutes at 500 x 5s) while succeeding at nothing. Give up after a few.
-	consecutiveFailures := 0
-	for i, query := range sess.queries {
-		if err := saveQuery(&proto.QueryRequest{
-			Guid:        sess.guid,
-			Query:       query,
-			CommandType: "mysql",
-		}); err != nil {
-			h.logger.Error().Err(err).Str("session", sess.guid).Msg("failed to persist mysql query")
-			consecutiveFailures++
-			if consecutiveFailures >= maxConsecutivePersistFailures {
-				h.logger.Error().
-					Str("session", sess.guid).
-					Int("abandoned", len(sess.queries)-i-1).
-					Msg("abandoning mysql query persistence; backend appears unavailable")
-				return
-			}
-			continue
-		}
-		consecutiveFailures = 0
 	}
 }
 

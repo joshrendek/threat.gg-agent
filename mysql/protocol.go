@@ -47,18 +47,15 @@ func writePacket(w io.Writer, seqID uint8, payload []byte) error {
 }
 
 func writeOKPacket(w io.Writer, seqID uint8, affectedRows, lastInsertID uint64) error {
-	buf := make([]byte, 0, 32)
-	buf = append(buf, 0x00) // OK marker
-	buf = appendLengthEncodedInt(buf, affectedRows)
-	buf = appendLengthEncodedInt(buf, lastInsertID)
-	// status flags: SERVER_STATUS_AUTOCOMMIT
-	buf = append(buf, 0x02, 0x00)
-	// warnings
-	buf = append(buf, 0x00, 0x00)
-	return writePacket(w, seqID, buf)
+	return writePacket(w, seqID, okPayload(0x00, affectedRows, lastInsertID))
 }
 
 func writeERRPacket(w io.Writer, seqID uint8, code uint16, state, message string) error {
+	return writePacket(w, seqID, errPayload(code, state, message))
+}
+
+// errPayload is an ERR packet (CLIENT_PROTOCOL_41 form, with the SQLSTATE marker).
+func errPayload(code uint16, state, message string) []byte {
 	buf := make([]byte, 0, 64)
 	buf = append(buf, 0xFF) // ERR marker
 	buf = append(buf, byte(code), byte(code>>8))
@@ -69,91 +66,154 @@ func writeERRPacket(w io.Writer, seqID uint8, code uint16, state, message string
 		padded := state + "     "
 		buf = append(buf, padded[:5]...)
 	}
-	buf = append(buf, message...)
-	return writePacket(w, seqID, buf)
+	return append(buf, message...)
 }
 
-func writeEOFPacket(w io.Writer, seqID uint8) error {
-	buf := []byte{
-		0xFE,       // EOF marker
-		0x00, 0x00, // warnings
-		0x02, 0x00, // status: SERVER_STATUS_AUTOCOMMIT
-	}
-	return writePacket(w, seqID, buf)
-}
+// Column definition flags (include/mysql_com.h) and the binary charset.
+const (
+	flagUnsigned uint16 = 0x0020
+	flagBlob     uint16 = 0x0010
+	flagBinary   uint16 = 0x0080
+
+	charsetBinary uint16 = 63
+)
+
+// maxPayload is the largest payload one packet carries; a longer one would
+// have to be split, which no reply this honeypot builds needs.
+const maxPayload = 1<<24 - 1
 
 type columnDef struct {
-	Name     string
-	ColType  byte
-	MaxLen   uint32
+	Name    string
+	ColType byte
+	MaxLen  uint32 // column length; 0 means 255
+	// Charset is the column's collation id; 0 means the connection's utf8mb4
+	// (charsetUTF8MB4, the collation the handshake advertises). Numeric and
+	// temporal columns use charsetBinary, as MySQL does.
+	Charset  uint16
+	Flags    uint16
+	Decimals byte
 }
 
-func writeResultSet(w io.Writer, seqID uint8, columns []columnDef, rows [][]string) (uint8, error) {
-	// Column count
-	buf := appendLengthEncodedInt(nil, uint64(len(columns)))
-	if err := writePacket(w, seqID, buf); err != nil {
-		return seqID, err
-	}
-	seqID++
-
-	// Column definitions
-	for _, col := range columns {
-		def := buildColumnDef(col)
-		if err := writePacket(w, seqID, def); err != nil {
-			return seqID, err
+// textRows turns built-in string rows into encoder rows (no NULLs).
+func textRows(rows [][]string) [][]*string {
+	out := make([][]*string, len(rows))
+	for i, row := range rows {
+		out[i] = make([]*string, len(row))
+		for j := range row {
+			out[i][j] = &row[j]
 		}
+	}
+	return out
+}
+
+// writeResultSet writes a text-protocol result set framed for the session:
+// see encodeResultSet.
+func writeResultSet(w io.Writer, seqID uint8, columns []columnDef, rows [][]string, deprecateEOF bool) (uint8, error) {
+	b, next, ok := encodeResultSet(seqID, columns, textRows(rows), deprecateEOF)
+	if !ok {
+		return seqID, fmt.Errorf("result set packet exceeds %d bytes", maxPayload)
+	}
+	_, err := w.Write(b)
+	return next, err
+}
+
+// encodeResultSet builds a whole text-protocol result set starting at seqID
+// and returns it with the next sequence id. A nil cell is SQL NULL (0xFB).
+//
+// With CLIENT_DEPRECATE_EOF negotiated there is no EOF packet between the
+// column definitions and the rows, and the rows end with an OK packet that
+// carries the 0xFE header; without it, classic EOF packets do both jobs. A
+// client reads a packet the other way round as the end of the result set and
+// loses sync with every later reply.
+//
+// ok is false when a packet would need splitting (a payload of 16 MiB or more).
+func encodeResultSet(seqID uint8, columns []columnDef, rows [][]*string, deprecateEOF bool) ([]byte, uint8, bool) {
+	var out []byte
+	ok := true
+	add := func(payload []byte) {
+		if len(payload) >= maxPayload {
+			ok = false
+			return
+		}
+		out = appendPacket(out, seqID, payload)
 		seqID++
 	}
-
-	// EOF after columns
-	if err := writeEOFPacket(w, seqID); err != nil {
-		return seqID, err
+	add(appendLengthEncodedInt(nil, uint64(len(columns))))
+	for _, col := range columns {
+		add(buildColumnDef(col))
 	}
-	seqID++
-
-	// Rows
+	if !deprecateEOF {
+		add(eofPayload())
+	}
 	for _, row := range rows {
 		rowBuf := make([]byte, 0, 128)
 		for _, val := range row {
-			rowBuf = appendLengthEncodedString(rowBuf, val)
+			if val == nil {
+				rowBuf = append(rowBuf, 0xFB)
+				continue
+			}
+			rowBuf = appendLengthEncodedString(rowBuf, *val)
 		}
-		if err := writePacket(w, seqID, rowBuf); err != nil {
-			return seqID, err
-		}
-		seqID++
+		add(rowBuf)
 	}
-
-	// EOF after rows
-	if err := writeEOFPacket(w, seqID); err != nil {
-		return seqID, err
+	if deprecateEOF {
+		add(okPayload(0xFE, 0, 0))
+	} else {
+		add(eofPayload())
 	}
-	seqID++
+	if !ok {
+		return nil, seqID, false
+	}
+	return out, seqID, true
+}
 
-	return seqID, nil
+// appendPacket appends one packet: 3-byte little-endian length, sequence id, payload.
+func appendPacket(dst []byte, seqID uint8, payload []byte) []byte {
+	n := len(payload)
+	dst = append(dst, byte(n), byte(n>>8), byte(n>>16), seqID)
+	return append(dst, payload...)
+}
+
+// okPayload is an OK packet with the given header: 0x00, or 0xFE for the OK
+// that ends a row stream under CLIENT_DEPRECATE_EOF.
+func okPayload(header byte, affectedRows, lastInsertID uint64) []byte {
+	buf := []byte{header}
+	buf = appendLengthEncodedInt(buf, affectedRows)
+	buf = appendLengthEncodedInt(buf, lastInsertID)
+	buf = append(buf, byte(serverStatusAutocommit), byte(serverStatusAutocommit>>8))
+	return append(buf, 0x00, 0x00) // warnings
+}
+
+// eofPayload is a classic EOF packet: 0 warnings, AUTOCOMMIT.
+func eofPayload() []byte {
+	return []byte{0xFE, 0x00, 0x00, byte(serverStatusAutocommit), byte(serverStatusAutocommit >> 8)}
 }
 
 func buildColumnDef(col columnDef) []byte {
 	buf := make([]byte, 0, 128)
-	buf = appendLengthEncodedString(buf, "def")   // catalog
+	buf = appendLengthEncodedString(buf, "def")    // catalog
 	buf = appendLengthEncodedString(buf, "")       // schema
 	buf = appendLengthEncodedString(buf, "")       // table
 	buf = appendLengthEncodedString(buf, "")       // org_table
 	buf = appendLengthEncodedString(buf, col.Name) // name
 	buf = appendLengthEncodedString(buf, col.Name) // org_name
 	buf = append(buf, 0x0c)                        // length of fixed fields
-	buf = append(buf, 0x2d, 0x00)                  // charset: utf8mb4 (45)
+
+	charset := col.Charset
+	if charset == 0 {
+		charset = uint16(charsetUTF8MB4)
+	}
+	buf = binary.LittleEndian.AppendUint16(buf, charset)
 
 	maxLen := col.MaxLen
 	if maxLen == 0 {
 		maxLen = 255
 	}
-	lenBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(lenBytes, maxLen)
-	buf = append(buf, lenBytes...)
+	buf = binary.LittleEndian.AppendUint32(buf, maxLen)
 
-	buf = append(buf, col.ColType) // column type (0xFD = VARCHAR)
-	buf = append(buf, 0x00, 0x00) // flags
-	buf = append(buf, 0x00)       // decimals
+	buf = append(buf, col.ColType) // column type (0xFD = VAR_STRING)
+	buf = binary.LittleEndian.AppendUint16(buf, col.Flags)
+	buf = append(buf, col.Decimals)
 	buf = append(buf, 0x00, 0x00) // filler
 	return buf
 }

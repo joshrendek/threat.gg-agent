@@ -55,6 +55,15 @@ type credentials struct {
 	// and a mysql_clear_password reply of that length is a plaintext password that must
 	// never be stored as though it were a digest.
 	authPlugin string
+	// capabilities is the client's capability flags. What the session speaks is these
+	// ANDed with serverCapabilities (see deprecateEOF).
+	capabilities uint32
+}
+
+// deprecateEOF reports whether both sides agreed on CLIENT_DEPRECATE_EOF, which
+// decides how every result set in the session is framed (encodeResultSet).
+func (c credentials) deprecateEOF() bool {
+	return c.capabilities&serverCapabilities&clientDeprecateEOF != 0
 }
 
 // buildHandshakeV10 constructs the server greeting packet and returns the per-connection
@@ -132,6 +141,7 @@ func parseHandshakeResponse(payload []byte) credentials {
 
 	// Capability flags (4 bytes)
 	capFlags := binary.LittleEndian.Uint32(payload[offset:])
+	creds.capabilities = capFlags
 	offset += 4
 
 	// Max packet size (4 bytes)

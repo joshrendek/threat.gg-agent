@@ -143,7 +143,7 @@ func TestWriteResultSet(t *testing.T) {
 		{"Alice", "30"},
 		{"Bob", "25"},
 	}
-	_, err := writeResultSet(&buf, 1, cols, rows)
+	_, err := writeResultSet(&buf, 1, cols, rows, false)
 	if err != nil {
 		t.Fatalf("writeResultSet failed: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestWriteResultSet(t *testing.T) {
 func TestWriteEmptyResultSet(t *testing.T) {
 	var buf bytes.Buffer
 	cols := []columnDef{{Name: "result", ColType: 0xFD}}
-	_, err := writeResultSet(&buf, 1, cols, nil)
+	_, err := writeResultSet(&buf, 1, cols, nil, false)
 	if err != nil {
 		t.Fatalf("writeResultSet failed: %v", err)
 	}

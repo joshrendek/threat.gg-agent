@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/joshrendek/threat.gg-agent/cmdresp"
+	"github.com/joshrendek/threat.gg-agent/sqlai"
 )
 
 // MySQL COM_* command bytes
@@ -105,6 +106,22 @@ func handleComQuery(w io.Writer, seqID uint8, query string) (uint8, error) {
 }
 
 func handleComQueryForSession(w io.Writer, seqID uint8, query, guid string) (uint8, error) {
+	return answerBuiltin(w, seqID, query, replyOpts{guid: guid})
+}
+
+// replyOpts is what the built-in answer needs to know about the session.
+type replyOpts struct {
+	guid string
+	// deprecateEOF is the negotiated CLIENT_DEPRECATE_EOF: how result sets are framed.
+	deprecateEOF bool
+	// degraded means a slow AI call already spent part of the attacker's patience, so the
+	// authored lookup gets sqlai.DegradedLookup instead of its usual deadline.
+	degraded bool
+}
+
+// answerBuiltin is the reply without AI: the authored response when one matches, else
+// the built-in defaults.
+func answerBuiltin(w io.Writer, seqID uint8, query string, o replyOpts) (uint8, error) {
 	normalized := strings.ToLower(strings.TrimSpace(query))
 
 	// Server-authored response override (admin-editable command_responses, scoped to
@@ -114,14 +131,20 @@ func handleComQueryForSession(w io.Writer, seqID uint8, query, guid string) (uin
 	// a miss/error we fall through to the hardcoded handling below, so behavior never
 	// regresses if the server is unreachable.
 	if !isSensitiveMySQLLookup(normalized) {
-		if resp, ok := cmdresp.LookupAndRecord("mysql", normalized, guid); ok {
-			return writeServerResponse(w, seqID, normalized, resp)
+		lookup := cmdresp.LookupAndRecord
+		if o.degraded {
+			lookup = func(commandType, command, guid string) (string, bool) {
+				return cmdresp.LookupAndRecordWithin(commandType, command, guid, sqlai.DegradedLookup)
+			}
+		}
+		if resp, ok := lookup("mysql", normalized, o.guid); ok {
+			return writeServerResponse(w, seqID, normalized, resp, o.deprecateEOF)
 		}
 	}
 
 	// Check for exact match in known queries
 	if resp, ok := queryResponses[normalized]; ok {
-		return writeResultSet(w, seqID, resp.columns, resp.rows)
+		return writeResultSet(w, seqID, resp.columns, resp.rows, o.deprecateEOF)
 	}
 
 	// Pattern matching for common query prefixes
@@ -129,12 +152,12 @@ func handleComQueryForSession(w io.Writer, seqID uint8, query, guid string) (uin
 	case strings.HasPrefix(normalized, "select"):
 		// Unknown SELECT: return empty result set
 		col := columnDef{Name: "result", ColType: 0xFD, MaxLen: 255}
-		return writeResultSet(w, seqID, []columnDef{col}, nil)
+		return writeResultSet(w, seqID, []columnDef{col}, nil, o.deprecateEOF)
 
 	case strings.HasPrefix(normalized, "show"):
 		// Unknown SHOW: return empty result set
 		col := columnDef{Name: "result", ColType: 0xFD, MaxLen: 255}
-		return writeResultSet(w, seqID, []columnDef{col}, nil)
+		return writeResultSet(w, seqID, []columnDef{col}, nil, o.deprecateEOF)
 
 	case strings.HasPrefix(normalized, "insert") ||
 		strings.HasPrefix(normalized, "update") ||
@@ -193,10 +216,10 @@ func isSensitiveMySQLLookup(query string) bool {
 // A row-returning query renders the stored text as a single ("result") column/row result
 // set; a non-row statement renders an OK packet (mysql OK packets carry no display text, so
 // the stored text is unused there — its value is for row-returning queries).
-func writeServerResponse(w io.Writer, seqID uint8, query, response string) (uint8, error) {
+func writeServerResponse(w io.Writer, seqID uint8, query, response string, deprecateEOF bool) (uint8, error) {
 	if cmdresp.IsRowReturning(query) {
 		col := columnDef{Name: "result", ColType: 0xFD, MaxLen: 65535} // MYSQL_TYPE_VAR_STRING
-		return writeResultSet(w, seqID, []columnDef{col}, [][]string{{response}})
+		return writeResultSet(w, seqID, []columnDef{col}, [][]string{{response}}, deprecateEOF)
 	}
 	if err := writeOKPacket(w, seqID, 0, 0); err != nil {
 		return seqID, err

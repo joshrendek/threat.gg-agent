@@ -104,6 +104,41 @@ func TestLookupAndRecordUsesTheExactLookupKey(t *testing.T) {
 	}
 }
 
+// LookupAndRecordWithin records the same telemetry as LookupAndRecord and
+// bounds the lookup at the caller's deadline.
+func TestLookupAndRecordWithinRecordsAndBounds(t *testing.T) {
+	originalSave, originalWithin := SaveResponseLookup, GetCommandResponseWithin
+	defer func() { SaveResponseLookup, GetCommandResponseWithin = originalSave, originalWithin }()
+	saved := make(chan *proto.ResponseLookupRequest, 1)
+	SaveResponseLookup = func(request *proto.ResponseLookupRequest) error { saved <- request; return nil }
+	var gotWithin time.Duration
+	GetCommandResponseWithin = func(request *proto.CommandRequest, within time.Duration) (*proto.CommandResponse, error) {
+		gotWithin = within
+		if request.CommandType != "mysql" || request.Command != "select 1" {
+			t.Fatalf("lookup request = %+v", request)
+		}
+		return &proto.CommandResponse{Response: "one", Matched: true}, nil
+	}
+	body, ok := LookupAndRecordWithin("mysql", "select 1", "session-guid", 600*time.Millisecond)
+	if !ok || body != "one" {
+		t.Fatalf("got (%q, %v), want (one, true)", body, ok)
+	}
+	if gotWithin != 600*time.Millisecond {
+		t.Fatalf("lookup deadline = %v, want 600ms", gotWithin)
+	}
+	select {
+	case request := <-saved:
+		if request.Guid != "session-guid" || request.LookupKey != "select 1" {
+			t.Fatalf("saved request = %+v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lookup telemetry was not saved")
+	}
+	if _, ok := LookupAndRecordWithin("mysql", strings.Repeat("x", MaxServerLookupLen+1), "g", time.Second); ok {
+		t.Fatal("an oversized key must not match")
+	}
+}
+
 func TestLookupAndRecordSkipsOversizedKeys(t *testing.T) {
 	originalSave := SaveResponseLookup
 	originalLookup := GetCommandResponse

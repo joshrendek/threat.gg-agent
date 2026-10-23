@@ -121,6 +121,19 @@ func LookupAndRecord(commandType, command, guid string) (string, bool) {
 	return Lookup(commandType, command)
 }
 
+// LookupAndRecordWithin is LookupAndRecord with a caller-selected lookup deadline, for a
+// caller that has already spent part of the attacker's patience (a slow AI generate call).
+func LookupAndRecordWithin(commandType, command, guid string, timeout time.Duration) (string, bool) {
+	if len(command) > MaxServerLookupLen {
+		return "", false
+	}
+	if guid != "" {
+		request := &proto.ResponseLookupRequest{Guid: guid, CommandType: commandType, LookupKey: command}
+		go func() { _ = SaveResponseLookup(request) }()
+	}
+	return LookupWithin(commandType, command, timeout)
+}
+
 // HTTPOverride writes an admin-authored response as the HTTP body when a row is authored
 // for (commandType, "METHOD /path"), returning true when it handled the request. The
 // caller's already-set Content-Type/headers are preserved; on a miss it writes nothing and
