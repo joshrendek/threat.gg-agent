@@ -32,6 +32,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/ollama"
 	"github.com/joshrendek/threat.gg-agent/openclaw"
 	"github.com/joshrendek/threat.gg-agent/persistence"
+	"github.com/joshrendek/threat.gg-agent/personas"
 	"github.com/joshrendek/threat.gg-agent/postgres"
 	rayhp "github.com/joshrendek/threat.gg-agent/ray"
 	rdphp "github.com/joshrendek/threat.gg-agent/rdp"
@@ -194,5 +195,11 @@ func catalog() honeypots.Catalog {
 		"icsprobe":      func() honeypots.Honeypot { return icsprobe.New() },
 		"s7comm":        func() honeypots.Honeypot { return s7comm.New() },
 		"modbus":        func() honeypots.Honeypot { return modbus.New() },
+		"xweb":          func() honeypots.Honeypot { return personas.New("xweb") },
+		"danfoss":       func() honeypots.Honeypot { return personas.New("danfoss") },
+		"cpanel":        func() honeypots.Honeypot { return personas.New("cpanel") },
+		"phpfpm":        func() honeypots.Honeypot { return personas.New("phpfpm") },
+		"modphp":        func() honeypots.Honeypot { return personas.New("modphp") },
+		"cloudai":       func() honeypots.Honeypot { return personas.New("cloudai") },
 	}
 }
