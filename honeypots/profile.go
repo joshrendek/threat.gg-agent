@@ -10,9 +10,10 @@ import (
 // Profile name constants. Pass one via HONEYPOT_PROFILE, or leave it unset to
 // get ProfileDefault.
 const (
-	ProfileDefault = "default"
-	ProfileICS     = "ics"
-	ProfileAll     = "all"
+	ProfileDefault  = "default"
+	ProfileICS      = "ics"
+	ProfilePersonas = "personas"
+	ProfileAll      = "all"
 )
 
 // Catalog maps a honeypot's name to its constructor.
@@ -79,7 +80,10 @@ var profiles = map[string][]string{
 		"icsprobe",
 		"s7comm",
 		"modbus",
+		"xweb",
+		"danfoss",
 	},
+	ProfilePersonas: {"xweb", "danfoss", "cpanel", "phpfpm", "modphp", "cloudai"},
 }
 
 // Select resolves profile to an ordered list of constructed Honeypots.

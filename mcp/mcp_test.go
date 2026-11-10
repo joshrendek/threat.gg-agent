@@ -90,6 +90,25 @@ func TestToolsCallCapturesAndReturnsCannedResult(t *testing.T) {
 	}
 }
 
+func TestCaptureCarriesExplicitMCPSessionID(t *testing.T) {
+	got := make(chan *proto.McpRequest, 1)
+	orig := saveMcpRequest
+	saveMcpRequest = func(in *proto.McpRequest) error { got <- in; return nil }
+	defer func() { saveMcpRequest = orig }()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`))
+	req.Header.Set("Mcp-Session-Id", "session-from-client")
+	newRouter().ServeHTTP(rec, req)
+	select {
+	case in := <-got:
+		if in.SessionId != "session-from-client" {
+			t.Fatalf("session id = %q", in.SessionId)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request was not captured")
+	}
+}
+
 func TestUnknownMethodReturns32601(t *testing.T) {
 	out := result(t, post(t, "/mcp", `{"jsonrpc":"2.0","id":4,"method":"does/notexist"}`))
 	e, _ := out["error"].(map[string]any)
@@ -122,6 +141,23 @@ func TestSSEEmitsEndpointEvent(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "event: endpoint") {
 		t.Fatalf("sse missing endpoint event: %s", rec.Body.String())
+	}
+}
+
+func TestSSEEndpointAndCaptureShareSessionID(t *testing.T) {
+	got := make(chan *proto.McpRequest, 1)
+	orig := saveMcpRequest
+	saveMcpRequest = func(in *proto.McpRequest) error { got <- in; return nil }
+	defer func() { saveMcpRequest = orig }()
+	rec := httptest.NewRecorder()
+	newRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sse", nil))
+	select {
+	case in := <-got:
+		if in.SessionId == "" || !strings.Contains(rec.Body.String(), "sessionId="+in.SessionId) {
+			t.Fatalf("capture session %q not advertised in %q", in.SessionId, rec.Body.String())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SSE connect was not captured")
 	}
 }
 

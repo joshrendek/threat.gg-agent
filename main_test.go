@@ -14,7 +14,7 @@ import (
 // auto-update. These tests are the compile-time-ish guard standing in for that.
 func TestCatalogResolvesEveryDefinedProfile(t *testing.T) {
 	cat := catalog()
-	for _, profile := range []string{honeypots.ProfileDefault, honeypots.ProfileICS, honeypots.ProfileAll} {
+	for _, profile := range []string{honeypots.ProfileDefault, honeypots.ProfileICS, honeypots.ProfilePersonas, honeypots.ProfileAll} {
 		selected, err := honeypots.Select(profile, cat)
 		if err != nil {
 			t.Errorf("Select(%q) against the real catalog failed: %v", profile, err)
@@ -50,7 +50,7 @@ func TestCatalogConstructorsAreUsable(t *testing.T) {
 func TestEveryCatalogEntryIsReachableFromSomeProfile(t *testing.T) {
 	cat := catalog()
 	reached := map[string]bool{}
-	for _, profile := range []string{honeypots.ProfileDefault, honeypots.ProfileICS} {
+	for _, profile := range []string{honeypots.ProfileDefault, honeypots.ProfileICS, honeypots.ProfilePersonas} {
 		names, err := honeypots.ProfileNames(profile, cat)
 		if err != nil {
 			t.Fatalf("ProfileNames(%q): %v", profile, err)

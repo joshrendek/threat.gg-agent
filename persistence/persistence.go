@@ -255,6 +255,19 @@ func SaveModbusSession(in *proto.ModbusSessionRequest) error {
 	return err
 }
 
+// SavePersonaEvent sends one bounded product-persona interaction with a deadline.
+// A nil client is expected during startup or when the control plane is offline.
+func SavePersonaEvent(in *proto.PersonaEventRequest) error {
+	if honeypotClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
+	_, err := honeypotClient.SavePersonaEvent(ctx, in)
+	return err
+}
+
 func SaveRedisConnect(in *proto.RedisConnectRequest) error {
 	ctx := context.Background()
 	ctx = metadata.NewOutgoingContext(ctx, connMetadata)
