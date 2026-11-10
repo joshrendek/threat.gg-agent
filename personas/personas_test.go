@@ -86,7 +86,7 @@ func TestCredentialsAndPayloadsAreNotRetained(t *testing.T) {
 	var event *proto.PersonaEventRequest
 	h := newEngine(specs["cloudai"], func(e *proto.PersonaEventRequest) error { event = e; return nil })
 	w := serve(t, h, http.MethodPost, "/v1/key/validate", `{"username":"operator","api_key":"`+secret+`"}`, "198.51.100.1:8", "", "application/json")
-	if w.Code != 401 || event == nil || !event.CredentialAttempt || event.Username != "operator" {
+	if w.Code != 401 || event == nil || event.Guid == "" || !event.CredentialAttempt || event.Username != "operator" {
 		t.Fatalf("response/event: %d %+v", w.Code, event)
 	}
 	if strings.Contains(event.String(), secret) {
@@ -105,7 +105,7 @@ func TestMalformedAndDangerousRequestsRemainHarmless(t *testing.T) {
 	if w.Code != 200 || strings.Contains(w.Body.String(), "pwned") {
 		t.Fatalf("shell response: %d %s", w.Code, w.Body.String())
 	}
-	if len(events) != 2 || events[0].Action != "multipart_upload_probe" || events[1].Action != "webshell_follow_on" || strings.Contains(events[1].String(), "touch") {
+	if len(events) != 2 || events[0].Action != "multipart_upload_probe" || events[1].Action != "confirmed_follow_on" || strings.Contains(events[1].String(), "touch") {
 		t.Fatalf("unsafe or missing event capture: %+v", events)
 	}
 }
@@ -114,7 +114,7 @@ func TestCpanelBypassAndCloudModelFingerprints(t *testing.T) {
 	var event *proto.PersonaEventRequest
 	cp := newEngine(specs["cpanel"], func(e *proto.PersonaEventRequest) error { event = e; return nil })
 	w := serve(t, cp, http.MethodGet, "/cpsrvd/security_token?mode=probe", "", "203.0.113.4:1", "", "")
-	if w.Code != 200 || event == nil || !event.AuthBypass || event.Cve != "CVE-2023-29489" {
+	if w.Code != 200 || event == nil || !event.AuthBypass || event.Cve != "CVE-2026-41940" {
 		t.Fatalf("cpanel bypass: %d %+v", w.Code, event)
 	}
 	ai := newEngine(specs["cloudai"], nil)
@@ -122,4 +122,48 @@ func TestCpanelBypassAndCloudModelFingerprints(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "gpt-4o-mini") {
 		t.Fatalf("cloud models: %d %s", w.Code, w.Body.String())
 	}
+}
+
+func TestPHPMetadataAndDefaultCredentialClassificationAreNormalized(t *testing.T) {
+	var events []*proto.PersonaEventRequest
+	php := newEngine(specs["phpfpm"], func(e *proto.PersonaEventRequest) error { events = append(events, e); return nil })
+	body := "--outer\r\nContent-Type: multipart/mixed; boundary=inner\r\n\r\n--inner--\r\n--outer--"
+	serve(t, php, http.MethodPost, "/upload", body, "203.0.113.5:1", "", "multipart/form-data; boundary=outer")
+	if len(events) != 1 || events[0].Metadata["body_size"] == "" || events[0].Metadata["multipart_depth"] != "2" {
+		t.Fatalf("missing normalized multipart metadata: %+v", events)
+	}
+
+	var login *proto.PersonaEventRequest
+	cp := newEngine(specs["cpanel"], func(e *proto.PersonaEventRequest) error { login = e; return nil })
+	serve(t, cp, http.MethodPost, "/login", "user=root&pass=changeme", "203.0.113.6:1", "", "application/x-www-form-urlencoded")
+	if login == nil || login.Username != "root" || login.Metadata["credential_class"] != "default" || strings.Contains(login.String(), "changeme") {
+		t.Fatalf("default credential classification leaked or missing: %+v", login)
+	}
+}
+
+func TestPersistedPathRedactsCredentialSegments(t *testing.T) {
+	var event *proto.PersonaEventRequest
+	h := newEngine(specs["cloudai"], func(e *proto.PersonaEventRequest) error { event = e; return nil })
+	serve(t, h, http.MethodPost, "/v1/keys/sk-live-secret/validate", "", "203.0.113.7:1", "", "application/json")
+	if event == nil || strings.Contains(event.Path, "sk-live-secret") || !strings.Contains(event.Path, "[redacted]") {
+		t.Fatalf("credential-bearing path was not redacted: %+v", event)
+	}
+}
+
+func TestAsyncPersistenceIsBoundedAndNeverPinsHTTPHandler(t *testing.T) {
+	release := make(chan struct{})
+	h := newAsyncEngine(specs["cloudai"], func(*proto.PersonaEventRequest) error {
+		<-release
+		return nil
+	}).(*engine)
+	for i := 0; i < cap(h.saveSem)+10; i++ {
+		w := serve(t, h, http.MethodGet, "/v1/models", "", "203.0.113.8:1", "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d blocked or failed: %d", i, w.Code)
+		}
+	}
+	if got := len(h.saveSem); got != cap(h.saveSem) {
+		t.Fatalf("active saves=%d, want bounded pool=%d", got, cap(h.saveSem))
+	}
+	close(release)
 }

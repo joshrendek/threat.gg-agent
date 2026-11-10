@@ -64,6 +64,10 @@ service Honeypot {
   rpc SaveComfyui(LlmRequest) returns (SaveReply) {}
   rpc SaveFile(FileUploadRequest) returns (SaveReply) {}
   rpc SaveMcp(McpRequest) returns (SaveReply) {}
+  // SavePersonaEvent stores one bounded interaction with a stateful HTTP
+  // management/control-plane persona. The persona never controls real
+  // equipment, executes commands, or validates live cloud credentials.
+  rpc SavePersonaEvent(PersonaEventRequest) returns (SaveReply) {}
   // SaveS3Request stores bounded metadata for one emulated MinIO/S3 operation.
   rpc SaveS3Request(S3Request) returns (SaveReply) {}
   // SaveIcsProbe stores one bare-TCP probe against an ICS/SCADA port (Modbus,
@@ -187,6 +191,8 @@ message QueryRequest {
  string Query = 1;
  string guid = 2;
  string command_type = 3; // empty => postgres for backwards compatibility
+ string response_source = 4; // as ShellCommandRequest: "" | "ai" | "ai_cached" | "local" | ... (PRD 052)
+ string generation_id = 5;   // ai_generations.id that answered the query, if any
 }
 
 message CommandResponse {
@@ -338,6 +344,35 @@ message McpRequest {
   string tool = 6;
   string body = 7;
   string user_agent = 8;
+  // Stable when supplied by the client (Mcp-Session-Id / SSE sessionId).
+  // The server deterministically derives an inactivity-window session when
+  // older agents leave this empty.
+  string session_id = 9;
+}
+
+// PersonaEventRequest is shared by product-specific web honeypots. All text
+// fields are bounded again by the server before persistence. metadata values
+// may contain normalized, non-secret product details only.
+message PersonaEventRequest {
+  string remote_addr = 1;
+  string guid = 2;
+  string session_id = 3;
+  string persona = 4;
+  string family = 5;
+  string version = 6;
+  string action = 7;
+  string method = 8;
+  string path = 9;
+  string username = 10;
+  bool credential_attempt = 11;
+  bool auth_bypass = 12;
+  string cve = 13;
+  string prior_value = 14;
+  string requested_value = 15;
+  string evidence = 16;
+  string user_agent = 17;
+  int32 status_code = 18;
+  map<string,string> metadata = 19;
 }
 
 message HttpRequest {

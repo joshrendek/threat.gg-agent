@@ -54,7 +54,7 @@ func newRouter() http.Handler {
 	r.HandleFunc("/mcp", handleRPC("streamable")).Methods(http.MethodPost)
 	r.HandleFunc("/mcp", handleSSE("streamable")).Methods(http.MethodGet)
 	r.HandleFunc("/mcp", func(w http.ResponseWriter, req *http.Request) {
-		capture(req, "streamable", "disconnect", "", nil)
+		capture(req, "streamable", "disconnect", "", sessionID(req), nil)
 		w.WriteHeader(http.StatusOK)
 	}).Methods(http.MethodDelete)
 	r.HandleFunc("/messages", handleRPC("sse")).Methods(http.MethodPost)
@@ -67,20 +67,24 @@ func handleRPC(transport string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body := readBody(r)
 		method, tool := rpcMethodAndTool(body)
-		capture(r, transport, method, tool, body)
+		capture(r, transport, method, tool, sessionID(r), body)
 		dispatch(w, body)
 	}
 }
 
 func handleSSE(transport string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		capture(r, transport, "connect", "", nil)
+		id := sessionID(r)
+		if id == "" {
+			id = uuid.NewV4().String()
+		}
+		capture(r, transport, "connect", "", id, nil)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)
 		// Advertise the message-post endpoint (legacy SSE handshake), then close. A honeypot need
 		// not hold the stream open; scanners read the endpoint event and proceed to POST.
-		fmt.Fprintf(w, "event: endpoint\ndata: /messages?sessionId=%s\n\n", uuid.NewV4().String())
+		fmt.Fprintf(w, "event: endpoint\ndata: /messages?sessionId=%s\n\n", id)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -107,7 +111,18 @@ func readBody(r *http.Request) []byte {
 	return data
 }
 
-func capture(r *http.Request, transport, method, tool string, body []byte) {
+func sessionID(r *http.Request) string {
+	id := strings.TrimSpace(r.Header.Get("Mcp-Session-Id"))
+	if id == "" {
+		id = strings.TrimSpace(r.URL.Query().Get("sessionId"))
+	}
+	if len(id) > 128 {
+		return id[:128]
+	}
+	return id
+}
+
+func capture(r *http.Request, transport, method, tool, session string, body []byte) {
 	ip := r.RemoteAddr
 	if i := strings.LastIndex(ip, ":"); i != -1 {
 		ip = ip[:i]
@@ -121,6 +136,7 @@ func capture(r *http.Request, transport, method, tool string, body []byte) {
 		Tool:       tool,
 		Body:       string(body),
 		UserAgent:  r.UserAgent(),
+		SessionId:  session,
 	}
 	// Snapshot the save seam at request time so a slow save goroutine always uses the value in
 	// effect when the request was handled (deterministic under the injectable test seam).

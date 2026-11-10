@@ -176,6 +176,7 @@ const (
 	Honeypot_SaveComfyui_FullMethodName          = "/honeypot.Honeypot/SaveComfyui"
 	Honeypot_SaveFile_FullMethodName             = "/honeypot.Honeypot/SaveFile"
 	Honeypot_SaveMcp_FullMethodName              = "/honeypot.Honeypot/SaveMcp"
+	Honeypot_SavePersonaEvent_FullMethodName     = "/honeypot.Honeypot/SavePersonaEvent"
 	Honeypot_SaveS3Request_FullMethodName        = "/honeypot.Honeypot/SaveS3Request"
 	Honeypot_SaveIcsProbe_FullMethodName         = "/honeypot.Honeypot/SaveIcsProbe"
 	Honeypot_SaveS7CommSession_FullMethodName    = "/honeypot.Honeypot/SaveS7commSession"
@@ -242,6 +243,10 @@ type HoneypotClient interface {
 	SaveComfyui(ctx context.Context, in *LlmRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveFile(ctx context.Context, in *FileUploadRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	SaveMcp(ctx context.Context, in *McpRequest, opts ...grpc.CallOption) (*SaveReply, error)
+	// SavePersonaEvent stores one bounded interaction with a stateful HTTP
+	// management/control-plane persona. The persona never controls real
+	// equipment, executes commands, or validates live cloud credentials.
+	SavePersonaEvent(ctx context.Context, in *PersonaEventRequest, opts ...grpc.CallOption) (*SaveReply, error)
 	// SaveS3Request stores bounded metadata for one emulated MinIO/S3 operation.
 	SaveS3Request(ctx context.Context, in *S3Request, opts ...grpc.CallOption) (*SaveReply, error)
 	// SaveIcsProbe stores one bare-TCP probe against an ICS/SCADA port (Modbus,
@@ -773,6 +778,16 @@ func (c *honeypotClient) SaveMcp(ctx context.Context, in *McpRequest, opts ...gr
 	return out, nil
 }
 
+func (c *honeypotClient) SavePersonaEvent(ctx context.Context, in *PersonaEventRequest, opts ...grpc.CallOption) (*SaveReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveReply)
+	err := c.cc.Invoke(ctx, Honeypot_SavePersonaEvent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *honeypotClient) SaveS3Request(ctx context.Context, in *S3Request, opts ...grpc.CallOption) (*SaveReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SaveReply)
@@ -891,6 +906,10 @@ type HoneypotServer interface {
 	SaveComfyui(context.Context, *LlmRequest) (*SaveReply, error)
 	SaveFile(context.Context, *FileUploadRequest) (*SaveReply, error)
 	SaveMcp(context.Context, *McpRequest) (*SaveReply, error)
+	// SavePersonaEvent stores one bounded interaction with a stateful HTTP
+	// management/control-plane persona. The persona never controls real
+	// equipment, executes commands, or validates live cloud credentials.
+	SavePersonaEvent(context.Context, *PersonaEventRequest) (*SaveReply, error)
 	// SaveS3Request stores bounded metadata for one emulated MinIO/S3 operation.
 	SaveS3Request(context.Context, *S3Request) (*SaveReply, error)
 	// SaveIcsProbe stores one bare-TCP probe against an ICS/SCADA port (Modbus,
@@ -1078,6 +1097,9 @@ func (UnimplementedHoneypotServer) SaveFile(context.Context, *FileUploadRequest)
 }
 func (UnimplementedHoneypotServer) SaveMcp(context.Context, *McpRequest) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveMcp not implemented")
+}
+func (UnimplementedHoneypotServer) SavePersonaEvent(context.Context, *PersonaEventRequest) (*SaveReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SavePersonaEvent not implemented")
 }
 func (UnimplementedHoneypotServer) SaveS3Request(context.Context, *S3Request) (*SaveReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SaveS3Request not implemented")
@@ -2000,6 +2022,24 @@ func _Honeypot_SaveMcp_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Honeypot_SavePersonaEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PersonaEventRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoneypotServer).SavePersonaEvent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Honeypot_SavePersonaEvent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoneypotServer).SavePersonaEvent(ctx, req.(*PersonaEventRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Honeypot_SaveS3Request_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(S3Request)
 	if err := dec(in); err != nil {
@@ -2310,6 +2350,10 @@ var Honeypot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveMcp",
 			Handler:    _Honeypot_SaveMcp_Handler,
+		},
+		{
+			MethodName: "SavePersonaEvent",
+			Handler:    _Honeypot_SavePersonaEvent_Handler,
 		},
 		{
 			MethodName: "SaveS3Request",

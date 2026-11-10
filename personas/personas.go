@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/joshrendek/threat.gg-agent/persistence"
 	"github.com/joshrendek/threat.gg-agent/proto"
 	"github.com/rs/zerolog"
+	uuid "github.com/satori/go.uuid"
 )
 
 const maxBody = 64 << 10
@@ -31,8 +33,8 @@ const stateTTL = 20 * time.Minute
 type spec struct{ name, env, port, family, version string }
 
 var specs = map[string]spec{
-	"xweb":    {"xweb", "XWEB_HONEYPOT_PORT", "18080", "refrigeration", "XWEB5000 1.3.7"},
-	"danfoss": {"danfoss", "DANFOSS_HONEYPOT_PORT", "18081", "refrigeration", "AK-SC 355 v3.5 / AK-SM 800A v4.2"},
+	"xweb":    {"xweb", "XWEB_HONEYPOT_PORT", "18080", "copeland-dixell-xweb", "XWEB5000 1.3.7"},
+	"danfoss": {"danfoss", "DANFOSS_HONEYPOT_PORT", "18081", "danfoss-ak-sc-ak-sm", "AK-SC 355 v3.5 / AK-SM 800A v4.2"},
 	"cpanel":  {"cpanel", "CPANEL_HONEYPOT_PORT", "18082", "hosting-control-panel", "cPanel 110.0.18 / WHM 110.0.18"},
 	"phpfpm":  {"phpfpm", "PHP_FPM_HONEYPOT_PORT", "18083", "php-runtime", "PHP 8.1.27 FPM"},
 	"modphp":  {"modphp", "MOD_PHP_HONEYPOT_PORT", "18084", "php-runtime", "PHP 7.4.33 mod_php"},
@@ -49,7 +51,7 @@ func New(name string) honeypots.Honeypot {
 	if !ok {
 		panic("unknown persona: " + name)
 	}
-	return &honeypot{s: s, logger: zerolog.Nop()}
+	return &honeypot{s: s, logger: zerolog.New(os.Stdout).With().Caller().Str("honeypot", name).Logger()}
 }
 func (h *honeypot) Name() string { return h.s.name }
 func (h *honeypot) Start() {
@@ -58,7 +60,7 @@ func (h *honeypot) Start() {
 		port = h.s.port
 	}
 	h.logger.Info().Str("port", port).Msg("starting persona honeypot")
-	err := http.ListenAndServe(":"+port, newEngine(h.s, persistence.SavePersonaEvent))
+	err := http.ListenAndServe(":"+port, newAsyncEngine(h.s, persistence.SavePersonaEvent))
 	h.logger.Fatal().Err(err).Msg("failed to start persona honeypot")
 }
 
@@ -69,14 +71,41 @@ type state struct {
 	touched time.Time
 }
 type engine struct {
-	s      spec
-	save   eventSink
-	mu     sync.Mutex
-	states map[string]*state
+	s       spec
+	save    eventSink
+	async   bool
+	saveSem chan struct{}
+	mu      sync.Mutex
+	states  map[string]*state
 }
 
 func newEngine(s spec, save eventSink) http.Handler {
 	return &engine{s: s, save: save, states: make(map[string]*state)}
+}
+
+func newAsyncEngine(s spec, save eventSink) http.Handler {
+	return &engine{s: s, save: save, async: true, saveSem: make(chan struct{}, 64), states: make(map[string]*state)}
+}
+
+func (e *engine) persist(event *proto.PersonaEventRequest) {
+	if e.save == nil {
+		return
+	}
+	if !e.async {
+		_ = e.save(event)
+		return
+	}
+	select {
+	case e.saveSem <- struct{}{}:
+		go func() {
+			defer func() { <-e.saveSem }()
+			_ = e.save(event)
+		}()
+	default:
+		// Drop telemetry after the bounded save pool saturates rather than
+		// letting unauthenticated clients pin handlers or create an unbounded
+		// goroutine queue while the control plane is unavailable.
+	}
 }
 func (e *engine) session(r *http.Request) string {
 	remote := r.RemoteAddr
@@ -122,6 +151,21 @@ func (e *engine) getState(key string) *state {
 }
 func safePath(r *http.Request) string {
 	p := r.URL.EscapedPath()
+	parts := strings.Split(p, "/")
+	redactNext := false
+	for i, part := range parts {
+		lower := strings.ToLower(part)
+		if redactNext || strings.HasPrefix(lower, "sk-") || strings.HasPrefix(lower, "key-") {
+			parts[i] = "[redacted]"
+			redactNext = false
+			continue
+		}
+		switch lower {
+		case "token", "tokens", "key", "keys", "api-key", "apikey", "api_key", "secret", "secrets", "authorization":
+			redactNext = true
+		}
+	}
+	p = strings.Join(parts, "/")
 	if len(p) > 512 {
 		p = p[:512]
 	}
@@ -138,9 +182,46 @@ func (e *engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	st := e.getState(key)
 	status, action, prior, requested, evidence, cve, bypass := e.respond(w, r, st, fields)
 	if e.save != nil {
-		event := &proto.PersonaEventRequest{RemoteAddr: remoteIP(r.RemoteAddr), SessionId: key, Persona: e.s.name, Family: e.s.family, Version: e.s.version, Action: action, Method: r.Method, Path: safePath(r), Username: bounded(fields["username"], 128), CredentialAttempt: isLogin(r.URL.Path), AuthBypass: bypass, Cve: cve, PriorValue: bounded(prior, 128), RequestedValue: bounded(requested, 128), Evidence: bounded(evidence, 256), UserAgent: bounded(r.UserAgent(), 256), StatusCode: int32(status), Metadata: map[string]string{"content_type": bounded(r.Header.Get("Content-Type"), 96)}}
-		_ = e.save(event)
+		metadata := map[string]string{
+			"content_type":    bounded(r.Header.Get("Content-Type"), 96),
+			"body_size":       strconv.Itoa(len(body)),
+			"multipart_depth": strconv.Itoa(multipartDepth(r.Header.Get("Content-Type"), body)),
+		}
+		if defaultCredentialAttempt(fields) {
+			metadata["credential_class"] = "default"
+		}
+		event := &proto.PersonaEventRequest{RemoteAddr: remoteIP(r.RemoteAddr), Guid: uuid.NewV4().String(), SessionId: key, Persona: e.s.name, Family: e.s.family, Version: e.s.version, Action: action, Method: r.Method, Path: safePath(r), Username: bounded(firstField(fields, "username", "user", "login"), 128), CredentialAttempt: isLogin(r.URL.Path), AuthBypass: bypass, Cve: cve, PriorValue: bounded(prior, 128), RequestedValue: bounded(requested, 128), Evidence: bounded(evidence, 256), UserAgent: bounded(r.UserAgent(), 256), StatusCode: int32(status), Metadata: metadata}
+		e.persist(event)
 	}
+}
+
+func firstField(fields map[string]string, names ...string) string {
+	for _, name := range names {
+		if value := fields[name]; value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func defaultCredentialAttempt(fields map[string]string) bool {
+	user := strings.ToLower(firstField(fields, "username", "user", "login"))
+	password := strings.ToLower(firstField(fields, "password", "pass", "passwd"))
+	if user == "" || password == "" {
+		return false
+	}
+	return (user == "admin" || user == "root") && (password == "admin" || password == "root" || password == "changeme")
+}
+
+func multipartDepth(contentType string, body []byte) int {
+	if !strings.Contains(strings.ToLower(contentType), "multipart/") {
+		return 0
+	}
+	depth := 1 + strings.Count(strings.ToLower(string(body)), "content-type: multipart/")
+	if depth > 32 {
+		return 32
+	}
+	return depth
 }
 func parseFields(r *http.Request, body []byte) map[string]string {
 	m := map[string]string{}
@@ -218,7 +299,7 @@ func pathHas(p string, xs ...string) bool {
 }
 func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f map[string]string) (int, string, string, string, string, string, bool) {
 	p := strings.ToLower(r.URL.Path)
-	if isLogin(p) && !(e.s.name == "cpanel" && (pathHas(p, "security_token", "cve-2023-29489", "cpsrvd") || (r.Method == http.MethodGet && pathHas(p, "login")))) && !(e.s.name == "cloudai" && pathHas(p, "key", "validate")) {
+	if isLogin(p) && !(e.s.name == "cpanel" && (pathHas(p, "security_token", "wp2", "cve-2026-41940", "cpsrvd") || (r.Method == http.MethodGet && pathHas(p, "login")))) && !(e.s.name == "cloudai" && pathHas(p, "key", "validate")) {
 		return writeJSON(w, 401, map[string]any{"status": "error", "message": "Invalid username or password"}), "login_attempt", "", "", "authentication rejected", "", false
 	}
 	switch e.s.name {
@@ -261,7 +342,7 @@ func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f ma
 		}
 		return writeJSON(w, 404, map[string]any{"error": "not found"}), "not_found", "", "", "", "", false
 	case "cpanel":
-		if pathHas(p, "security_token", "whm-server-status", "fileman", "terminal", "password", "api", "persist", "cron", "hook", "plugin") {
+		if pathHas(p, "security_token", "wp2", "whm-server-status", "fileman", "terminal", "password", "api", "persist", "cron", "hook", "plugin") {
 			action := "panel_operation"
 			if pathHas(p, "terminal") {
 				action = "terminal_attempt"
@@ -275,9 +356,9 @@ func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f ma
 			if pathHas(p, "persist", "cron", "hook", "plugin") {
 				action = "persistence_attempt"
 			}
-			bypass := pathHas(p, "security_token", "cve-2023-29489", "cpsrvd")
+			bypass := pathHas(p, "security_token", "wp2", "cve-2026-41940", "cpsrvd")
 			if bypass {
-				return writeJSON(w, 200, map[string]any{"status": 1, "data": map[string]any{"version": e.s.version, "result": "ok"}}), "auth_bypass_probe", "", "", "simulated panel response; no privileged operation performed", "CVE-2023-29489", true
+				return writeJSON(w, 200, map[string]any{"status": 1, "data": map[string]any{"version": e.s.version, "result": "ok"}}), "auth_bypass_probe", "", "", "simulated panel response; no privileged operation performed", "CVE-2026-41940", true
 			}
 			return writeJSON(w, 403, map[string]any{"status": 0, "error": "Access denied"}), action, "", "", "privileged action blocked", "", false
 		}
@@ -287,13 +368,26 @@ func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f ma
 		return writeJSON(w, 404, map[string]any{"error": "not found"}), "not_found", "", "", "", "", false
 	case "phpfpm", "modphp":
 		if r.Method == "POST" && (strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") || pathHas(p, "upload")) {
+			st.mu.Lock()
+			st.values["php_upload"] = "seen"
+			st.mu.Unlock()
 			return writeJSON(w, 200, map[string]any{"success": true, "file": "/uploads/tmp_4f8a.tmp"}), "multipart_upload_probe", "", "", "upload acknowledged in simulated memory; payload discarded", "", false
 		}
 		if pathHas(p, "oom", "memory", "stress") {
 			return writeText(w, 503, "text/plain", "Service Temporarily Unavailable"), "oom_probe", "", "", "resource exhaustion request discarded", "", false
 		}
+		if pathHas(p, "worker", "error", "crash") {
+			return writeText(w, 502, "text/plain", "Bad Gateway"), "worker_error_probe", "", "", "simulated worker failure; no native worker exists", "", false
+		}
 		if pathHas(p, "shell", "cmd", "exec", "terminal") {
-			return writeJSON(w, 200, map[string]any{"status": "ok", "output": ""}), "webshell_follow_on", "", "", "execution request observed and not executed", "", false
+			st.mu.Lock()
+			previousUpload := st.values["php_upload"] == "seen"
+			st.mu.Unlock()
+			action := "webshell_probe"
+			if previousUpload {
+				action = "confirmed_follow_on"
+			}
+			return writeJSON(w, 200, map[string]any{"status": "ok", "output": ""}), action, "", "", "execution request observed and not executed", "", false
 		}
 		if pathHas(p, "session", "sess_") {
 			return writeJSON(w, 200, map[string]any{"status": "ok", "session": "active"}), "session_upload_probe", "", "", "PHP session endpoint fingerprint", "", false
