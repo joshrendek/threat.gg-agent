@@ -80,6 +80,8 @@ var profiles = map[string][]string{
 		"icsprobe",
 		"s7comm",
 		"modbus",
+		"xweb",
+		"danfoss",
 	},
 	ProfilePersonas: {"xweb", "danfoss", "cpanel", "phpfpm", "modphp", "cloudai"},
 }
