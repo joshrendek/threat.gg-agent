@@ -1,8 +1,11 @@
 package personas
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -46,14 +49,15 @@ func TestSessionStateIsolatedBySourceAndSession(t *testing.T) {
 		serve(t, h, http.MethodPost, "/api/services/enable", "service=chat&state="+value, ip, session, "application/x-www-form-urlencoded")
 	}
 	mutate("192.0.2.1:1", "s1", "enabled")
-	first := h.(*engine).getState(h.(*engine).session(httptest.NewRequest("GET", "/", nil)))
+	firstKey, _ := h.(*engine).session(httptest.NewRequest("GET", "/", nil), nil)
+	first := h.(*engine).getState(firstKey)
 	if first == nil {
 		t.Fatal("missing state")
 	}
 	// Same source and cookie reuses state; a different cookie or source receives a fresh state.
-	key1 := h.(*engine).session(requestWith("192.0.2.1:1", "s1"))
-	key2 := h.(*engine).session(requestWith("192.0.2.1:1", "s2"))
-	key3 := h.(*engine).session(requestWith("192.0.2.2:1", "s1"))
+	key1, _ := h.(*engine).session(requestWith("192.0.2.1:1", "s1"), nil)
+	key2, _ := h.(*engine).session(requestWith("192.0.2.1:1", "s2"), nil)
+	key3, _ := h.(*engine).session(requestWith("192.0.2.2:1", "s1"), nil)
 	if key1 == key2 || key1 == key3 {
 		t.Fatal("state key crossed session or source boundary")
 	}
@@ -166,4 +170,129 @@ func TestAsyncPersistenceIsBoundedAndNeverPinsHTTPHandler(t *testing.T) {
 		t.Fatalf("active saves=%d, want bounded pool=%d", got, cap(h.saveSem))
 	}
 	close(release)
+}
+
+func TestPHP2Shell109618PersistsStructuralEvidence(t *testing.T) {
+	const boundary = "B7kQpoc618"
+	const harmlessPayload = "fixture-bytes-never-executed"
+	body := multipartFixture(boundary,
+		`Content-Disposition: form-data; name="payload"; filename="fixture.bin"\r\nContent-Type: application/octet-stream`, harmlessPayload,
+	)
+	var event *proto.PersonaEventRequest
+	h := newEngine(specs["modphp"], func(e *proto.PersonaEventRequest) error { event = e; return nil })
+	r := httptest.NewRequest(http.MethodPost, "/index.php", strings.NewReader(body))
+	r.RemoteAddr = "203.0.113.18:49152"
+	r.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
+	r.Header.Set("User-Agent", "php2shell-scan/109618")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK || event == nil {
+		t.Fatalf("response/event: %d %+v", w.Code, event)
+	}
+	if event.Action != "php2shell_oom_probe" || event.Cve != "CVE-2026-109618" {
+		t.Fatalf("classification: %+v", event)
+	}
+	for key, want := range map[string]string{
+		"content_type": "multipart/form-data", "body_size": fmt.Sprint(len(body)),
+		"body_truncated": "false", "multipart_depth": "1", "multipart_fields": "payload",
+		"multipart_file_parts": "1", "multipart_boundary_size": fmt.Sprint(len(boundary)),
+	} {
+		if event.Metadata[key] != want {
+			t.Fatalf("metadata[%q]=%q, want %q; event=%+v", key, event.Metadata[key], want, event)
+		}
+	}
+	if event.Metadata["body_sha256"] == "" || event.Metadata["multipart_boundary_sha256"] == "" {
+		t.Fatalf("missing request hashes: %+v", event.Metadata)
+	}
+	if !strings.Contains(event.Evidence, "body_sha256=") || strings.Contains(event.String(), harmlessPayload) {
+		t.Fatalf("evidence is not structural or retained payload: %+v", event)
+	}
+}
+
+func TestPHP2Shell109619CorrelatesSessionWithoutPersistingIdentifier(t *testing.T) {
+	const boundary = "safe-session-fixture"
+	const sessionID = "secret-session-value-must-not-persist"
+	body := multipartFixture(boundary,
+		`Content-Disposition: form-data; name="PHPSESSID"`, sessionID,
+		`Content-Disposition: form-data; name="PHP_SESSION_UPLOAD_PROGRESS"`, "safe-progress-marker",
+		`Content-Disposition: form-data; name="file"; filename="fixture.txt"\r\nContent-Type: text/plain`, "not-php-and-never-written",
+	)
+	var events []*proto.PersonaEventRequest
+	h := newEngine(specs["phpfpm"], func(e *proto.PersonaEventRequest) error { events = append(events, e); return nil })
+	r := httptest.NewRequest(http.MethodPost, "/index.php", strings.NewReader(body))
+	r.RemoteAddr = "203.0.113.19:49152"
+	r.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	follow := httptest.NewRequest(http.MethodPost, "/shell/cmd", strings.NewReader("cmd=ignored"))
+	follow.RemoteAddr = r.RemoteAddr
+	follow.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	follow.AddCookie(&http.Cookie{Name: "PHPSESSID", Value: sessionID})
+	h.ServeHTTP(httptest.NewRecorder(), follow)
+
+	if len(events) != 2 {
+		t.Fatalf("events=%d, want 2", len(events))
+	}
+	first, second := events[0], events[1]
+	if first.Action != "php2shell_session_upload_probe" || first.Cve != "CVE-2026-109619" {
+		t.Fatalf("classification: %+v", first)
+	}
+	if first.Metadata["php_session_upload_progress"] != "true" || first.Metadata["phpsessid_present"] != "true" || first.Metadata["session_correlation"] != "phpsessid_multipart_field" {
+		t.Fatalf("session metadata: %+v", first.Metadata)
+	}
+	if second.Action != "confirmed_follow_on" || second.Cve != first.Cve || second.SessionId != first.SessionId {
+		t.Fatalf("follow-on was not correlated: first=%+v second=%+v", first, second)
+	}
+	if strings.Contains(first.String(), sessionID) || strings.Contains(second.String(), sessionID) {
+		t.Fatalf("PHP session identifier reached persistence: first=%+v second=%+v", first, second)
+	}
+}
+
+func TestPHPBenignMultipartAndLoginControlsDoNotClassify(t *testing.T) {
+	var phpEvent *proto.PersonaEventRequest
+	php := newEngine(specs["phpfpm"], func(e *proto.PersonaEventRequest) error { phpEvent = e; return nil })
+	body := multipartFixture("ordinary-boundary", `Content-Disposition: form-data; name="file"; filename="readme.txt"`, "hello")
+	serve(t, php, http.MethodPost, "/upload", body, "203.0.113.20:1", "", "multipart/form-data; boundary=ordinary-boundary")
+	if phpEvent == nil || phpEvent.Action != "multipart_upload_probe" || phpEvent.Cve != "" {
+		t.Fatalf("benign multipart classified: %+v", phpEvent)
+	}
+
+	var loginEvent *proto.PersonaEventRequest
+	login := newEngine(specs["modphp"], func(e *proto.PersonaEventRequest) error { loginEvent = e; return nil })
+	serve(t, login, http.MethodPost, "/login", "username=operator&password=harmless-control", "203.0.113.20:2", "", "application/x-www-form-urlencoded")
+	if loginEvent == nil || loginEvent.Action != "login_attempt" || loginEvent.Cve != "" {
+		t.Fatalf("login control classified: %+v", loginEvent)
+	}
+}
+
+func TestPHPBodyCapUsesPrefixHashAndNeverWritesOrExecutes(t *testing.T) {
+	var event *proto.PersonaEventRequest
+	h := newEngine(specs["phpfpm"], func(e *proto.PersonaEventRequest) error { event = e; return nil })
+	requestedPath := filepath.Join(t.TempDir(), "must-not-exist")
+	body := strings.Repeat("x", maxBody+128) + "&cmd=touch%20" + requestedPath
+	w := serve(t, h, http.MethodPost, "/shell/cmd", body, "203.0.113.21:1", "", "application/x-www-form-urlencoded")
+	if w.Code != http.StatusOK || event == nil {
+		t.Fatalf("response/event: %d %+v", w.Code, event)
+	}
+	if event.Metadata["body_size"] != fmt.Sprint(maxBody) || event.Metadata["body_truncated"] != "true" || event.Metadata["body_prefix_sha256"] == "" || event.Metadata["body_sha256"] != "" {
+		t.Fatalf("body cap metadata: %+v", event.Metadata)
+	}
+	if _, err := os.Stat(requestedPath); !os.IsNotExist(err) {
+		t.Fatalf("request caused a file write: %v", err)
+	}
+	if strings.Contains(event.String(), requestedPath) {
+		t.Fatalf("command value reached persistence: %+v", event)
+	}
+}
+
+func multipartFixture(boundary string, headersAndValues ...string) string {
+	var b strings.Builder
+	for i := 0; i+1 < len(headersAndValues); i += 2 {
+		headers := strings.ReplaceAll(headersAndValues[i], `\r\n`, "\r\n")
+		fmt.Fprintf(&b, "--%s\r\n%s\r\n\r\n%s\r\n", boundary, headers, headersAndValues[i+1])
+	}
+	fmt.Fprintf(&b, "--%s--\r\n", boundary)
+	return b.String()
 }
