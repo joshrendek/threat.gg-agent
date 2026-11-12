@@ -2,12 +2,14 @@ package personas
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/joshrendek/threat.gg-agent/proto"
 )
@@ -284,6 +286,24 @@ func TestPHPBodyCapUsesPrefixHashAndNeverWritesOrExecutes(t *testing.T) {
 	}
 	if strings.Contains(event.String(), requestedPath) {
 		t.Fatalf("command value reached persistence: %+v", event)
+	}
+
+	trap, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trap.Close()
+	serve(t, h, http.MethodPost, "/shell/cmd", "cmd=wget%20http%3A%2F%2F"+trap.Addr().String(), "203.0.113.21:1", "", "application/x-www-form-urlencoded")
+	if err := trap.(*net.TCPListener).SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := trap.Accept()
+	if err == nil {
+		_ = connection.Close()
+		t.Fatal("attacker-supplied URL caused request-driven egress")
+	}
+	if networkError, ok := err.(net.Error); !ok || !networkError.Timeout() {
+		t.Fatalf("egress trap failed unexpectedly: %v", err)
 	}
 }
 
