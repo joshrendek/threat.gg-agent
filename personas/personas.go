@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -107,20 +109,48 @@ func (e *engine) persist(event *proto.PersonaEventRequest) {
 		// goroutine queue while the control plane is unavailable.
 	}
 }
-func (e *engine) session(r *http.Request) string {
+
+type requestEvidence struct {
+	body               []byte
+	truncated          bool
+	fields             map[string]string
+	multipartFields    []string
+	multipartBoundary  string
+	fileParts          int
+	hasSessionProgress bool
+	phpSessionID       string
+	phpSessionIDSource string
+}
+
+func (e *engine) session(r *http.Request, request *requestEvidence) (string, string) {
 	remote := r.RemoteAddr
 	if host, _, err := net.SplitHostPort(remote); err == nil {
 		remote = host
 	}
 	token := ""
+	source := "source_ip"
 	if c, err := r.Cookie("persona_session"); err == nil {
 		token = c.Value
+		source = "persona_session_cookie"
 	}
 	if token == "" {
 		token = r.Header.Get("X-Session-ID")
+		if token != "" {
+			source = "x_session_id_header"
+		}
+	}
+	if token == "" {
+		if c, err := r.Cookie("PHPSESSID"); err == nil {
+			token = c.Value
+			source = "phpsessid_cookie"
+		}
+	}
+	if token == "" && request != nil && request.phpSessionID != "" {
+		token = request.phpSessionID
+		source = request.phpSessionIDSource
 	}
 	h := sha256.Sum256([]byte(remote + "\x00" + token))
-	return hex.EncodeToString(h[:12])
+	return hex.EncodeToString(h[:12]), source
 }
 func (e *engine) getState(key string) *state {
 	e.mu.Lock()
@@ -172,27 +202,138 @@ func safePath(r *http.Request) string {
 	return p
 }
 func (e *engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, truncated := readBoundedBody(r.Body)
 	if r.Body != nil {
-		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		defer r.Body.Close()
 	}
-	body, _ := io.ReadAll(r.Body)
-	fields := parseFields(r, body)
-	key := e.session(r)
+	request := inspectRequest(r, body, truncated)
+	key, sessionSource := e.session(r, request)
 	st := e.getState(key)
-	status, action, prior, requested, evidence, cve, bypass := e.respond(w, r, st, fields)
+	status, action, prior, requested, responseSummary, cve, bypass := e.respond(w, r, st, request.fields, request)
 	if e.save != nil {
-		metadata := map[string]string{
-			"content_type":    bounded(r.Header.Get("Content-Type"), 96),
-			"body_size":       strconv.Itoa(len(body)),
-			"multipart_depth": strconv.Itoa(multipartDepth(r.Header.Get("Content-Type"), body)),
-		}
-		if defaultCredentialAttempt(fields) {
+		metadata := requestMetadata(r, request, sessionSource)
+		metadata["response_summary"] = bounded(responseSummary, 256)
+		if defaultCredentialAttempt(request.fields) {
 			metadata["credential_class"] = "default"
 		}
-		event := &proto.PersonaEventRequest{RemoteAddr: remoteIP(r.RemoteAddr), Guid: uuid.NewV4().String(), SessionId: key, Persona: e.s.name, Family: e.s.family, Version: e.s.version, Action: action, Method: r.Method, Path: safePath(r), Username: bounded(firstField(fields, "username", "user", "login"), 128), CredentialAttempt: isLogin(r.URL.Path), AuthBypass: bypass, Cve: cve, PriorValue: bounded(prior, 128), RequestedValue: bounded(requested, 128), Evidence: bounded(evidence, 256), UserAgent: bounded(r.UserAgent(), 256), StatusCode: int32(status), Metadata: metadata}
+		event := &proto.PersonaEventRequest{RemoteAddr: remoteIP(r.RemoteAddr), Guid: uuid.NewV4().String(), SessionId: key, Persona: e.s.name, Family: e.s.family, Version: e.s.version, Action: action, Method: r.Method, Path: safePath(r), Username: bounded(firstField(request.fields, "username", "user", "login"), 128), CredentialAttempt: isLogin(r.URL.Path), AuthBypass: bypass, Cve: cve, PriorValue: bounded(prior, 128), RequestedValue: bounded(requested, 128), Evidence: bounded(structuralEvidence(metadata), 1024), UserAgent: bounded(r.UserAgent(), 256), StatusCode: int32(status), Metadata: metadata}
 		e.persist(event)
 	}
+}
+
+func readBoundedBody(body io.Reader) ([]byte, bool) {
+	if body == nil {
+		return nil, false
+	}
+	captured, err := io.ReadAll(io.LimitReader(body, maxBody+1))
+	if err != nil {
+		return captured, true
+	}
+	if len(captured) > maxBody {
+		return captured[:maxBody], true
+	}
+	return captured, false
+}
+
+func inspectRequest(r *http.Request, body []byte, truncated bool) *requestEvidence {
+	request := &requestEvidence{body: body, truncated: truncated, fields: parseFields(r, body)}
+	contentType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || !strings.HasPrefix(strings.ToLower(contentType), "multipart/") {
+		return request
+	}
+	request.multipartBoundary = params["boundary"]
+	if request.multipartBoundary == "" {
+		return request
+	}
+	reader := multipart.NewReader(strings.NewReader(string(body)), request.multipartBoundary)
+	fieldSet := map[string]struct{}{}
+	for i := 0; i < 64; i++ {
+		part, nextErr := reader.NextPart()
+		if nextErr != nil {
+			break
+		}
+		name := bounded(strings.ToLower(part.FormName()), 64)
+		if name != "" {
+			fieldSet[name] = struct{}{}
+		}
+		if part.FileName() != "" {
+			request.fileParts++
+		}
+		if name == "php_session_upload_progress" {
+			request.hasSessionProgress = true
+		}
+		if name == "phpsessid" {
+			value, _ := io.ReadAll(io.LimitReader(part, 257))
+			request.phpSessionID = bounded(string(value), 256)
+			request.phpSessionIDSource = "phpsessid_multipart_field"
+		} else {
+			_, _ = io.Copy(io.Discard, part)
+		}
+		_ = part.Close()
+	}
+	for name := range fieldSet {
+		request.multipartFields = append(request.multipartFields, name)
+	}
+	sort.Strings(request.multipartFields)
+	return request
+}
+
+func requestMetadata(r *http.Request, request *requestEvidence, sessionSource string) map[string]string {
+	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || contentType == "" {
+		contentType = bounded(r.Header.Get("Content-Type"), 96)
+	}
+	hash := sha256.Sum256(request.body)
+	metadata := map[string]string{
+		"content_type":        bounded(strings.ToLower(contentType), 96),
+		"body_size":           strconv.Itoa(len(request.body)),
+		"body_truncated":      strconv.FormatBool(request.truncated),
+		"multipart_depth":     strconv.Itoa(multipartDepth(r.Header.Get("Content-Type"), request.body)),
+		"session_correlation": sessionSource,
+	}
+	if r.ContentLength >= 0 {
+		metadata["content_length"] = strconv.FormatInt(r.ContentLength, 10)
+	}
+	if request.truncated {
+		metadata["body_size_scope"] = "prefix"
+	} else {
+		metadata["body_size_scope"] = "full"
+	}
+	if request.truncated {
+		metadata["body_prefix_sha256"] = hex.EncodeToString(hash[:])
+	} else {
+		metadata["body_sha256"] = hex.EncodeToString(hash[:])
+	}
+	if request.multipartBoundary != "" {
+		boundaryHash := sha256.Sum256([]byte(request.multipartBoundary))
+		metadata["multipart_boundary_sha256"] = hex.EncodeToString(boundaryHash[:])
+		metadata["multipart_boundary_size"] = strconv.Itoa(len(request.multipartBoundary))
+		metadata["multipart_fields"] = bounded(strings.Join(request.multipartFields, ","), 1024)
+		metadata["multipart_file_parts"] = strconv.Itoa(request.fileParts)
+		metadata["php_session_upload_progress"] = strconv.FormatBool(request.hasSessionProgress)
+		metadata["phpsessid_present"] = strconv.FormatBool(request.phpSessionID != "" || hasCookie(r, "PHPSESSID"))
+	}
+	return metadata
+}
+
+func hasCookie(r *http.Request, name string) bool {
+	_, err := r.Cookie(name)
+	return err == nil
+}
+
+func structuralEvidence(metadata map[string]string) string {
+	keys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		if key != "response_summary" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+metadata[key])
+	}
+	return strings.Join(parts, " ")
 }
 
 func firstField(fields map[string]string, names ...string) string {
@@ -297,7 +438,7 @@ func pathHas(p string, xs ...string) bool {
 	}
 	return false
 }
-func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f map[string]string) (int, string, string, string, string, string, bool) {
+func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f map[string]string, request *requestEvidence) (int, string, string, string, string, string, bool) {
 	p := strings.ToLower(r.URL.Path)
 	if isLogin(p) && !(e.s.name == "cpanel" && (pathHas(p, "security_token", "wp2", "cve-2026-41940", "cpsrvd") || (r.Method == http.MethodGet && pathHas(p, "login")))) && !(e.s.name == "cloudai" && pathHas(p, "key", "validate")) {
 		return writeJSON(w, 401, map[string]any{"status": "error", "message": "Invalid username or password"}), "login_attempt", "", "", "authentication rejected", "", false
@@ -368,10 +509,22 @@ func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f ma
 		return writeJSON(w, 404, map[string]any{"error": "not found"}), "not_found", "", "", "", "", false
 	case "phpfpm", "modphp":
 		if r.Method == "POST" && (strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") || pathHas(p, "upload")) {
+			action := "multipart_upload_probe"
+			cve := ""
+			if isPHP2Shell109618(request, r) {
+				action = "php2shell_oom_probe"
+				cve = "CVE-2026-109618"
+			} else if isPHP2Shell109619(request, r) {
+				action = "php2shell_session_upload_probe"
+				cve = "CVE-2026-109619"
+			}
 			st.mu.Lock()
 			st.values["php_upload"] = "seen"
+			if cve != "" {
+				st.values["php2shell_cve"] = cve
+			}
 			st.mu.Unlock()
-			return writeJSON(w, 200, map[string]any{"success": true, "file": "/uploads/tmp_4f8a.tmp"}), "multipart_upload_probe", "", "", "upload acknowledged in simulated memory; payload discarded", "", false
+			return writeJSON(w, 200, map[string]any{"success": true, "file": "/uploads/tmp_4f8a.tmp"}), action, "", "", "upload acknowledged in simulated memory; payload discarded", cve, false
 		}
 		if pathHas(p, "oom", "memory", "stress") {
 			return writeText(w, 503, "text/plain", "Service Temporarily Unavailable"), "oom_probe", "", "", "resource exhaustion request discarded", "", false
@@ -382,12 +535,13 @@ func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f ma
 		if pathHas(p, "shell", "cmd", "exec", "terminal") {
 			st.mu.Lock()
 			previousUpload := st.values["php_upload"] == "seen"
+			cve := st.values["php2shell_cve"]
 			st.mu.Unlock()
 			action := "webshell_probe"
 			if previousUpload {
 				action = "confirmed_follow_on"
 			}
-			return writeJSON(w, 200, map[string]any{"status": "ok", "output": ""}), action, "", "", "execution request observed and not executed", "", false
+			return writeJSON(w, 200, map[string]any{"status": "ok", "output": ""}), action, "", "", "execution request observed and not executed", cve, false
 		}
 		if pathHas(p, "session", "sess_") {
 			return writeJSON(w, 200, map[string]any{"status": "ok", "session": "active"}), "session_upload_probe", "", "", "PHP session endpoint fingerprint", "", false
@@ -422,4 +576,24 @@ func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f ma
 		return writeJSON(w, 404, map[string]any{"error": map[string]any{"message": "Not found", "type": "invalid_request_error"}}), "not_found", "", "", "", "", false
 	}
 	return 404, "not_found", "", "", "", "", false
+}
+
+func isPHP2Shell109618(request *requestEvidence, r *http.Request) bool {
+	if request == nil {
+		return false
+	}
+	// Sophos observed this user agent and multipart boundary together in
+	// active CVE-2026-109618 exploitation. Requiring both avoids attributing a
+	// generic multipart request or a copied scanner label to the CVE.
+	return strings.Contains(strings.ToLower(r.UserAgent()), "php2shell-scan/109618") && request.multipartBoundary == "B7kQpoc618"
+}
+
+func isPHP2Shell109619(request *requestEvidence, r *http.Request) bool {
+	if request == nil || !request.hasSessionProgress {
+		return false
+	}
+	// The session-global path requires upload-progress handling and an
+	// attacker-controlled PHP session identifier. Values are used only to
+	// derive the in-memory correlation key and are never persisted.
+	return request.phpSessionID != "" || hasCookie(r, "PHPSESSID")
 }
