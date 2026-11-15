@@ -307,6 +307,144 @@ func TestPHPBodyCapUsesPrefixHashAndNeverWritesOrExecutes(t *testing.T) {
 	}
 }
 
+func TestXWEBKEVRoutesClassifyExactlyOnceWithoutRetainingValues(t *testing.T) {
+	const secret = "must-not-persist-xweb-value"
+	var events []*proto.PersonaEventRequest
+	h := newEngine(specs["xweb"], func(event *proto.PersonaEventRequest) error {
+		events = append(events, event)
+		return nil
+	})
+
+	serve(t, h, http.MethodPost, "/xwconsole.cgi", "command="+secret, "203.0.113.40:1", "xweb-session", "application/x-www-form-urlencoded")
+	serve(t, h, http.MethodPost, "/config.lua", `{"password":"`+secret+`","mode":"write"}`, "203.0.113.40:1", "xweb-session", "application/json")
+	serve(t, h, http.MethodPost, "/api/config", "name=room_temperature&value=4.5", "203.0.113.40:1", "control", "application/x-www-form-urlencoded")
+
+	if len(events) != 3 {
+		t.Fatalf("events=%d, want exactly one per request", len(events))
+	}
+	if events[0].Action != "xweb_console_probe" || events[0].Cve != "CVE-2026-124010" {
+		t.Fatalf("console classification: %+v", events[0])
+	}
+	if events[1].Action != "confirmed_follow_on" || events[1].Cve != "CVE-2026-124014" {
+		t.Fatalf("config classification/session progression: %+v", events[1])
+	}
+	if events[2].Cve != "" || events[2].Action != "setpoint_change" {
+		t.Fatalf("negative control misclassified: %+v", events[2])
+	}
+	for _, event := range events {
+		if strings.Contains(event.String(), secret) {
+			t.Fatalf("configuration value reached persistence: %+v", event)
+		}
+	}
+}
+
+func TestGPUStackBypassAndYAMLProbeAreBoundedAndCorrelated(t *testing.T) {
+	const yamlSecret = "token: must-not-persist-gpustack-secret\ncommand: never-run"
+	var events []*proto.PersonaEventRequest
+	h := newEngine(specs["cloudai"], func(event *proto.PersonaEventRequest) error {
+		events = append(events, event)
+		return nil
+	})
+
+	request := func(path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		r.RemoteAddr = "203.0.113.41:1"
+		r.AddCookie(&http.Cookie{Name: "persona_session", Value: "gpustack-session"})
+		r.Header.Set("Content-Type", "application/yaml")
+		r.Header.Set("X-GPUStack-Real-IP", "127.0.0.1")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+
+	first := request("/v2/users", "")
+	second := request("/v2/inference-backends/from-yaml", yamlSecret)
+	if first.Code != http.StatusOK || second.Code != http.StatusCreated || len(events) != 2 {
+		t.Fatalf("responses/events: first=%d second=%d events=%d", first.Code, second.Code, len(events))
+	}
+	if events[0].Action != "gpustack_admin_read" || !events[0].AuthBypass || events[0].Cve != "CVE-2026-102895" {
+		t.Fatalf("bypass classification: %+v", events[0])
+	}
+	if events[1].Action != "confirmed_follow_on" || !events[1].AuthBypass || events[1].Cve != "CVE-2026-102895" {
+		t.Fatalf("YAML/session classification: %+v", events[1])
+	}
+	if events[1].Metadata["gpustack_loopback_claim"] != "true" || events[1].Metadata["body_sha256"] == "" || strings.Contains(events[1].String(), yamlSecret) {
+		t.Fatalf("unsafe or incomplete metadata: %+v", events[1])
+	}
+
+	var control *proto.PersonaEventRequest
+	controlHandler := newEngine(specs["cloudai"], func(event *proto.PersonaEventRequest) error { control = event; return nil })
+	r := httptest.NewRequest(http.MethodGet, "/v2/users", nil)
+	r.RemoteAddr = "203.0.113.42:1"
+	r.Header.Set("X-GPUStack-Real-IP", "198.51.100.9")
+	controlHandler.ServeHTTP(httptest.NewRecorder(), r)
+	if control == nil || control.AuthBypass || control.Cve != "" {
+		t.Fatalf("non-loopback control misclassified: %+v", control)
+	}
+
+	var proxyEvent *proto.PersonaEventRequest
+	proxyHandler := newEngine(specs["cloudai"], func(event *proto.PersonaEventRequest) error { proxyEvent = event; return nil })
+	r = httptest.NewRequest(http.MethodGet, "/v2/workers", nil)
+	r.RemoteAddr = "127.0.0.1:41000"
+	proxyHandler.ServeHTTP(httptest.NewRecorder(), r)
+	if proxyEvent == nil || !proxyEvent.AuthBypass || proxyEvent.Cve != "CVE-2026-102895" || proxyEvent.Metadata["gpustack_peer_loopback"] != "true" {
+		t.Fatalf("same-host proxy bypass not classified: %+v", proxyEvent)
+	}
+}
+
+func TestNodeREDDeployTriggerCapturesOnlyFlowStructure(t *testing.T) {
+	const secretURL = "http://127.0.0.1:9/must-not-fetch-or-persist"
+	flow := `{"flows":[{"id":"1","type":"inject","once":true},{"id":"2","type":"http request","url":"` + secretURL + `"},{"id":"3","type":"exec","command":"never-run"}]}`
+	var event *proto.PersonaEventRequest
+	h := newEngine(specs["nodered"], func(saved *proto.PersonaEventRequest) error { event = saved; return nil })
+	r := httptest.NewRequest(http.MethodPost, "/flows", strings.NewReader(flow))
+	r.RemoteAddr = "203.0.113.43:1"
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Node-RED-API-Version", "v2")
+	r.Header.Set("Node-RED-Deployment-Type", "full")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK || event == nil || event.Action != "flow_deploy_trigger_probe" || event.Cve != "CVE-2026-58115" {
+		t.Fatalf("deploy classification: code=%d event=%+v", w.Code, event)
+	}
+	for key, want := range map[string]string{"node_count": "3", "node_types": "exec,http request,inject", "inject_trigger_present": "true", "execution_capable_node_present": "true", "api_version": "v2", "deployment_type": "full"} {
+		if event.Metadata[key] != want {
+			t.Fatalf("metadata[%q]=%q, want %q: %+v", key, event.Metadata[key], want, event.Metadata)
+		}
+	}
+	if strings.Contains(event.String(), secretURL) || strings.Contains(event.String(), "never-run") {
+		t.Fatalf("flow values reached persistence: %+v", event)
+	}
+	var followOn *proto.PersonaEventRequest
+	h.(*engine).save = func(saved *proto.PersonaEventRequest) error { followOn = saved; return nil }
+	r = httptest.NewRequest(http.MethodPost, "/flows", strings.NewReader(flow))
+	r.RemoteAddr = "203.0.113.43:1"
+	r.AddCookie(&http.Cookie{Name: "persona_session", Value: "node-red-sequence"})
+	// Repeat once to establish state for this explicit session, then verify the
+	// next deployment is marked as progression within the same bounded state.
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	r = httptest.NewRequest(http.MethodPost, "/flows", strings.NewReader(flow))
+	r.RemoteAddr = "203.0.113.43:1"
+	r.AddCookie(&http.Cookie{Name: "persona_session", Value: "node-red-sequence"})
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	if followOn == nil || followOn.Action != "confirmed_follow_on" || followOn.Cve != "CVE-2026-58115" {
+		t.Fatalf("flow session progression: %+v", followOn)
+	}
+
+	var benign *proto.PersonaEventRequest
+	benignHandler := newEngine(specs["nodered"], func(saved *proto.PersonaEventRequest) error { benign = saved; return nil })
+	serve(t, benignHandler, http.MethodPost, "/flows", `[{"id":"1","type":"debug"}]`, "203.0.113.44:1", "", "application/json")
+	if benign == nil || benign.Action != "flow_deploy" || benign.Cve != "" || benign.AuthBypass {
+		t.Fatalf("benign flow control misclassified: %+v", benign)
+	}
+
+	serve(t, benignHandler, http.MethodPost, "/flows", `[{"id":"1","type":"inject","once":false,"repeat":"","crontab":""},{"id":"2","type":"debug"}]`, "203.0.113.45:1", "idle-inject", "application/json")
+	if benign == nil || benign.Cve != "" || benign.Action != "flow_deploy" {
+		t.Fatalf("idle inject negative control misclassified: %+v", benign)
+	}
+}
+
 func multipartFixture(boundary string, headersAndValues ...string) string {
 	var b strings.Builder
 	for i := 0; i+1 < len(headersAndValues); i += 2 {

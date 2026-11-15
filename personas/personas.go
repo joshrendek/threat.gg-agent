@@ -41,6 +41,7 @@ var specs = map[string]spec{
 	"phpfpm":  {"phpfpm", "PHP_FPM_HONEYPOT_PORT", "18083", "php-runtime", "PHP 8.1.27 FPM"},
 	"modphp":  {"modphp", "MOD_PHP_HONEYPOT_PORT", "18084", "php-runtime", "PHP 7.4.33 mod_php"},
 	"cloudai": {"cloudai", "CLOUD_AI_HONEYPOT_PORT", "18085", "cloud-ai-control-plane", "OpenAI-compatible gateway 2024-10"},
+	"nodered": {"nodered", "NODERED_HONEYPOT_PORT", "1880", "node-red-admin-api", "Node-RED 4.1.5"},
 }
 
 type honeypot struct {
@@ -212,6 +213,9 @@ func (e *engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status, action, prior, requested, responseSummary, cve, bypass := e.respond(w, r, st, request.fields, request)
 	if e.save != nil {
 		metadata := requestMetadata(r, request, sessionSource)
+		for key, value := range personaRequestMetadata(e.s.name, r, request) {
+			metadata[key] = value
+		}
 		metadata["response_summary"] = bounded(responseSummary, 256)
 		if defaultCredentialAttempt(request.fields) {
 			metadata["credential_class"] = "default"
@@ -313,7 +317,139 @@ func requestMetadata(r *http.Request, request *requestEvidence, sessionSource st
 		metadata["php_session_upload_progress"] = strconv.FormatBool(request.hasSessionProgress)
 		metadata["phpsessid_present"] = strconv.FormatBool(request.phpSessionID != "" || hasCookie(r, "PHPSESSID"))
 	}
+	if len(request.fields) > 0 {
+		fieldNames := make([]string, 0, len(request.fields))
+		for name := range request.fields {
+			fieldNames = append(fieldNames, bounded(strings.ToLower(name), 64))
+		}
+		sort.Strings(fieldNames)
+		metadata["field_names"] = bounded(strings.Join(fieldNames, ","), 1024)
+	}
 	return metadata
+}
+
+func personaRequestMetadata(name string, r *http.Request, request *requestEvidence) map[string]string {
+	metadata := map[string]string{}
+	switch name {
+	case "nodered":
+		summary := inspectNodeREDFlow(request.body)
+		if summary.valid {
+			metadata["json_valid"] = "true"
+			metadata["node_count"] = strconv.Itoa(summary.nodeCount)
+			metadata["node_types"] = bounded(strings.Join(summary.nodeTypes, ","), 512)
+			metadata["inject_trigger_present"] = strconv.FormatBool(summary.trigger)
+			metadata["execution_capable_node_present"] = strconv.FormatBool(summary.executionCapable)
+		}
+		if deploymentType := strings.ToLower(r.Header.Get("Node-RED-Deployment-Type")); deploymentType == "full" || deploymentType == "nodes" || deploymentType == "flows" || deploymentType == "reload" {
+			metadata["deployment_type"] = deploymentType
+		}
+		if version := strings.ToLower(r.Header.Get("Node-RED-API-Version")); version == "v1" || version == "v2" {
+			metadata["api_version"] = version
+		}
+	case "cloudai":
+		if strings.HasPrefix(strings.ToLower(r.URL.Path), "/v2/") || strings.EqualFold(r.URL.Path, "/v2") {
+			metadata["gpustack_v2"] = "true"
+		}
+		if value := strings.TrimSpace(r.Header.Get("X-GPUStack-Real-IP")); value != "" {
+			metadata["gpustack_real_ip_header_present"] = "true"
+			metadata["gpustack_loopback_claim"] = strconv.FormatBool(isLoopbackClaim(value))
+		}
+		metadata["gpustack_peer_loopback"] = strconv.FormatBool(remoteIsLoopback(r.RemoteAddr))
+	case "xweb":
+		if strings.EqualFold(r.URL.Path, "/xwconsole.cgi") || strings.EqualFold(r.URL.Path, "/config.lua") {
+			metadata["exact_kev_route"] = "true"
+		}
+	}
+	return metadata
+}
+
+func isLoopbackClaim(value string) bool {
+	value = strings.TrimSpace(value)
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	ip := net.ParseIP(strings.Trim(value, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
+func remoteIsLoopback(address string) bool {
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		address = host
+	}
+	ip := net.ParseIP(strings.Trim(address, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
+func gpustackLoopbackTrust(r *http.Request) bool {
+	return isLoopbackClaim(r.Header.Get("X-GPUStack-Real-IP")) || remoteIsLoopback(r.RemoteAddr)
+}
+
+type nodeREDFlowSummary struct {
+	valid            bool
+	nodeCount        int
+	nodeTypes        []string
+	trigger          bool
+	executionCapable bool
+}
+
+func inspectNodeREDFlow(body []byte) nodeREDFlowSummary {
+	if len(body) == 0 {
+		return nodeREDFlowSummary{}
+	}
+	var decoded any
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.UseNumber()
+	if decoder.Decode(&decoded) != nil {
+		return nodeREDFlowSummary{}
+	}
+	nodes := findNodeREDNodes(decoded)
+	types := map[string]struct{}{}
+	summary := nodeREDFlowSummary{valid: true, nodeCount: len(nodes)}
+	for _, node := range nodes {
+		typeName, _ := node["type"].(string)
+		typeName = bounded(strings.ToLower(typeName), 64)
+		if typeName == "" {
+			continue
+		}
+		types[typeName] = struct{}{}
+		switch typeName {
+		case "exec", "http request", "function", "tcp request", "udp out":
+			summary.executionCapable = true
+		case "inject":
+			once, _ := node["once"].(bool)
+			repeat, _ := node["repeat"].(string)
+			crontab, _ := node["crontab"].(string)
+			if once || strings.TrimSpace(repeat) != "" || strings.TrimSpace(crontab) != "" {
+				summary.trigger = true
+			}
+		}
+	}
+	for typeName := range types {
+		summary.nodeTypes = append(summary.nodeTypes, typeName)
+	}
+	sort.Strings(summary.nodeTypes)
+	return summary
+}
+
+func findNodeREDNodes(decoded any) []map[string]any {
+	var raw []any
+	switch value := decoded.(type) {
+	case []any:
+		raw = value
+	case map[string]any:
+		if flows, ok := value["flows"].([]any); ok {
+			raw = flows
+		} else if nodes, ok := value["nodes"].([]any); ok {
+			raw = nodes
+		}
+	}
+	nodes := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		if node, ok := item.(map[string]any); ok {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes
 }
 
 func hasCookie(r *http.Request, name string) bool {
@@ -440,11 +576,33 @@ func pathHas(p string, xs ...string) bool {
 }
 func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f map[string]string, request *requestEvidence) (int, string, string, string, string, string, bool) {
 	p := strings.ToLower(r.URL.Path)
-	if isLogin(p) && !(e.s.name == "cpanel" && (pathHas(p, "security_token", "wp2", "cve-2026-41940", "cpsrvd") || (r.Method == http.MethodGet && pathHas(p, "login")))) && !(e.s.name == "cloudai" && pathHas(p, "key", "validate")) {
+	if isLogin(p) && !(e.s.name == "cpanel" && (pathHas(p, "security_token", "wp2", "cve-2026-41940", "cpsrvd") || (r.Method == http.MethodGet && pathHas(p, "login")))) && !(e.s.name == "cloudai" && pathHas(p, "key", "validate")) && !(e.s.name == "nodered" && p == "/auth/login" && r.Method == http.MethodGet) {
 		return writeJSON(w, 401, map[string]any{"status": "error", "message": "Invalid username or password"}), "login_attempt", "", "", "authentication rejected", "", false
 	}
 	switch e.s.name {
 	case "xweb", "danfoss":
+		if e.s.name == "xweb" && strings.EqualFold(r.URL.Path, "/xwconsole.cgi") {
+			st.mu.Lock()
+			followOn := st.values["xweb_kev"] != ""
+			st.values["xweb_kev"] = "console"
+			st.mu.Unlock()
+			action := "xweb_console_probe"
+			if followOn {
+				action = "confirmed_follow_on"
+			}
+			return writeText(w, 200, "text/plain; charset=utf-8", "XWEB console ready\n"), action, "", "", "simulated console response; no command executed", "CVE-2026-124010", true
+		}
+		if e.s.name == "xweb" && strings.EqualFold(r.URL.Path, "/config.lua") {
+			st.mu.Lock()
+			followOn := st.values["xweb_kev"] != ""
+			st.values["xweb_kev"] = "config"
+			st.mu.Unlock()
+			action := "xweb_config_write_probe"
+			if followOn {
+				action = "confirmed_follow_on"
+			}
+			return writeJSON(w, 200, map[string]any{"ok": true, "result": "configuration accepted"}), action, "", "", "configuration structure observed and discarded; no write performed", "CVE-2026-124014", true
+		}
 		if pathHas(p, "alarm", "event") {
 			return writeJSON(w, 200, map[string]any{"alarms": []any{map[string]any{"id": "A-017", "code": "HP", "description": "High condensing pressure", "state": "active", "timestamp": "2024-10-18T09:42:11Z"}}}), "alarm_inventory", "", "", "read-only alarm record", "", false
 		}
@@ -548,6 +706,39 @@ func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f ma
 		}
 		return writeText(w, 200, "text/html; charset=utf-8", fmt.Sprintf("<!doctype html><title>PHP %s</title><h1>It works!</h1><hr><address>%s Server</address>", e.s.version, e.s.name)), "runtime_fingerprint", "", "", "PHP runtime fingerprint", "", false
 	case "cloudai":
+		if strings.EqualFold(p, "/v2/inference-backends/from-yaml") && r.Method == http.MethodPost {
+			loopback := gpustackLoopbackTrust(r)
+			st.mu.Lock()
+			priorBypass := st.values["gpustack_bypass"] == "seen"
+			if loopback {
+				st.values["gpustack_bypass"] = "seen"
+			}
+			st.mu.Unlock()
+			action := "inference_backend_yaml_probe"
+			if loopback {
+				action = "gpustack_auth_bypass_probe"
+			}
+			if loopback && priorBypass {
+				action = "confirmed_follow_on"
+			}
+			return writeJSON(w, 201, map[string]any{"id": "ib-synthetic", "state": "pending", "name": "inference-backend"}), action, "", "", "synthetic backend accepted; YAML discarded and never executed", "CVE-2026-102895", loopback
+		}
+		if strings.HasPrefix(p, "/v2/") || p == "/v2" {
+			loopback := gpustackLoopbackTrust(r)
+			if loopback {
+				st.mu.Lock()
+				st.values["gpustack_bypass"] = "seen"
+				st.mu.Unlock()
+			}
+			if pathHas(p, "users", "workers", "models", "api-keys", "inference-backends") {
+				cve := ""
+				if loopback {
+					cve = "CVE-2026-102895"
+				}
+				return writeJSON(w, 200, map[string]any{"items": []any{}, "total": 0}), "gpustack_admin_read", "", "", "synthetic GPUStack administrative response", cve, loopback
+			}
+			return writeJSON(w, 200, map[string]any{"name": "GPUStack", "version": "2.1.1", "status": "ready"}), "gpustack_fingerprint", "", "", "synthetic GPUStack fingerprint", "", false
+		}
 		if pathHas(p, "models") {
 			return writeJSON(w, 200, map[string]any{"object": "list", "data": []any{map[string]any{"id": "gpt-4o-mini", "object": "model", "owned_by": "system"}, map[string]any{"id": "claude-3-5-sonnet", "object": "model", "owned_by": "system"}}}), "model_catalog", "", "", "synthetic model catalog", "", false
 		}
@@ -574,6 +765,43 @@ func (e *engine) respond(w http.ResponseWriter, r *http.Request, st *state, f ma
 			return writeJSON(w, 401, map[string]any{"error": map[string]any{"code": "invalid_api_key", "message": "The API key is invalid"}}), "key_validation", "", "", "credential value discarded", "", false
 		}
 		return writeJSON(w, 404, map[string]any{"error": map[string]any{"message": "Not found", "type": "invalid_request_error"}}), "not_found", "", "", "", "", false
+	case "nodered":
+		if p == "/" {
+			return writeText(w, 200, "text/html; charset=utf-8", "<!doctype html><title>Node-RED</title><meta name='generator' content='Node-RED'><div id='red-ui-editor'>Node-RED</div>"), "editor_fingerprint", "", "", "Node-RED editor fingerprint", "", false
+		}
+		if p == "/auth/login" && r.Method == http.MethodGet {
+			return writeJSON(w, 200, map[string]any{}), "auth_scheme_read", "", "", "synthetic unsecured admin scheme", "", false
+		}
+		if p == "/settings" && r.Method == http.MethodGet {
+			return writeJSON(w, 200, map[string]any{"httpNodeRoot": "/", "version": e.s.version, "editorTheme": map[string]any{"projects": map[string]any{"enabled": false}}}), "settings_read", "", "", "synthetic Node-RED settings", "", false
+		}
+		if p == "/flows" && r.Method == http.MethodGet {
+			return writeJSON(w, 200, []any{}), "flow_inventory", "", "", "synthetic empty flow inventory", "", false
+		}
+		if (p == "/flows" || p == "/flow" || strings.HasPrefix(p, "/flow/")) && (r.Method == http.MethodPost || r.Method == http.MethodPut) {
+			summary := inspectNodeREDFlow(request.body)
+			st.mu.Lock()
+			priorDeploy := st.values["nodered_deploy"] == "seen"
+			st.values["nodered_deploy"] = "seen"
+			st.mu.Unlock()
+			action, cve := "flow_deploy", ""
+			if summary.trigger && summary.executionCapable {
+				action, cve = "flow_deploy_trigger_probe", "CVE-2026-58115"
+				if priorDeploy {
+					action = "confirmed_follow_on"
+				}
+			} else if priorDeploy {
+				action = "flow_deploy_follow_on"
+			}
+			return writeJSON(w, 200, map[string]any{"rev": "synthetic-2"}), action, "", "", "flow structure observed and discarded; no node started or payload fetched", cve, cve != ""
+		}
+		if p == "/nodes" && r.Method == http.MethodGet {
+			return writeJSON(w, 200, []any{}), "node_catalog", "", "", "synthetic installed-node catalog", "", false
+		}
+		if p == "/nodes" && r.Method == http.MethodPost {
+			return writeJSON(w, 400, map[string]any{"code": "module_install_blocked", "message": "Module installation unavailable"}), "node_module_install_attempt", "", "", "module request discarded; no package fetched or installed", "", false
+		}
+		return writeJSON(w, 404, map[string]any{"code": "not_found", "message": "Not found"}), "not_found", "", "", "", "", false
 	}
 	return 404, "not_found", "", "", "", "", false
 }

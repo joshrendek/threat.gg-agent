@@ -10,6 +10,7 @@ import (
 	dockerhp "github.com/joshrendek/threat.gg-agent/docker"
 	"github.com/joshrendek/threat.gg-agent/elasticsearch"
 	etcdhp "github.com/joshrendek/threat.gg-agent/etcd"
+	freeswitchhp "github.com/joshrendek/threat.gg-agent/freeswitch"
 	"github.com/joshrendek/threat.gg-agent/ftp"
 	"github.com/joshrendek/threat.gg-agent/honeypots"
 	"github.com/joshrendek/threat.gg-agent/icsprobe"
@@ -43,6 +44,7 @@ import (
 	smtphp "github.com/joshrendek/threat.gg-agent/smtp"
 	"github.com/joshrendek/threat.gg-agent/sshd"
 	telnethp "github.com/joshrendek/threat.gg-agent/telnet"
+	unrealircdhp "github.com/joshrendek/threat.gg-agent/unrealircd"
 	"github.com/joshrendek/threat.gg-agent/updater"
 	"github.com/joshrendek/threat.gg-agent/vllm"
 	vnchp "github.com/joshrendek/threat.gg-agent/vnc"
@@ -201,5 +203,8 @@ func catalog() honeypots.Catalog {
 		"phpfpm":        func() honeypots.Honeypot { return personas.New("phpfpm") },
 		"modphp":        func() honeypots.Honeypot { return personas.New("modphp") },
 		"cloudai":       func() honeypots.Honeypot { return personas.New("cloudai") },
+		"nodered":       func() honeypots.Honeypot { return personas.New("nodered") },
+		"freeswitch":    func() honeypots.Honeypot { return freeswitchhp.New() },
+		"unrealircd":    func() honeypots.Honeypot { return unrealircdhp.New() },
 	}
 }
