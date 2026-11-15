@@ -83,7 +83,7 @@ var profiles = map[string][]string{
 		"xweb",
 		"danfoss",
 	},
-	ProfilePersonas: {"xweb", "danfoss", "cpanel", "phpfpm", "modphp", "cloudai"},
+	ProfilePersonas: {"xweb", "danfoss", "cpanel", "phpfpm", "modphp", "cloudai", "nodered", "freeswitch", "unrealircd"},
 }
 
 // Select resolves profile to an ordered list of constructed Honeypots.

@@ -169,6 +169,18 @@ func TestSelect_ICSReturnsItsConfiguredHoneypots(t *testing.T) {
 	}
 }
 
+func TestSelect_PersonasIncludesKEVCoverage(t *testing.T) {
+	want := []string{"xweb", "danfoss", "cpanel", "phpfpm", "modphp", "cloudai", "nodered", "freeswitch", "unrealircd"}
+	catalog := newFakeCatalog(want...)
+	got, err := Select(ProfilePersonas, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotNames := namesOf(got); !reflect.DeepEqual(gotNames, want) {
+		t.Fatalf("Select(%q) names=%v, want %v", ProfilePersonas, gotNames, want)
+	}
+}
+
 // TestProfilesReferenceKnownHoneypots guards against a profile definition
 // drifting to reference a honeypot name that no other profile (and thus no
 // catalog built from the profiles themselves) knows about. It builds a
